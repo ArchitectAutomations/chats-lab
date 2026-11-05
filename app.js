@@ -386,8 +386,20 @@
     route();
   }
 
+  function clearStoredTargets() {
+    try {
+      var drop = [];
+      for (var i = 0; i < sessionStorage.length; i++) {
+        var k = sessionStorage.key(i);
+        if (k && k.indexOf('cv_') === 0) drop.push(k);
+      }
+      drop.forEach(function (k) { sessionStorage.removeItem(k); });
+    } catch (e) { /* storage blocked: nothing to clear */ }
+  }
+
   function onSignedOut() {
     S.signedIn = false;
+    clearStoredTargets();
     stopLive();
     clearTimeout(S.refreshTimer);
     S.seq.list++; S.seq.thread++;
@@ -563,6 +575,12 @@
   }
 
   function start() {
+    // Never render inside a frame (clickjacking). A meta CSP cannot set frame-ancestors.
+    if (window.top !== window.self) {
+      document.documentElement.hidden = true;
+      try { window.top.location = window.self.location; } catch (e) { /* cross-origin top: stay hidden */ }
+      return;
+    }
     bindEvents();
     if (!MOCK && (configMissing() || !window.supabase)) {
       showSignin();
