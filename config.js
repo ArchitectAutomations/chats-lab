@@ -8,3 +8,51 @@ window.CV_CONFIG = {
   SUPABASE_URL: 'https://cypvadpdtwtdymabtzfh.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5cHZhZHBkdHd0ZHltYWJ0emZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM4MzY1NTQsImV4cCI6MjEwOTQxMjU1NH0.B_hFSZNNfu5TfT5hQYIgyOC8ETFGtS_9QWDsHOoy-jU'
 };
+
+/* ==================================================================
+   PER-CLIENT SETTINGS (CV_CUSTOM)
+   Everything that differs between clients lives here, nowhere else.
+   Leave a line out (or empty) and the page uses the default shown.
+   Value-tier dollar thresholds are NOT here: they live in the
+   database (cv_config value_tier_high_min / value_tier_medium_min).
+   ================================================================== */
+window.CV_CUSTOM = {
+  // Name at the top of the side menu. '' = "Leads".
+  businessName: 'Mobile Mixology (lab)',
+
+  // Colours, rule 60 / 30 / 10: primary (page, header, menu) 60%, secondary (rows, cards, tiles,
+  // sheet) 30%, accent (buttons, active tab, live dot, bars, links, focus) 10%. Hex only (#rgb / #rrggbb).
+  // Shades, text colours and tints are worked out from these three; any of them can also be set here
+  // (primaryDeep, onPrimary, mutedOnPrimary, secondaryDeep, onSecondary, mutedOnSecondary, accentStrong,
+  // accentLight, accentTint, accentInk, onAccent, dangerOnPrimary, dangerOnSecondary).
+  // A new palette must be re-checked for WCAG AA contrast (see the note at the top of styles.css).
+  theme: {
+    primary: '#1F3D2B',    // forest green
+    secondary: '#E8DCC4',  // sand beige
+    accent: '#8B5CF6'      // electric purple
+  },
+
+  // Money and time.
+  locale: 'en-CA',
+  currency: 'CAD',
+  timeZone: 'America/Toronto',
+
+  // Side menu: which tabs show, in this order. Known tabs: 'list', 'value', 'metrics'.
+  tabs: ['list', 'value', 'metrics'],
+  tabLabels: { list: 'Leads', value: 'Lead value', metrics: 'Metrics' },
+
+  // Status wording on chips, filter chips, the three buttons and the history lines.
+  // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, booked, lost, opted_out.
+  statusLabels: {},
+
+  // Contact buttons on a lead's record, in this order. Known: 'call', 'text', 'email'.
+  // Text is always hidden for a lead who opted out.
+  contactActions: ['call', 'text', 'email'],
+
+  // Lead value section names. Keys: high, medium, low, none.
+  tierLabels: { high: 'High value', medium: 'Medium', low: 'Low', none: 'No quote yet' },
+
+  // Metrics tab: which blocks show, in this order.
+  // Known: 'open', 'booked', 'close_rate', 'speed', 'journey', 'waiting'.
+  metrics: ['open', 'booked', 'close_rate', 'speed', 'journey', 'waiting']
+};
