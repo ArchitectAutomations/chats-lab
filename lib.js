@@ -817,9 +817,86 @@
   /* ---------- feature switches (CV_CUSTOM.features) ---------- */
 
   // Every feature is on unless the client's settings say exactly false. Off = not shown at all.
-  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics'];
+  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push'];
   function featureOn(features, key) {
     return !(features && typeof features === 'object' && features[key] === false);
+  }
+
+  /* ---------- push alerts (home-screen app) ---------- */
+
+  // Which Alerts panel state to show. env = { featureOn, serverEnabled, ios, standalone, supported, permission, subscribed }.
+  // Returns 'hidden' | 'install' | 'off' | 'on' | 'denied' | 'unsupported'.
+  // serverEnabled must be exactly true (unknown or false hides the panel). iPhone Safari outside the home-screen app
+  // gets the install steps: iOS only allows alerts from the installed app.
+  function pushState(env) {
+    env = env || {};
+    if (env.featureOn === false || env.serverEnabled !== true) return 'hidden';
+    if (env.ios && !env.standalone) return 'install';
+    if (!env.supported) return 'unsupported';
+    if (env.permission === 'denied') return 'denied';
+    if (env.subscribed && env.permission === 'granted') return 'on';
+    return 'off';
+  }
+
+  var PUSH_TEXT = {
+    install: 'On iPhone, alerts only work from the home-screen app. Tap Share, then Add to Home Screen, then open it from your home screen.',
+    denied: 'Alerts are blocked for this app. Turn them back on in your phone settings (Notifications), then come back here.',
+    unsupported: "This browser can't show alerts. On iPhone, add the page to your home screen and open it from there.",
+    on: 'Alerts are on. You get one when a lead needs you.',
+    off: 'Get an alert on this phone when a lead needs you.'
+  };
+
+  // VAPID public key (base64url) -> Uint8Array for pushManager.subscribe. null when it is not valid base64url.
+  function b64urlToBytes(str) {
+    if (typeof str !== 'string' || !/^[A-Za-z0-9_-]+={0,2}$/.test(str)) return null;
+    var b = str.replace(/=+$/, '').replace(/-/g, '+').replace(/_/g, '/');
+    if (b.length % 4 === 1) return null;
+    while (b.length % 4) b += '=';
+    var bin = typeof atob === 'function' ? atob(b) : Buffer.from(b, 'base64').toString('binary');
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  // A browser PushSubscription -> the three values the server stores. null when anything is missing or the endpoint is not https.
+  function pushSubKeys(sub) {
+    var j = sub && typeof sub.toJSON === 'function' ? sub.toJSON() : sub;
+    var k = j && j.keys;
+    if (!j || typeof j.endpoint !== 'string' || !/^https:\/\/[^\s]+$/.test(j.endpoint) || j.endpoint.length > 1000) return null;
+    if (!k || typeof k.p256dh !== 'string' || typeof k.auth !== 'string' || !k.p256dh || !k.auth) return null;
+    return { endpoint: j.endpoint, p256dh: k.p256dh, auth: k.auth };
+  }
+
+  // A same-origin path or "/": one leading "/" (not "//"), no whitespace, control chars or backslash,
+  // and it must still resolve to our own origin (the URL parser strips tab/newline, so check the result too).
+  function safePath(u) {
+    if (typeof u !== 'string' || !/^\/(?!\/)[^\s\\\x00-\x1f\x7f]*$/.test(u)) return '/';
+    try { return new URL(u, 'https://own.invalid').origin === 'https://own.invalid' ? u : '/'; } catch (e) { return '/'; }
+  }
+
+  // Server push payload -> what the service worker shows. The url must be a same-origin path (no //, no backslash).
+  // sw.js carries a copy of this logic (a test checks they agree).
+  function pushPayload(p) {
+    if (!p || typeof p !== 'object') p = {};
+    var url = safePath(p.url);
+    return {
+      title: typeof p.title === 'string' && p.title ? p.title.slice(0, 80) : 'New lead needs you',
+      body: typeof p.body === 'string' ? p.body.slice(0, 200) : '',
+      tag: typeof p.tag === 'string' && p.tag ? p.tag.slice(0, 80) : 'lead-alert',
+      url: url
+    };
+  }
+
+  // Plain-words result of "Send test alert" (the RPC answer, or an error).
+  function pushTestMessage(r) {
+    if (r && r.ok === false) {
+      if (r.reason === 'no_subscription') return 'No phone is signed up for alerts yet. Turn alerts on first.';
+      if (r.reason === 'too_many') return 'Too many test alerts. Wait a minute and try again.';
+      if (r.reason === 'disabled') return 'Alerts are switched off for this account.';
+    }
+    if (!r || r.ok !== true) return "The test alert didn't go out. Try again in a minute.";
+    if (r.queued || (typeof r.sent === 'number' && r.sent > 0)) return 'Test alert sent. It should arrive in a few seconds.';
+    return 'No phone is signed up for alerts yet. Turn alerts on first.';
   }
 
   /* ---------- quote calculator (Edge Function cv-quote) ---------- */
@@ -1452,6 +1529,12 @@
     digestLine: digestLine,
     FEATURES: FEATURES,
     featureOn: featureOn,
+    pushState: pushState,
+    PUSH_TEXT: PUSH_TEXT,
+    b64urlToBytes: b64urlToBytes,
+    pushSubKeys: pushSubKeys,
+    pushPayload: pushPayload,
+    pushTestMessage: pushTestMessage,
     quoteRequest: quoteRequest,
     quoteResult: quoteResult,
     quoteText: quoteText,

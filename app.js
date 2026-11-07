@@ -65,11 +65,14 @@
   var HAS_FOLLOWUPS = TAB_ROUTES.indexOf('followups') !== -1;
   var HAS_SEARCH = feature('search');
   var HAS_NOTES = feature('notes');
+  var HAS_PUSH = feature('push');
 
   function $(id) { return document.getElementById(id); }
   var el = {
     app: $('app'), main: $('main'), nav: $('nav'), navList: $('nav-list'), navBrand: $('nav-brand'), navClose: $('btn-nav-close'),
     scrim: $('scrim'), navBtn: $('btn-nav'), signout: $('btn-signout'),
+    alerts: $('alerts'), alertsText: $('alerts-text'), alertsOn: $('alerts-on'), alertsRow: $('alerts-row'),
+    alertsTest: $('alerts-test'), alertsOff: $('alerts-off'), alertsMsg: $('alerts-msg'),
     topbar: $('topbar'), back: $('btn-back'), title: $('title'), subtitle: $('subtitle'),
     live: $('live'), liveText: $('live-text'),
     signin: $('screen-signin'), list: $('screen-list'), value: $('screen-value'), metrics: $('screen-metrics'), thread: $('screen-thread'),
@@ -301,6 +304,13 @@
       addNote: function (id, body) { return client.rpc('cv_add_note', { p_lead_id: id, p_body: body }).then(ok); },
       deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
+      // Push alerts (owner-only RPCs). Every call is soft-failed by the caller.
+      pushConfig: function () { return client.rpc('cv_push_config').then(ok); },
+      pushSubscribe: function (k, ua) {
+        return client.rpc('cv_push_subscribe', { p_endpoint: k.endpoint, p_p256dh: k.p256dh, p_auth: k.auth, p_user_agent: ua }).then(ok);
+      },
+      pushUnsubscribe: function (endpoint) { return client.rpc('cv_push_unsubscribe', { p_endpoint: endpoint }).then(ok); },
+      pushTest: function () { return client.rpc('cv_push_test').then(ok); },
       fetchFollowUps: function () {
         return client.from('follow_ups').select(FOLLOWUP_COLUMNS).limit(1000).then(ok);
       },
@@ -1868,6 +1878,7 @@
     S.signedIn = true;
     startLive();
     loadBrand();
+    loadPush();
     route();
   }
 
@@ -1884,6 +1895,10 @@
 
   function onSignedOut() {
     S.signedIn = false;
+    // Session ended (expiry, other tab): drop this phone's browser subscription locally. The server call may no longer be authorised;
+    // a leftover server row is removed on the push service's next 404/410.
+    if (P.sub) { try { Promise.resolve(P.sub.unsubscribe()).catch(function () { /* ignore */ }); } catch (e) { /* ignore */ } }
+    P.seq++; P.cfg = null; P.sub = null; P.busy = false; pushMsg(''); renderPush();
     clearStoredTargets();
     stopLive();
     clearTimeout(S.refreshTimer);
@@ -1995,6 +2010,134 @@
     else if (ev === 'SIGNED_OUT' && S.signedIn) onSignedOut();
   }
 
+  /* ---------- alerts on this phone (push) ---------- */
+
+  // Service worker: registered at page load (harmless when push is off). It only shows notifications; it caches nothing.
+  var P = { cfg: null, sub: null, busy: false, seq: 0, reg: Promise.resolve(null) };
+  function registerWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    P.reg = navigator.serviceWorker.register('sw.js', { scope: '/' }).catch(function () { return null; });
+  }
+
+  function pushSupported() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
+  function pushEnv() {
+    var ua = navigator.userAgent || '';
+    var ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var standalone = navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+    var env = {
+      featureOn: HAS_PUSH, serverEnabled: P.cfg ? P.cfg.enabled : null, ios: ios, standalone: standalone,
+      supported: pushSupported(), permission: 'Notification' in window ? Notification.permission : 'default', subscribed: !!P.sub
+    };
+    // Mock mode only: ?pushenv=install|unsupported|denied|off|on pretends to be that phone, for screenshots.
+    var m = MOCK && qs.get('pushenv');
+    if (m === 'install') { env.ios = true; env.standalone = false; }
+    else if (m === 'unsupported') { env.ios = false; env.supported = false; }
+    else if (m === 'denied') { env.ios = false; env.supported = true; env.permission = 'denied'; }
+    else if (m === 'off') { env.ios = false; env.supported = true; env.permission = 'default'; env.subscribed = false; }
+    else if (m === 'on') { env.ios = false; env.supported = true; env.permission = 'granted'; env.subscribed = true; }
+    return env;
+  }
+
+  function pushMsg(text, bad) {
+    setText(el.alertsMsg, text || '');
+    el.alertsMsg.classList.toggle('bad', !!bad);
+    show(el.alertsMsg, !!text);
+  }
+
+  function renderPush() {
+    var st = L.pushState(pushEnv());
+    show(el.alerts, st !== 'hidden');
+    if (st === 'hidden') return;
+    setText(el.alertsText, L.PUSH_TEXT[st] || '');
+    show(el.alertsOn, st === 'off');
+    show(el.alertsRow, st === 'on');
+    el.alertsOn.disabled = el.alertsTest.disabled = el.alertsOff.disabled = P.busy;
+  }
+
+  function loadPush() {
+    P.sub = null;
+    if (!HAS_PUSH || !S.api || !S.api.pushConfig) { renderPush(); return; }
+    var seq = ++P.seq;
+    Promise.resolve().then(function () { return S.api.pushConfig(); })
+      .then(function (cfg) { return cfg && typeof cfg === 'object' ? cfg : null; }, function () { return null; })
+      .then(function (cfg) {
+        if (seq !== P.seq) return;
+        P.cfg = cfg;
+        if (!cfg || cfg.enabled !== true || !pushSupported()) { renderPush(); return; }
+        // Never wait forever on the worker: after 4 s the panel shows as "not subscribed".
+        var lookup = P.reg.then(function (reg) { return reg ? reg.pushManager.getSubscription() : null; });
+        var giveUp = new Promise(function (res) { setTimeout(function () { res(null); }, 4000); });
+        return Promise.race([lookup, giveUp])
+          .catch(function () { return null; })
+          .then(function (sub) { if (seq === P.seq) { P.sub = sub; renderPush(); } });
+      });
+  }
+
+  // Sign-out: tell the server, then drop the browser subscription. Resolves whatever happens.
+  function dropPushSubscription() {
+    if (!HAS_PUSH || !pushSupported()) return Promise.resolve();
+    var cur = P.sub ? Promise.resolve(P.sub) : P.reg.then(function (reg) { return reg ? reg.pushManager.getSubscription() : null; });
+    return cur.then(function (sub) {
+      if (!sub) return null;
+      var endpoint = sub.endpoint;
+      return Promise.resolve().then(function () { return S.api.pushUnsubscribe(endpoint); }).catch(function () { /* soft */ })
+        .then(function () { return sub.unsubscribe(); }).catch(function () { /* soft */ });
+    }).catch(function () { /* soft */ });
+  }
+
+  function pushBusy(on) { P.busy = on; renderPush(); }
+
+  // Subscribe ONLY from this tap (iOS rule): permission first, with nothing awaited before it.
+  function onAlertsOn() {
+    if (P.busy || !P.cfg || P.cfg.enabled !== true) return;
+    var key = L.b64urlToBytes(P.cfg.vapid_public_key);
+    if (!key || !pushSupported()) { pushMsg("Alerts aren't set up right yet. Try again later.", true); return; }
+    pushMsg('');
+    pushBusy(true);
+    var created = null;
+    Promise.resolve(Notification.requestPermission()).then(function (perm) {
+      if (perm !== 'granted') throw { plain: perm === 'denied' ? '' : 'Alerts stay off until you allow them.' };
+      return P.reg;
+    }).then(function (reg) {
+      if (!reg) throw { plain: "This browser couldn't start alerts. Reload and try again." };
+      return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    }).then(function (sub) {
+      created = sub;
+      var k = L.pushSubKeys(sub);
+      if (!k) throw {};
+      return S.api.pushSubscribe(k, navigator.userAgent || '');
+    }).then(function () {
+      P.sub = created;
+      pushBusy(false);
+      pushMsg('Alerts are on.');
+    }).catch(function (e) {
+      if (created) { try { created.unsubscribe(); } catch (x) { /* ignore */ } }
+      P.sub = null;
+      pushBusy(false);
+      pushMsg((e && e.plain !== undefined) ? e.plain : "Couldn't turn on alerts. Check your connection and try again.", !(e && e.plain));
+    });
+  }
+
+  function onAlertsTest() {
+    if (P.busy || !S.api.pushTest) return;
+    pushMsg('');
+    pushBusy(true);
+    Promise.resolve().then(function () { return S.api.pushTest(); }).then(function (r) {
+      pushBusy(false); pushMsg(L.pushTestMessage(r), !(r && r.ok === true));
+    }, function () { pushBusy(false); pushMsg(L.pushTestMessage(null), true); });
+  }
+
+  function onAlertsOff() {
+    if (P.busy || !P.sub) return;
+    var sub = P.sub, endpoint = sub.endpoint;
+    pushMsg('');
+    pushBusy(true);
+    Promise.resolve(sub.unsubscribe()).catch(function () { /* the server call below still runs */ })
+      .then(function () { P.sub = null; return S.api.pushUnsubscribe(endpoint); })
+      .then(function () { pushBusy(false); pushMsg('Alerts are off on this phone.'); },
+        function () { pushBusy(false); pushMsg("Alerts are off on this phone. We couldn't tell the server, so it may still try once.", true); });
+  }
+
   /* ---------- events ---------- */
 
   function bindEvents() {
@@ -2014,9 +2157,16 @@
     var onWide = function () { if (wide.matches) closeNav(false); };
     if (wide.addEventListener) wide.addEventListener('change', onWide); else if (wide.addListener) wide.addListener(onWide);
 
+    el.alertsOn.addEventListener('click', onAlertsOn);
+    el.alertsTest.addEventListener('click', onAlertsTest);
+    el.alertsOff.addEventListener('click', onAlertsOff);
+
     el.signout.addEventListener('click', function () {
       closeNav(false);
-      Promise.resolve(S.api.signOut()).catch(function () { /* local sign-out below still runs */ }).then(function () {
+      // This phone stops getting alerts first (while the session can still authorise the call). Soft-fail, 3 s cap, never blocks sign-out.
+      Promise.race([dropPushSubscription(), new Promise(function (res) { setTimeout(res, 3000); })])
+        .catch(function () { /* sign out anyway */ })
+        .then(function () { return S.api.signOut(); }).catch(function () { /* local sign-out below still runs */ }).then(function () {
         if (S.signedIn) onSignedOut();
       });
     });
@@ -2132,6 +2282,7 @@
       return;
     }
     buildNav();
+    registerWorker();
     buildActions();
     buildReasons();
     show(el.searchWrap, HAS_SEARCH);
@@ -2148,7 +2299,7 @@
       api.onAuth(function (ev) { setTimeout(function () { handleAuthEvent(ev); }, 0); });
       return api.getSession();
     }).then(function (session) {
-      if (session) { S.signedIn = true; startLive(); loadBrand(); }
+      if (session) { S.signedIn = true; startLive(); loadBrand(); loadPush(); }
       route();
       if (MOCK && !session && qs.get('screen') === 'code') showCodeStep('+14165550123');
     }).catch(function () {

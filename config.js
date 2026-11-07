@@ -39,8 +39,8 @@ window.CV_CUSTOM = {
 
   // Features: true = on, false = off (an off feature is not shown at all, nowhere on the page).
   // Left out = on. Tabs: followups, calendar, quote, value, metrics. Parts of other screens:
-  // search (top of Leads), notes (on a lead's record).
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true },
+  // search (top of Leads), notes (on a lead's record), push ("Alerts on this phone" in the side menu).
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true, push: true },
 
   // Side menu: which tabs show, in this order (a tab whose feature is off is skipped).
   // Known tabs: 'list', 'followups', 'calendar', 'quote', 'value', 'metrics'.

@@ -14,8 +14,14 @@
     sed -i '' 's#https://\*.supabase.co wss://\*.supabase.co#https://PROJECTREF.supabase.co wss://PROJECTREF.supabase.co#' index.html
   No inline script, no inline style, no third-party fonts, no analytics.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js; style-src 'self'; img-src 'self' data:; connect-src 'self' https://cypvadpdtwtdymabtzfh.supabase.co wss://cypvadpdtwtdymabtzfh.supabase.co; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js; style-src 'self'; img-src 'self' data:; connect-src 'self' https://cypvadpdtwtdymabtzfh.supabase.co wss://cypvadpdtwtdymabtzfh.supabase.co; base-uri 'none'; form-action 'none'; manifest-src 'self'; worker-src 'self'">
 <link rel="icon" href="data:,">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Leads">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -32,6 +38,17 @@
     </div>
     <ul class="nav-list" id="nav-list"></ul>
     <div class="nav-foot">
+      <!-- Alerts on this phone: shown only when CV_CUSTOM.features.push is on and the server says push is enabled. -->
+      <section class="alerts" id="alerts" aria-labelledby="alerts-h" hidden>
+        <h2 class="alerts-h" id="alerts-h">Alerts on this phone</h2>
+        <p class="alerts-text" id="alerts-text"></p>
+        <button type="button" class="btn primary alerts-btn" id="alerts-on" hidden>Turn on alerts</button>
+        <div class="alerts-row" id="alerts-row" hidden>
+          <button type="button" class="btn alerts-sec" id="alerts-test">Send test alert</button>
+          <button type="button" class="btn quiet" id="alerts-off">Turn off</button>
+        </div>
+        <p class="alerts-msg" id="alerts-msg" role="status" aria-live="polite" hidden></p>
+      </section>
       <button type="button" class="nav-item" id="btn-signout">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>Sign out</span>

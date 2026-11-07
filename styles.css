@@ -726,3 +726,14 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .q-copied { margin: 8px 0 0; font-size: 14px; color: var(--ink); }
 .q-copied:empty { display: none; }
 .q-copy { margin-top: 6px; min-height: 48px; border-color: var(--accent-strong); color: var(--accent-strong); }
+
+/* Alerts on this phone (side menu footer). Same palette tokens as the rest. */
+.alerts { padding: 10px 14px 12px; margin: 0 0 8px; border-radius: 12px; background: var(--primary); }
+.alerts-h { margin: 0 0 4px; font-size: 15px; font-weight: 700; color: var(--on-primary); }
+.alerts-text { margin: 0; font-size: 14px; line-height: 1.4; color: var(--muted-on-primary); }
+.alerts .btn { margin-top: 10px; min-height: 48px; }
+.alerts .btn.primary { font-size: 19px; }
+.alerts-sec { background: var(--secondary); color: var(--on-secondary); font-size: 16px; }
+.alerts .btn.quiet { margin-top: 2px; min-height: 44px; }
+.alerts-msg { margin: 8px 0 0; font-size: 14px; color: var(--on-primary); }
+.alerts-msg.bad { color: var(--danger-on-primary, var(--danger)); }
