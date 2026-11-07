@@ -115,6 +115,12 @@
     return MONTHS[p.m - 1] + ' ' + p.d + (p.y !== np.y ? ', ' + p.y : '');
   }
 
+  // Like fmtAgo, but an old date reads as a date: "3 h ago", "on Nov 3" (so "Last text on Nov 3", never a bare "Nov 3").
+  function fmtAgoOn(iso, now) {
+    var t = fmtAgo(iso, now);
+    return t && !/ago$|^just now$/.test(t) ? 'on ' + t : t;
+  }
+
   // 'YYYY-MM-DD' -> "Sat, Nov 14". Parsed by hand so no timezone shift can move the day.
   function fmtEventDate(ymd, now) {
     var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || ''));
@@ -339,6 +345,12 @@
     if (c === 'opted_out') return 'This lead opted out of texts, so their status is locked.';
     if (c === 'won' || c === 'dormant') return 'This lead is closed, so its status is locked.';
     return '';
+  }
+
+  // Heading of the status card: plain when the page can't change this lead at all ("Status locked").
+  function statusHeading(current) {
+    var c = String(current || '').toLowerCase();
+    return actionsNote(c) && !actionsAhead(c).length ? 'Status locked' : 'Change status';
   }
 
   // Postgres exceptions raised by cv_set_lead_status -> plain words.
@@ -1485,7 +1497,8 @@
   // A booked lead shows its final price, anyone else the quote.
   function jobBits(lead, opts) {
     if (!lead) return [];
-    var bits = [fmtEventDate(lead.event_date, opts && opts.now) || 'No event date'];
+    var bits = [];
+    if (!(opts && opts.date === false)) bits.push(fmtEventDate(lead.event_date, opts && opts.now) || 'No event date');
     var g = Number(lead.guests);
     if (lead.guests !== null && lead.guests !== undefined && lead.guests !== '' && isFinite(g) && g > 0) bits.push(plural(g, 'guest', 'guests'));
     if (!(opts && opts.money === false)) {
@@ -1500,7 +1513,7 @@
   // name + ONE price on top; date and guests; chip and "last text 15 min ago" last.
   // A booked lead shows its final price only (never "Quoted $..."); a lead waiting on the owner carries a wait cue.
   // The chip never repeats the booked price: it is already the price on top.
-  function rowView(lead, now) {
+  function rowView(lead, now, opts) {
     if (!lead) return null;
     var st = String(lead.status || '').toLowerCase();
     var info = statusInfo(st);
@@ -1509,13 +1522,13 @@
     var money = statusGroup(st) === 'booked' && toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : fmtMoney(lead.quote_total);
     var needs = st === 'handed_off' && !isOptedOut(lead);
     var since = realDate(lead.status_at) ? lead.status_at : null; // never guess a wait from other times
-    var lastText = realDate(lead.last_in_at) ? 'Last text ' + fmtAgo(lead.last_in_at, now) : '';
+    var lastText = realDate(lead.last_in_at) ? 'Last text ' + fmtAgoOn(lead.last_in_at, now) : '';
     return {
       name: displayName(lead),
       money: money,
-      job: jobBits(lead, { money: false, now: now }).join(' \u00b7 '),
+      job: jobBits(lead, { money: false, now: now, date: !(opts && opts.noDate) }).join(' \u00b7 '),
       chip: { label: chipLabel, tone: info.tone },
-      when: lastText || (realDate(lead.last_activity_at) ? fmtAgo(lead.last_activity_at, now) : ''),
+      when: lastText || (realDate(lead.last_activity_at) ? 'Active ' + fmtAgoOn(lead.last_activity_at, now) : ''),
       needs: needs,
       wait: needs && since ? { text: waitingFor(since, now), late: waitLate(since, now) } : null,
       said: lastTextPreview(lead)
@@ -1528,14 +1541,91 @@
     return actions().filter(function (a) { return canSetStatus(cur, a.status); }).map(function (a) { return a.status; });
   }
 
+  /* ---------- UI round 3: calendar agenda, follow-up groups, Metrics sections ---------- */
+
+  function ymdNum(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || ''));
+    return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000 : null;
+  }
+
+  var AGENDA_DAYS = 7;       // "This week" = today and the next 6 days
+  var AGENDA_LATER_MAX = 5;  // "Later" shows only the next few events
+  // The calendar's list above the grid. Booked events always; not-booked-yet ones only with opts.showPossible.
+  // Past days are left out. { thisWeek: [item], later: [item] }; item = { lead, ymd, kind, wd, day, mon, when }.
+  // `when` = "Today" / "Tomorrow" / weekday.
+  function weekAgenda(leads, opts, now) {
+    var days = eventsByDay(leads, opts);
+    var t = ymdNum(today(now).ymd);
+    var out = { thisWeek: [], later: [] };
+    Object.keys(days).sort().forEach(function (k) {
+      var n = ymdNum(k);
+      if (n === null || n < t) return;
+      var wd = WEEKDAYS[new Date(n * 86400000).getUTCDay()];
+      var mo = MONTHS[Number(k.slice(5, 7)) - 1];
+      var when = n === t ? 'Today' : (n === t + 1 ? 'Tomorrow' : wd);
+      var list = days[k].booked.map(function (l) { return [l, 'booked']; }).concat(days[k].possible.map(function (l) { return [l, 'possible']; }));
+      list.forEach(function (p) {
+        var item = { lead: p[0], ymd: k, kind: p[1], wd: wd, day: String(Number(k.slice(8, 10))), mon: mo, when: when };
+        (n - t < AGENDA_DAYS ? out.thisWeek : out.later).push(item);
+      });
+    });
+    out.later = out.later.slice(0, AGENDA_LATER_MAX);
+    return out;
+  }
+
+  // One agenda row's words: who, guests, price, chip. The date is the row's left block, so it is not repeated.
+  function agendaView(item, now) {
+    var rv = rowView(item.lead, now, { noDate: true });
+    var guests = jobBits(item.lead, { money: false, date: false, now: now }).join(' · ');
+    var chip = item.kind === 'possible' ? { label: 'Not booked yet', tone: 'active' } : rv.chip;
+    return { name: rv.name, money: rv.money, line: guests, chip: chip };
+  }
+
+  // Which Follow-ups group a due time falls in: Today (also anything overdue), This week (next 7 days), Later.
+  function fuBucket(iso, now) {
+    var d = realDate(iso);
+    if (!d) return 'later';
+    var n = nowDate(now);
+    var pd = partsOf(d), pn = partsOf(n);
+    var dn = Date.UTC(pd.y, pd.m - 1, pd.d) / 86400000, tn = Date.UTC(pn.y, pn.m - 1, pn.d) / 86400000;
+    if (dn <= tn) return 'today';
+    return dn - tn < AGENDA_DAYS ? 'week' : 'later';
+  }
+
+  var FU_GROUPS = [{ key: 'today', label: 'Today' }, { key: 'week', label: 'This week' }, { key: 'later', label: 'Later' }];
+  // Scheduled rows (already soonest first) split into the non-empty groups, in order.
+  function groupScheduled(rows, now) {
+    var by = { today: [], week: [], later: [] };
+    (Array.isArray(rows) ? rows : []).forEach(function (r) { by[fuBucket(r && r.due_at, now)].push(r); });
+    return FU_GROUPS.filter(function (g) { return by[g.key].length; }).map(function (g) { return { key: g.key, label: g.label, rows: by[g.key] }; });
+  }
+
+  // Lead value inside Metrics: one line per tier (open leads only). No lead lists.
+  // [{ key, label, range, count, money }]; money '' for "No quote yet". total = open quoted leads and money.
+  function tierLines(leads, tiers) {
+    var secs = groupByTier(leads, {});
+    var t = valueTiers({ value_tiers: tiers });
+    return secs.map(function (s) {
+      return { key: s.key, label: s.label, range: tierRange(s.key, t), count: s.count, money: s.key === 'none' ? '' : fmtMoney(s.total) };
+    });
+  }
+
+  // Close rate as one tile: { pct: "80%", text: "4 of 5 finished leads booked" }; null when nothing has finished.
+  function closeRateTile(cr) {
+    var b = num(cr && cr.booked) || 0, l = num(cr && cr.lost) || 0;
+    var done = b + l;
+    if (!done) return null;
+    return { pct: Math.round(b / done * 100) + '%', text: b + ' of ' + plural(done, 'finished lead', 'finished leads') + ' booked' };
+  }
+
   /* ---------- bottom bar (CV_CUSTOM.tabs + feature switches) ---------- */
 
   // Which tabs sit in the bar and which live under More. `want` = CV_CUSTOM.tabs, `on(route)` = feature switch.
   // Leads is always on. Names the page does not know are ignored; an empty or unusable list means "everything on".
-  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Quote calculator, Lead value (+ the fixed Alerts and Sign out).
+  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Quote calculator (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
   // slots counts the bar tabs plus the More slot; with fewer than 2 the page hides the bar.
   var BAR_TABS = ['list', 'followups', 'calendar', 'metrics'];
-  var MORE_TABS = ['quote', 'value'];
+  var MORE_TABS = ['quote'];
   function tabPlan(want, on) {
     var isOn = typeof on === 'function' ? on : function () { return true; };
     var known = BAR_TABS.concat(MORE_TABS);
@@ -1570,13 +1660,13 @@
   function isUuid(s) { return typeof s === 'string' && UUID_RE.test(s); }
 
   // '#/' | '' -> list; '#/lead/<uuid>' -> thread; '#/<tab>' -> that tab when it is in `tabs`
-  // (default: the built-in 'value' tab); anything else -> list.
+  // (none when no list is given); anything else -> list.
   function parseRoute(hash, tabs) {
     var h = String(hash || '');
     var m = /^#\/lead\/([^/?#]+)\/?$/.exec(h);
     if (m && isUuid(m[1])) return { name: 'lead', id: m[1].toLowerCase() };
     var t = /^#\/([a-z][a-z0-9-]*)\/?$/.exec(h);
-    var known = Array.isArray(tabs) ? tabs : ['value'];
+    var known = Array.isArray(tabs) ? tabs : [];
     if (t && t[1] !== 'lead' && known.indexOf(t[1]) !== -1) return { name: t[1] };
     return { name: 'list' };
   }
@@ -1698,6 +1788,14 @@
     searchFilter: searchFilter,
     SEARCH_MIN: SEARCH_MIN,
     today: today,
+    fmtAgoOn: fmtAgoOn,
+    statusHeading: statusHeading,
+    weekAgenda: weekAgenda,
+    agendaView: agendaView,
+    fuBucket: fuBucket,
+    groupScheduled: groupScheduled,
+    tierLines: tierLines,
+    closeRateTile: closeRateTile,
     shiftMonth: shiftMonth,
     monthTitle: monthTitle,
     monthGrid: monthGrid,

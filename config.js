@@ -38,17 +38,17 @@ window.CV_CUSTOM = {
   timeZone: 'America/Toronto',
 
   // Features: true = on, false = off (an off feature is not shown at all, nowhere on the page).
-  // Left out = on. Tabs: followups, calendar, quote, value, metrics. Parts of other screens:
+  // Left out = on. Tabs: followups, calendar, quote, metrics. 'value' = the Lead value section of Metrics. Parts of other screens:
   // search (top of Leads), notes (on a lead's record), push ("Alerts on this phone" under More).
   // Hours a "Needs you" lead may wait before its wait turns red with "· overdue" (1–720; default 24, Kevin 11-06).
   waitWarnHours: 24,
   features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true, push: true },
 
   // Bottom bar and More: which tabs show, in this order (a tab whose feature is off is skipped).
-  // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar; 'quote' and 'value' sit under More
+  // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar; 'quote' sits under More
   // (More itself is always the last slot and also holds Alerts and Sign out).
-  tabs: ['list', 'followups', 'calendar', 'quote', 'value', 'metrics'],
-  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', quote: 'Quote calculator', value: 'Lead value' },
+  tabs: ['list', 'followups', 'calendar', 'quote', 'metrics'],
+  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', quote: 'Quote calculator' },
 
   // Status wording on chips, filter chips, the three buttons and the history lines.
   // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, booked, lost, opted_out.
@@ -67,6 +67,6 @@ window.CV_CUSTOM = {
   lostReasons: { price: 'Price', date_taken: 'Date taken', no_reply: 'No reply', went_elsewhere: 'Went elsewhere', other: 'Other' },
 
   // Metrics tab: which blocks show, in this order.
-  // Known: 'open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey'.
-  metrics: ['open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey']
+  // Known: 'booked', 'open', 'value', 'close_rate', 'lost_reasons', 'speed'. 'value' (Lead value) also needs features.value.
+  metrics: ['booked', 'open', 'value', 'close_rate', 'lost_reasons', 'speed']
 };

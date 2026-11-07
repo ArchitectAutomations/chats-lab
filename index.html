@@ -119,6 +119,23 @@
   <main class="screen calendar-screen" id="screen-calendar" hidden>
     <div class="scroller" id="cal-scroll">
       <div class="cal-wrap">
+        <!-- This week (and a few later events): who, when, guests, price. Built by renderAgenda(). -->
+        <section class="cal-agenda" id="cal-agenda" aria-label="Coming up" hidden>
+          <section class="ag-group" aria-labelledby="cal-ag-week-h">
+            <h2 class="ag-h" id="cal-ag-week-h">This week</h2>
+            <ul class="ag-list" id="cal-agenda-week"></ul>
+          </section>
+          <p class="cal-day-empty" id="cal-agenda-empty" hidden></p>
+          <section class="ag-group" aria-labelledby="cal-ag-later-h" hidden>
+            <h2 class="ag-h" id="cal-ag-later-h">Later</h2>
+            <ul class="ag-list" id="cal-agenda-later"></ul>
+          </section>
+        </section>
+        <label class="toggle cal-toggle">
+          <input type="checkbox" id="cal-possible">
+          <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+          <span>Include leads not booked yet</span>
+        </label>
         <div class="cal-bar">
           <button class="icon-btn cal-nav" id="cal-prev" type="button" aria-label="Previous month">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -128,11 +145,7 @@
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
         </div>
-        <label class="toggle cal-toggle">
-          <input type="checkbox" id="cal-possible">
-          <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
-          <span>Include leads not booked yet</span>
-        </label>
+        <p class="cal-legend" aria-hidden="true"><span class="cal-key is-booked"></span>Booked <span class="cal-key is-possible"></span>Not booked yet</p>
         <p class="status-line" id="cal-loading">Loading your events…</p>
         <table class="cal-grid" id="cal-grid" hidden>
           <thead><tr id="cal-head"></tr></thead>
@@ -157,12 +170,21 @@
         <ul class="more-list" id="more-list"></ul>
         <!-- Alerts on this phone: shown only when CV_CUSTOM.features.push is on and the server says push is enabled. -->
         <section class="alerts" id="alerts" aria-labelledby="alerts-h" hidden>
-          <h2 class="alerts-h" id="alerts-h">Alerts on this phone</h2>
-          <p class="alerts-text" id="alerts-text"></p>
-          <button type="button" class="btn primary alerts-btn" id="alerts-on" hidden>Turn on alerts</button>
-          <div class="alerts-row" id="alerts-row" hidden>
-            <button type="button" class="btn alerts-sec" id="alerts-test">Send test alert</button>
-            <button type="button" class="btn quiet" id="alerts-off">Turn off</button>
+          <!-- Once alerts are on, the section is this one line (tap to open the details). -->
+          <button type="button" class="alerts-sum" id="alerts-sum" aria-expanded="false" aria-controls="alerts-body" hidden>
+            <span class="alerts-sum-label">Alerts on this phone</span>
+            <span class="alerts-sum-state">On</span>
+            <svg class="alerts-sum-chev" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="alerts-body" id="alerts-body">
+            <h2 class="alerts-h" id="alerts-h">Alerts on this phone</h2>
+            <p class="alerts-text" id="alerts-text"></p>
+            <div class="alerts-infos" id="alerts-info"></div>
+            <button type="button" class="btn primary alerts-btn" id="alerts-on" hidden>Turn on alerts</button>
+            <div class="alerts-row" id="alerts-row" hidden>
+              <button type="button" class="btn alerts-sec" id="alerts-test">Send test alert</button>
+              <button type="button" class="btn quiet" id="alerts-off">Turn off</button>
+            </div>
           </div>
           <p class="alerts-msg" id="alerts-msg" role="status" aria-live="polite" hidden></p>
         </section>
@@ -256,25 +278,6 @@
           <p class="q-copied" id="q-copied" role="status"></p>
           <button class="btn quiet q-copy" id="q-copy" type="button" hidden>Copy quote</button>
         </section>
-      </div>
-    </div>
-  </main>
-
-  <!-- Lead value -->
-  <main class="screen value-screen" id="screen-value" hidden>
-    <div class="scroller" id="value-scroll">
-      <div class="value-wrap">
-        <div class="value-bar">
-          <p class="value-total" id="value-total"></p>
-          <label class="toggle">
-            <input type="checkbox" id="show-closed">
-            <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
-            <span>Show closed</span>
-          </label>
-        </div>
-        <p class="status-line" id="value-loading">Loading your leads…</p>
-        <div id="value-sections"></div>
-        <p class="error pad" id="value-error" role="alert" hidden></p>
       </div>
     </div>
   </main>
