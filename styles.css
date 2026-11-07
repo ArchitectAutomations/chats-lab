@@ -272,6 +272,9 @@ a { color: var(--link); }
   font-size: 16px; font-weight: 700; text-decoration: none;
 }
 .contact-btn:active { background: var(--primary-deep); }
+/* Call = the one action button in accent purple (Kevin 11-06). accent-strong keeps white text above 4.5:1. */
+.contact-btn.contact-call { background: var(--accent-strong); color: #fff; }
+.contact-btn.contact-call:active { background: var(--accent-ink); }
 .contact-btn svg { flex: none; }
 
 .strip-time { margin: -4px 0 0; font-size: 13.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
