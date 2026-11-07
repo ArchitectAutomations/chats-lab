@@ -17,6 +17,8 @@
   var TARGET_KEY = 'cv_target_lead';
   var FILTER_KEY = 'cv_filter';
   var CLOSED_KEY = 'cv_show_closed';
+  var POSSIBLE_KEY = 'cv_cal_possible';
+  var SEARCH_DEBOUNCE = 250;
   var RESEND_SECONDS = 60;
   var HISTORY_SHORT = 2;
   var SVG_NS = 'http://www.w3.org/2000/svg';
@@ -32,27 +34,37 @@
      `route` is the hash name ('list' is '#/'), `icon` is an SVG path (24x24, stroked). */
   var TABS = [
     { route: 'list', href: '#/', label: 'Leads', show: showList, icon: 'M4 5.5h16v10.5H10l-4.5 3.5V16H4z' },
+    { route: 'followups', href: '#/followups', label: 'Follow-ups', show: showFollowUps, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 7.5V12l3 2' },
+    { route: 'calendar', href: '#/calendar', label: 'Calendar', show: showCalendar, icon: 'M4 6h16v14H4zM4 10.5h16M8.5 3.5v5M15.5 3.5v5' },
+    { route: 'quote', href: '#/quote', label: 'Quote calculator', show: showQuote, icon: 'M7 3.5h10v17H7zM9.5 7h5M9.5 11h1M13.5 11h1M9.5 14.5h1M13.5 14.5h1M9.5 18h5' },
     { route: 'value', href: '#/value', label: 'Lead value', show: showValue, icon: 'M12 3v18M16.5 7.5c-.6-1.4-2.3-2.3-4.5-2.3-2.6 0-4.5 1.3-4.5 3.2 0 4.3 9 2.3 9 6.6 0 1.9-1.9 3.3-4.5 3.3-2.3 0-4-.9-4.7-2.4' },
     { route: 'metrics', href: '#/metrics', label: 'Metrics', show: showMetrics, icon: 'M5 20v-8M12 20V5M19 20v-5M3 20h18' }
   ];
 
-  // The client's menu: CV_CUSTOM.tabs order (unknown names ignored), labels from CV_CUSTOM.tabLabels.
-  // Falls back to every tab when the setting is missing or names nothing usable.
+  // Feature switches (CV_CUSTOM.features): an off feature is not shown anywhere. Leads ('list') is always on.
+  function feature(key) { return L.featureOn(custom.features, key); }
+  function tabOn(t) { return t.route === 'list' || feature(t.route); }
+
+  // The client's menu: CV_CUSTOM.tabs order (unknown names and switched-off features ignored),
+  // labels from CV_CUSTOM.tabLabels. Falls back to every switched-on tab when the setting names nothing usable.
   var NAV = (function () {
     var want = Array.isArray(custom.tabs) ? custom.tabs : [];
     var labels = custom.tabLabels || {};
     var picked = [];
     want.forEach(function (r) {
-      var t = TABS.filter(function (x) { return x.route === r; })[0];
+      var t = TABS.filter(function (x) { return x.route === r && tabOn(x); })[0];
       if (t && picked.indexOf(t) === -1) picked.push(t);
     });
-    if (!picked.length) picked = TABS.slice();
+    if (!picked.length) picked = TABS.filter(tabOn);
     return picked.map(function (t) {
       var label = typeof labels[t.route] === 'string' && labels[t.route].trim() ? labels[t.route].trim() : t.label;
       return { route: t.route, href: t.href, label: label, show: t.show, icon: t.icon };
     });
   })();
   var TAB_ROUTES = NAV.map(function (n) { return n.route; });
+  var HAS_FOLLOWUPS = TAB_ROUTES.indexOf('followups') !== -1;
+  var HAS_SEARCH = feature('search');
+  var HAS_NOTES = feature('notes');
 
   function $(id) { return document.getElementById(id); }
   var el = {
@@ -61,6 +73,19 @@
     topbar: $('topbar'), back: $('btn-back'), title: $('title'), subtitle: $('subtitle'),
     live: $('live'), liveText: $('live-text'),
     signin: $('screen-signin'), list: $('screen-list'), value: $('screen-value'), metrics: $('screen-metrics'), thread: $('screen-thread'),
+    search: $('lead-search'), searchBox: $('search-box'), searchStatus: $('search-status'), searchResults: $('search-results'), browseBox: $('browse-box'),
+    calendar: $('screen-calendar'), calTitle: $('cal-title'), calPrev: $('cal-prev'), calNext: $('cal-next'), calPossible: $('cal-possible'),
+    calLoading: $('cal-loading'), calGrid: $('cal-grid'), calHead: $('cal-head'), calBody: $('cal-body'), calMonthNote: $('cal-month-note'),
+    calDay: $('cal-day'), calDayTitle: $('cal-day-title'), calDayList: $('cal-day-list'), calDayEmpty: $('cal-day-empty'), calErr: $('cal-error'),
+    recNotes: $('rec-notes'), notesList: $('notes-list'), noteText: $('note-text'), noteCount: $('note-count'), noteErr: $('note-error'), noteSave: $('note-save'),
+    stripNote: $('strip-note'),
+    priceBox: $('price-box'), price: $('price'), reasonBox: $('reason-box'), reasonChips: $('reason-chips'), reasonOther: $('reason-other'),
+    reasonNote: $('reason-note'), confirmErr: $('confirm-error'),
+    quote: $('screen-quote'), qForm: $('q-form'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
+    qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qMore: $('q-more'),
+    qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
+    qCopy: $('q-copy'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
+    followups: $('screen-followups'), fuBody: $('fu-body'), fuLoading: $('fu-loading'), fuErr: $('fu-error'), menuBadge: $('menu-badge'),
     metricsBody: $('metrics-body'), metricsLoading: $('metrics-loading'), metricsErr: $('metrics-error'), metricsUpdated: $('metrics-updated'),
     formPhone: $('form-phone'), phone: $('phone'), phoneErr: $('phone-error'), btnSend: $('btn-send'),
     formCode: $('form-code'), code: $('code'), codePhone: $('code-phone'), codeErr: $('code-error'), codeNote: $('code-note'),
@@ -99,9 +124,16 @@
     thread: emptyThread(),
     live: 'off',
     stopLive: null,
-    seq: { list: 0, thread: 0, metrics: 0 },
+    seq: { list: 0, thread: 0, metrics: 0, followups: 0 },
     metrics: null,
     metricsError: '',
+    followUps: null,     // follow_ups rows once loaded
+    followUpsError: '',
+    search: { q: '', rows: null, error: '', seq: 0, timer: null },  // memory only: never URL / storage
+    cal: null,           // { y, m, sel } month on screen and picked day
+    showPossible: false,
+    noteBusy: false,
+    quote: { busy: false, seq: 0, view: null, req: null },
     phone: null,
     resendTimer: null,
     resendAt: 0,
@@ -187,6 +219,10 @@
     'created_at', 'last_inbound_at', 'last_outbound_at', 'contacted_at', 'booked_at', 'lost_at', 'nudge_sent_at',
     'last_activity_at', 'other_events'
   ].join(',');
+  // Added for final price, lost reason and notes; dropped again if the view does not have them yet.
+  var DETAIL_EXTRA = ',booked_amount,lost_reason,lost_note,notes';
+  var SEARCH_COLUMNS = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at';
+  var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
 
   function makeRealApi() {
     var client = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
@@ -217,9 +253,12 @@
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
-          client.from('lead_detail').select(DETAIL_COLUMNS).eq('lead_id', id).maybeSingle().then(function (r) {
+          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA).eq('lead_id', id).maybeSingle().then(function (r) {
             if (!r.error) return r.data;
-            return client.from('lead_list').select('*').eq('lead_id', id).maybeSingle().then(ok);
+            return client.from('lead_detail').select(DETAIL_COLUMNS).eq('lead_id', id).maybeSingle().then(function (r2) {
+              if (!r2.error) return r2.data;
+              return client.from('lead_list').select('*').eq('lead_id', id).maybeSingle().then(ok);
+            });
           }),
           client.from('conversation').select('*').eq('lead_id', id)
             .order('at', { ascending: true }).limit(2000).then(ok),
@@ -229,10 +268,42 @@
             .then(function (r) { return r.error ? null : r.data; }, function () { return null; })
         ]).then(function (r) { return { lead: r[0], rows: r[1], history: r[2] }; });
       },
-      setStatus: function (id, status) {
-        return client.rpc('cv_set_lead_status', { p_lead_id: id, p_status: status }).then(ok);
+      // extra: { p_amount, p_reason, p_reason_note }; only keys with a value are sent.
+      setStatus: function (id, status, extra) {
+        var args = { p_lead_id: id, p_status: status };
+        Object.keys(extra || {}).forEach(function (k) { if (extra[k] !== null && extra[k] !== undefined) args[k] = extra[k]; });
+        return client.rpc('cv_set_lead_status', args).then(ok);
       },
+      // Server-side search on lead_detail (RLS applies). The filter string comes from L.searchFilter.
+      searchLeads: function (q) {
+        var f = L.searchFilter(q);
+        if (!f) return Promise.resolve([]);
+        return client.from('lead_detail').select(SEARCH_COLUMNS + ',booked_amount,lost_reason').or(f)
+          .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(function (r) {
+            if (!r.error) return r.data;
+            return client.from('lead_detail').select(SEARCH_COLUMNS).or(f)
+              .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(ok);
+          });
+      },
+      // Read-only price check. Non-2xx answers are thrown as { status, error, details } from the JSON body.
+      quote: function (body) {
+        return client.functions.invoke('cv-quote', { body: body }).then(function (r) {
+          if (!r.error) return r.data;
+          var ctx = r.error.context;
+          if (ctx && typeof ctx.json === 'function') {
+            return ctx.json().catch(function () { return {}; }).then(function (b) {
+              throw { status: ctx.status, error: (b && b.error) || '', details: b && b.details };
+            });
+          }
+          throw { status: 0, error: String(r.error.name || 'network'), details: String(r.error.message || '') };
+        });
+      },
+      addNote: function (id, body) { return client.rpc('cv_add_note', { p_lead_id: id, p_body: body }).then(ok); },
+      deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
+      fetchFollowUps: function () {
+        return client.from('follow_ups').select(FOLLOWUP_COLUMNS).limit(1000).then(ok);
+      },
       // Payloads are never trusted: any event just triggers a refetch.
       subscribe: function (onEvent, onStatus) {
         var ch = client.channel('cv-live')
@@ -244,7 +315,12 @@
         var ev = client.channel('cv-live-events')
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'lead_events' }, onEvent)
           .subscribe();
-        return function () { client.removeChannel(ch); client.removeChannel(ev); };
+        // Notes on their own channel too.
+        var nt = client.channel('cv-live-notes')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'lead_notes' }, onEvent)
+          .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'lead_notes' }, onEvent)
+          .subscribe();
+        return function () { client.removeChannel(ch); client.removeChannel(ev); client.removeChannel(nt); };
       }
     };
   }
@@ -273,7 +349,17 @@
       a.href = n.href;
       a.setAttribute('data-route', n.route);
       a.appendChild(icon(n.icon));
-      a.appendChild(make('span', '', n.label));
+      a.appendChild(make('span', 'nav-label', n.label));
+      if (n.route === 'followups') {
+        // Visible count + words for screen readers; filled by renderBadge().
+        var badge = make('span', 'nav-badge');
+        badge.hidden = true;
+        var num = make('span', '', '0');
+        num.setAttribute('aria-hidden', 'true');
+        badge.appendChild(num);
+        badge.appendChild(make('span', 'sr-only', ''));
+        a.appendChild(badge);
+      }
       a.addEventListener('click', function () { closeNav(false); });
       li.appendChild(a);
       frag.appendChild(li);
@@ -338,6 +424,9 @@
     show(el.list, name === 'list');
     show(el.value, name === 'value');
     show(el.metrics, name === 'metrics');
+    show(el.followups, name === 'followups');
+    show(el.calendar, name === 'calendar');
+    show(el.quote, name === 'quote');
     show(el.thread, name === 'thread');
     show(el.topbar, signedIn);
     show(el.back, name === 'thread');
@@ -389,8 +478,10 @@
     S.refreshTimer = setTimeout(function () {
       if (!S.signedIn) return;
       refreshList();
+      refreshFollowUps();
       if (S.screen === 'thread' && S.thread.id) refreshThread();
-      if (S.screen === 'metrics') refreshMetrics();
+      if (S.screen === 'metrics' || S.screen === 'value') refreshMetrics();
+      if (S.screen === 'list' && L.searchFilter(S.search.q)) runSearch();
     }, delay);
   }
 
@@ -407,6 +498,8 @@
   function renderLeadScreens() {
     if (S.screen === 'list') renderList();
     else if (S.screen === 'value') renderValue();
+    else if (S.screen === 'followups') renderFollowUps(); // "asked for you" times come from the lead list
+    else if (S.screen === 'calendar') renderCalendar();
   }
 
   function refreshList() {
@@ -492,30 +585,88 @@
     setText(el.filterEmpty, S.leads.length > 0 && leads.length === 0 ? FILTER_EMPTY[S.filter] || 'No leads here.' : '');
     show(el.leadList, leads.length > 0);
     var frag = document.createDocumentFragment();
-    leads.forEach(function (lead) {
-      var li = make('li');
-      var a = make('a', 'lead-row');
-      a.href = '#/lead/' + encodeURIComponent(lead.lead_id);
-      var st = L.statusInfo(lead.status);
-      a.appendChild(make('span', 'lead-name', leadName(lead)));
-      a.appendChild(make('span', 'lead-when', L.fmtAgo(lead.last_activity_at)));
-      var meta = make('span', 'lead-meta');
-      meta.appendChild(make('span', '', lead.event_date ? 'Event ' + L.fmtEventDate(lead.event_date) : 'No event date'));
-      var money = L.fmtMoney(lead.quote_total);
-      if (money) meta.appendChild(make('span', 'lead-money', money));
-      a.appendChild(meta);
-      a.appendChild(make('span', 'chip tone-' + st.tone, st.label));
-      li.appendChild(a);
-      frag.appendChild(li);
-    });
+    leads.forEach(function (lead) { frag.appendChild(leadRow(lead)); });
     el.leadList.replaceChildren(frag);
+  }
+
+  // One list row (also used for search results).
+  function leadRow(lead) {
+    var li = make('li');
+    var a = make('a', 'lead-row');
+    a.href = '#/lead/' + encodeURIComponent(lead.lead_id);
+    var st = L.statusChip(lead);
+    a.appendChild(make('span', 'lead-name', leadName(lead)));
+    a.appendChild(make('span', 'lead-when', L.fmtAgo(lead.last_activity_at)));
+    var meta = make('span', 'lead-meta');
+    meta.appendChild(make('span', '', lead.event_date ? 'Event ' + L.fmtEventDate(lead.event_date) : 'No event date'));
+    var money = L.quoteMoney(lead);
+    if (money) meta.appendChild(make('span', 'lead-money', money));
+    a.appendChild(meta);
+    a.appendChild(make('span', 'chip tone-' + st.tone, st.label));
+    li.appendChild(a);
+    return li;
+  }
+
+  /* ---------- search (Leads tab) ---------- */
+
+  function searchActive() { return HAS_SEARCH && !!L.searchFilter(S.search.q); }
+
+  function renderSearch() {
+    var on = searchActive();
+    show(el.searchBox, on);
+    show(el.browseBox, !on);
+    if (!on) return;
+    var rows = S.search.rows;
+    if (S.search.error) { setText(el.searchStatus, S.search.error); show(el.searchResults, false); return; }
+    if (!rows) { setText(el.searchStatus, 'Searching…'); show(el.searchResults, false); return; }
+    var frag = document.createDocumentFragment();
+    rows.filter(function (r) { return r && L.isUuid(r.lead_id); }).forEach(function (r) { frag.appendChild(leadRow(r)); });
+    el.searchResults.replaceChildren(frag);
+    show(el.searchResults, rows.length > 0);
+    setText(el.searchStatus, rows.length ? L.plural(rows.length, 'lead matches', 'leads match') + (rows.length >= 25 ? ' (showing the first 25)' : '') : 'No leads match that search.');
+  }
+
+  function runSearch() {
+    var q = S.search.q;
+    var n = ++S.search.seq;
+    if (!S.api.searchLeads || !L.searchFilter(q)) return;
+    Promise.resolve(S.api.searchLeads(q)).then(function (rows) {
+      if (n !== S.search.seq || !S.signedIn) return;
+      S.search.rows = Array.isArray(rows) ? rows : [];
+      S.search.error = '';
+      renderSearch();
+    }).catch(function (e) {
+      if (n !== S.search.seq) return;
+      S.search.rows = null;
+      S.search.error = isAuthFailure(e) ? 'Your session ran out. Sign out and sign in again.' : "Couldn't search right now. Try again in a moment.";
+      renderSearch();
+    });
+  }
+
+  function onSearchInput() {
+    S.search.q = el.search.value;
+    clearTimeout(S.search.timer);
+    S.search.rows = null; S.search.error = '';
+    S.search.seq++;
+    renderSearch();
+    if (searchActive()) S.search.timer = setTimeout(runSearch, SEARCH_DEBOUNCE);
+  }
+
+  function clearSearch() {
+    clearTimeout(S.search.timer);
+    S.search = { q: '', rows: null, error: '', seq: S.search.seq + 1, timer: null };
+    el.search.value = '';
+    el.searchResults.replaceChildren();
+    renderSearch();
   }
 
   function showList() {
     S.thread.id = null;
     setScreen('list');
     renderList();
+    renderSearch();
     refreshList();
+    if (searchActive()) runSearch();
   }
 
   /* ---------- lead value ---------- */
@@ -528,8 +679,8 @@
     a.href = '#/lead/' + encodeURIComponent(lead.lead_id);
     var top = make('span', 'card-top');
     top.appendChild(make('span', 'card-name', leadName(lead)));
-    var money = L.fmtMoney(lead.quote_total);
-    if (money) top.appendChild(make('span', 'card-money', money));
+    var money = L.quoteMoney(lead); // "Quoted $1,180" once a final price is on the chip
+    if (money) top.appendChild(make('span', 'card-money' + (money === L.fmtMoney(lead.quote_total) ? '' : ' is-quoted'), money));
     a.appendChild(top);
     var bits = [];
     bits.push(lead.event_date ? L.fmtEventDate(lead.event_date) : 'No event date');
@@ -537,7 +688,7 @@
     if (lead.event_city) bits.push(String(lead.event_city));
     var bottom = make('span', 'card-bottom');
     bottom.appendChild(make('span', 'card-meta', bits.join(', ')));
-    var st = L.statusInfo(lead.status);
+    var st = L.statusChip(lead);
     bottom.appendChild(make('span', 'chip tone-' + st.tone, st.label));
     a.appendChild(bottom);
     li.appendChild(a);
@@ -560,11 +711,15 @@
     var openCount = quoted.reduce(function (sum, s) { return sum + s.count; }, 0);
     setText(el.valueTotal, openCount ? L.fmtMoney(openCents / 100) + ' in open quotes across ' + plural(openCount, 'lead', 'leads') : 'No open quotes right now.');
 
+    // Thresholds from cv_metrics().value_tiers; 1000 / 600 until it loads or when it is missing.
+    var tiers = L.valueTiers(S.metrics);
     var frag = document.createDocumentFragment();
     sections.forEach(function (s) {
+      var range = L.tierRange(s.key, tiers);
       // Nothing to show in this tier: one plain line, no empty frame.
       if (!s.leads.length) {
-        frag.appendChild(make('p', 'tier-blank', s.key === 'none' ? 'Every open lead has a quote.' : 'No open leads in ' + s.label + '.'));
+        frag.appendChild(make('p', 'tier-blank', s.key === 'none' ? 'Every open lead has a quote.'
+          : 'No open leads in ' + s.label + (range ? ' (' + range + ')' : '') + '.'));
         return;
       }
       var sec = make('section', 'tier tier-' + s.key);
@@ -572,6 +727,7 @@
       sec.setAttribute('aria-labelledby', id);
       var head = make('div', 'tier-head');
       var h = make('h2', 'tier-name', s.label);
+      if (range) h.appendChild(make('span', 'tier-range', ' · ' + range));
       h.id = id;
       head.appendChild(h);
       var sum = make('p', 'tier-sum');
@@ -595,6 +751,423 @@
     el.showClosed.checked = S.showClosed;
     renderValue();
     refreshList();
+    refreshMetrics(); // tier thresholds
+  }
+
+  /* ---------- quote calculator ---------- */
+
+  var Q_FIELDS = ['guests', 'service_hours', 'bar_rental', 'event_city', 'distance_km', 'event_date', 'occasion', 'promo_code'];
+  var Q_INPUT = { guests: 'qGuests', service_hours: 'qHours', event_city: 'qCity', distance_km: 'qKm', event_date: 'qDate', occasion: 'qOccasion', promo_code: 'qPromo' };
+
+  function qRadio(name) { var c = el.qForm.querySelector('input[name="' + name + '"]:checked'); return c ? c.value : ''; }
+
+  function qForm() {
+    var bar = qRadio('q-bar');
+    return {
+      service_type: 'full_service', guests: el.qGuests.value, service_hours: el.qHours.value,
+      bar_rental: bar === 'yes' ? true : bar === 'no' ? false : null,
+      event_city: el.qCity.value, distance_km: el.qKmBox.hidden ? '' : el.qKm.value,
+      event_date: el.qDate.value, occasion: el.qOccasion.value, promo_code: el.qPromo.value
+    };
+  }
+
+  // Bar only always includes the bar: the yes / no question goes away.
+  function qTypeChanged() {
+    var barOnly = false; // David only offers full service (Kevin, 2026-11-06)
+    show(el.qBarBox, !barOnly);
+    show(el.qBarNote, barOnly);
+  }
+
+  function qFieldErrors(errors) {
+    var first = null;
+    Q_FIELDS.forEach(function (f) {
+      var msg = errors[f] || '';
+      var p = $('q-err-' + f);
+      if (p) setText(p, msg);
+      var input = Q_INPUT[f] ? el[Q_INPUT[f]] : el.qForm.querySelector('input[name="q-bar"]');
+      if (input) { if (msg) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid'); }
+      if (msg && !first) first = input;
+    });
+    if (errors.distance_km) show(el.qKmBox, true);
+    var inMore = ['event_date', 'occasion', 'promo_code'].some(function (f) { return errors[f]; });
+    if (inMore) el.qMore.open = true;
+    return first;
+  }
+
+  function qBusy(on) {
+    S.quote.busy = on;
+    el.qSubmit.disabled = on;
+    el.qSubmit.classList.toggle('is-busy', on);
+    if (on) el.qSubmit.setAttribute('aria-busy', 'true'); else el.qSubmit.removeAttribute('aria-busy');
+  }
+
+  function renderQuoteResult() {
+    var v = S.quote.view;
+    if (!v) { show(el.qResult, false); return; }
+    var frag = document.createDocumentFragment();
+    if (v.defer) {
+      frag.appendChild(make('p', 'quote-review', 'Needs your review'));
+      frag.appendChild(make('p', 'quote-why', v.reasons.length ? 'The calculator did not give a price because:' : 'The calculator did not give a price for these answers.'));
+      if (v.reasons.length) {
+        var ul = make('ul', 'quote-reasons');
+        v.reasons.forEach(function (r) { ul.appendChild(make('li', '', r)); });
+        frag.appendChild(ul);
+      }
+    } else {
+      var items = make('ul', 'quote-items');
+      v.items.forEach(function (it) {
+        var li = make('li', 'quote-item' + (it.discount ? ' is-discount' : ''));
+        var txt = make('span', 'qi-text');
+        txt.appendChild(make('span', 'qi-label', it.label));
+        if (it.detail) txt.appendChild(make('span', 'qi-detail', it.detail));
+        li.appendChild(txt);
+        li.appendChild(make('span', 'qi-amount', it.amount));
+        items.appendChild(li);
+      });
+      if (v.items.length) frag.appendChild(items);
+      var sums = make('dl', 'quote-sums');
+      [['Subtotal', v.subtotal, ''], ['Travel fee', v.travel, ''], ['Total', v.total, 'is-total']].forEach(function (x) {
+        if (!x[1]) return;
+        sums.appendChild(make('dt', x[2], x[0])); sums.appendChild(make('dd', x[2], x[1]));
+      });
+      frag.appendChild(sums);
+      if (v.deposit) frag.appendChild(make('p', 'rec-note', 'Deposit to hold the date: ' + v.deposit));
+      v.flags.forEach(function (f) { frag.appendChild(make('p', 'rec-note', f)); });
+    }
+    var city = S.quote.req && S.quote.req.event_city;
+    if (v.distance) frag.appendChild(make('p', 'rec-note q-distance', (city ? city + ' is ' : '') + v.distance + '.'));
+    el.qResultBody.replaceChildren(frag);
+    show(el.qCopy, !v.defer);
+    el.qCopied.textContent = '';
+    show(el.qResult, true);
+  }
+
+  function submitQuote() {
+    if (S.quote.busy) return;
+    setText(el.qErr, '');
+    var r = L.quoteRequest(qForm());
+    if (!r.ok) {
+      var first = qFieldErrors(r.errors);
+      setText(el.qErr, 'Check the marked fields.');
+      if (first) try { first.focus(); } catch (e) { /* ignore */ }
+      return;
+    }
+    qFieldErrors({});
+    var n = ++S.quote.seq;
+    qBusy(true);
+    Promise.resolve().then(function () { return S.api.quote(r.body); }).then(function (res) {
+      if (n !== S.quote.seq) return;
+      S.quote.view = L.quoteResult(res);
+      S.quote.req = r.body;
+      // A city the map could not find: offer the distance box.
+      if (S.quote.view.needsDistance) show(el.qKmBox, true);
+      renderQuoteResult();
+      try { el.qResultH.focus(); el.qResult.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { /* ignore */ }
+    }).catch(function (e) {
+      if (n !== S.quote.seq) return;
+      var q = L.quoteError(e);
+      var first = qFieldErrors(q.fields);
+      setText(el.qErr, q.message);
+      S.quote.view = null;
+      renderQuoteResult();
+      if (first) try { first.focus(); } catch (x) { /* ignore */ }
+    }).then(function () { if (n === S.quote.seq) qBusy(false); });
+  }
+
+  // Clipboard API (https / localhost); falls back to a hidden textarea + execCommand.
+  function copyQuote() {
+    var text = L.quoteText(S.quote.view, S.quote.req);
+    if (!text) return;
+    var done = function () { el.qCopied.textContent = 'Copied. Paste it into a text or an email.'; };
+    var fail = function () { el.qCopied.textContent = "Couldn't copy here. Select the quote and copy it by hand."; };
+    var fallback = function () {
+      try {
+        var ta = make('textarea');
+        ta.value = text; ta.setAttribute('readonly', ''); ta.className = 'sr-only';
+        document.body.appendChild(ta); ta.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) done(); else fail();
+      } catch (e) { fail(); }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
+  }
+
+  function showQuote() {
+    S.thread.id = null;
+    setScreen('quote');
+    qTypeChanged();
+    renderQuoteResult();
+  }
+
+  /* ---------- calendar ---------- */
+
+  var WEEK_HEAD = [['Sun', 'Sunday'], ['Mon', 'Monday'], ['Tue', 'Tuesday'], ['Wed', 'Wednesday'], ['Thu', 'Thursday'], ['Fri', 'Friday'], ['Sat', 'Saturday']];
+  var CAL_SHOW = 3; // names per day cell on wide screens; the rest is "+N"
+
+  function calState() {
+    if (!S.cal) { var t = L.today(); S.cal = { y: t.y, m: t.m, sel: t.ymd }; }
+    return S.cal;
+  }
+
+  function moveMonth(delta) {
+    var c = calState();
+    var n = L.shiftMonth(c.y, c.m, delta);
+    var t = L.today();
+    c.y = n.y; c.m = n.m;
+    c.sel = t.y === n.y && t.m === n.m ? t.ymd : n.y + '-' + (n.m < 10 ? '0' : '') + n.m + '-01';
+    renderCalendar();
+  }
+
+  function calHead() {
+    if (el.calHead.childNodes.length) return;
+    WEEK_HEAD.forEach(function (w) {
+      var th = make('th', '', w[0]);
+      th.scope = 'col';
+      th.abbr = w[1];
+      el.calHead.appendChild(th);
+    });
+  }
+
+  function renderCalendar() {
+    var c = calState();
+    el.calTitle.textContent = L.monthTitle(c.y, c.m);
+    el.calPossible.checked = S.showPossible;
+    if (!S.listLoaded) {
+      show(el.calLoading, !S.listError);
+      setText(el.calErr, S.listError);
+      show(el.calGrid, false); show(el.calDay, false); setText(el.calMonthNote, '');
+      return;
+    }
+    show(el.calLoading, false);
+    setText(el.calErr, '');
+    calHead();
+    var days = L.eventsByDay(S.leads, { showPossible: S.showPossible });
+    var today = L.today().ymd;
+    // A live refresh rebuilds the grid: put keyboard focus back on the same day.
+    var focused = document.activeElement && el.calBody.contains(document.activeElement) ? document.activeElement.getAttribute('data-day') : null;
+    var bookedInMonth = 0;
+    var frag = document.createDocumentFragment();
+    L.monthGrid(c.y, c.m).forEach(function (week) {
+      var tr = make('tr');
+      week.forEach(function (d) {
+        var td = make('td');
+        if (!d.inMonth) { td.className = 'is-out'; tr.appendChild(td); return; }
+        var day = days[d.ymd];
+        if (day) bookedInMonth += day.booked.length;
+        var b = make('button', 'cal-cell');
+        b.type = 'button';
+        b.setAttribute('data-day', d.ymd);
+        b.setAttribute('aria-label', L.dayLabel(d.ymd, day));
+        b.setAttribute('aria-pressed', String(d.ymd === c.sel));
+        if (d.ymd === today) { b.classList.add('is-today'); b.setAttribute('aria-current', 'date'); }
+        b.appendChild(make('span', 'cal-num', String(d.d)));
+        if (day) {
+          var marks = make('span', 'cal-marks');
+          var all = day.booked.map(function (l) { return [l, 'is-booked']; }).concat(day.possible.map(function (l) { return [l, 'is-possible']; }));
+          all.slice(0, CAL_SHOW).forEach(function (p) {
+            var ev = make('span', 'cal-ev ' + p[1]);
+            ev.appendChild(make('span', 'cal-ev-name', leadName(p[0])));
+            marks.appendChild(ev);
+          });
+          if (all.length > CAL_SHOW) marks.appendChild(make('span', 'cal-more', '+' + (all.length - CAL_SHOW)));
+          b.appendChild(marks);
+        }
+        b.addEventListener('click', function () { selectDay(d.ymd); });
+        td.appendChild(b);
+        tr.appendChild(td);
+      });
+      frag.appendChild(tr);
+    });
+    el.calBody.replaceChildren(frag);
+    show(el.calGrid, true);
+    if (focused) { var back = el.calBody.querySelector('[data-day="' + focused + '"]'); if (back) try { back.focus(); } catch (e) { /* ignore */ } }
+    setText(el.calMonthNote, bookedInMonth ? '' : 'Nothing booked in ' + L.monthTitle(c.y, c.m).split(' ')[0] + ' yet.');
+    renderDay(days);
+  }
+
+  // Picking a day only updates the pressed state and the list, so focus stays on the button.
+  function selectDay(dayYmd) {
+    calState().sel = dayYmd;
+    var cells = el.calBody.querySelectorAll('.cal-cell');
+    for (var i = 0; i < cells.length; i++) cells[i].setAttribute('aria-pressed', String(cells[i].getAttribute('data-day') === dayYmd));
+    renderDay(L.eventsByDay(S.leads, { showPossible: S.showPossible }));
+  }
+
+  function renderDay(days) {
+    var sel = calState().sel;
+    var day = days[sel];
+    var list = day ? day.booked.concat(day.possible) : [];
+    el.calDayTitle.textContent = L.fmtEventDate(sel);
+    var frag = document.createDocumentFragment();
+    list.forEach(function (lead) { frag.appendChild(valueCard(lead, false)); });
+    el.calDayList.replaceChildren(frag);
+    show(el.calDayList, list.length > 0);
+    setText(el.calDayEmpty, list.length ? '' : (S.showPossible ? 'No events on this day.' : 'Nothing booked on this day.'));
+    show(el.calDay, true);
+  }
+
+  function showCalendar() {
+    S.thread.id = null;
+    setScreen('calendar');
+    renderCalendar();
+    refreshList();
+  }
+
+  /* ---------- follow-ups ---------- */
+
+  function refreshFollowUps() {
+    if (!HAS_FOLLOWUPS || !S.api.fetchFollowUps) return Promise.resolve();
+    var n = ++S.seq.followups;
+    return Promise.resolve(S.api.fetchFollowUps()).then(function (rows) {
+      if (n !== S.seq.followups || !S.signedIn) return;
+      S.followUps = Array.isArray(rows) ? rows : [];
+      S.followUpsError = '';
+      renderBadge();
+      if (S.screen === 'followups') renderFollowUps();
+      else if (S.screen === 'thread' && S.thread.lead) renderNext();
+    }).catch(function (e) {
+      if (n !== S.seq.followups) return;
+      if (!S.followUps) {
+        S.followUpsError = isAuthFailure(e) ? 'Your session ran out. Sign out and sign in again.' : "Couldn't load your follow-ups. Trying again…";
+        if (S.screen === 'followups') renderFollowUps();
+      }
+      retryLater();
+    });
+  }
+
+  // Count on the Follow-ups menu item and on the phone menu button: leads that asked for the owner.
+  function renderBadge() {
+    var count = HAS_FOLLOWUPS ? L.followUpBadge(S.followUps) : 0;
+    var item = el.navList.querySelector('[data-route="followups"] .nav-badge');
+    if (item) {
+      item.hidden = !count;
+      item.firstChild.textContent = String(count);
+      item.lastChild.textContent = ', ' + count + ' waiting on you';
+    }
+    el.menuBadge.hidden = !count;
+    el.menuBadge.textContent = String(count);
+    el.navBtn.setAttribute('aria-label', count ? 'Open menu, ' + L.plural(count, 'follow-up', 'follow-ups') + ' waiting on you' : 'Open menu');
+  }
+
+  function fuBlock(title, empty) {
+    var sec = make('section', 'fu-block');
+    sec.appendChild(make('h2', 'fu-title', title));
+    if (empty) sec.appendChild(make('p', 'fu-empty', empty));
+    return sec;
+  }
+
+  // One tappable row: name (+ quote) on top, then the plain lines given.
+  function fuRow(r, lines, opts) {
+    var li = make('li');
+    var a = make('a', 'fu-row' + (opts && opts.cls ? ' ' + opts.cls : ''));
+    a.href = '#/lead/' + encodeURIComponent(r.lead_id);
+    var top = make('span', 'fu-top');
+    top.appendChild(make('span', 'fu-name', leadName(r)));
+    var money = L.fmtMoney(r.quote_total);
+    if (money) top.appendChild(make('span', 'fu-money', money));
+    a.appendChild(top);
+    lines.forEach(function (ln) {
+      if (!ln) return;
+      var p = make('span', 'fu-line' + (ln.cls ? ' ' + ln.cls : ''), ln.text);
+      if (ln.due) p.setAttribute('data-due', ln.due);
+      a.appendChild(p);
+    });
+    li.appendChild(a);
+    return li;
+  }
+
+  function eventBit(r) { return r.event_date ? 'Event ' + L.fmtEventDate(r.event_date) : 'No event date'; }
+
+  function renderFollowUps() {
+    if (!S.followUps) {
+      show(el.fuLoading, !S.followUpsError);
+      setText(el.fuErr, S.followUpsError);
+      el.fuBody.replaceChildren();
+      return;
+    }
+    show(el.fuLoading, false);
+    setText(el.fuErr, '');
+    var g = L.groupFollowUps(S.followUps, S.leads);
+    var frag = document.createDocumentFragment();
+
+    // 1. Needs you: the most important block, always first.
+    var needs = fuBlock(L.statusInfo('handed_off').label, g.needs.length ? '' : 'Nothing waiting on you.');
+    if (g.needs.length) {
+      var ul = make('ul', 'fu-list');
+      g.needs.forEach(function (r) {
+        ul.appendChild(fuRow(r, [{ text: L.askedLine(r), cls: 'fu-asked' }, { text: eventBit(r), cls: 'fu-meta' }], { cls: 'is-needs' }));
+      });
+      needs.appendChild(ul);
+    }
+    frag.appendChild(needs);
+
+    // 2. Scheduled follow-up texts, soonest first, with a live countdown.
+    var sched = fuBlock('Scheduled follow-up texts', g.scheduled.length ? '' : 'No follow-up texts scheduled.');
+    if (g.scheduled.length) {
+      var stop = 'Mark ' + L.statusInfo('booked').label.toLowerCase() + ' or ' + L.statusInfo('lost').label.toLowerCase() + ' to stop it';
+      var us = make('ul', 'fu-list');
+      g.scheduled.forEach(function (r) {
+        us.appendChild(fuRow(r, [
+          { text: L.nudgeLine(r) },
+          { text: L.fmtCountdown(r.due_at), cls: 'fu-count', due: r.due_at },
+          { text: stop, cls: 'fu-meta' }
+        ]));
+      });
+      sched.appendChild(us);
+    }
+    frag.appendChild(sched);
+
+    // 3. Held owner alerts and the morning summary: one plain line each, only when there are any.
+    var held = L.heldLine(g.held);
+    if (held) frag.appendChild(make('p', 'fu-held', held + '.'));
+    var digest = L.digestLine(g.digest);
+    if (digest) frag.appendChild(make('p', 'fu-held', digest + '.'));
+
+    // 4. Anything new the backend adds: shown plainly with its reason.
+    if (g.other.length) {
+      var oth = fuBlock('Other follow-ups');
+      var uo = make('ul', 'fu-list');
+      g.other.forEach(function (r) {
+        var when = r.due_at ? L.fmtDueAt(r.due_at) : '';
+        uo.appendChild(fuRow(r, [
+          { text: L.kindLabel(r.follow_up_type) + (when ? ' · ' + when : '') },
+          r.reason ? { text: String(r.reason), cls: 'fu-meta' } : null
+        ]));
+      });
+      oth.appendChild(uo);
+      frag.appendChild(oth);
+    }
+
+    // 5. Sent recently (last 14 days).
+    var sent = fuBlock('Sent recently', g.sent.length ? '' : 'No follow-up texts sent in the last 14 days.');
+    if (g.sent.length) {
+      var ust = make('ul', 'fu-list');
+      g.sent.forEach(function (r) { ust.appendChild(fuRow(r, [{ text: L.sentLine(r), cls: 'fu-meta' }], { cls: 'is-sent' })); });
+      sent.appendChild(ust);
+    }
+    frag.appendChild(sent);
+
+    el.fuBody.replaceChildren(frag);
+  }
+
+  // Countdowns change text only, so focus and scroll stay put.
+  function tickCountdowns() {
+    var spans = el.fuBody.querySelectorAll('[data-due]');
+    for (var i = 0; i < spans.length; i++) {
+      var t = L.fmtCountdown(spans[i].getAttribute('data-due'));
+      if (spans[i].textContent !== t) spans[i].textContent = t;
+    }
+    if (S.screen === 'thread' && S.thread.lead) renderNext();
+  }
+
+  function showFollowUps() {
+    S.thread.id = null;
+    setScreen('followups');
+    renderFollowUps();
+    refreshFollowUps();
+    refreshList(); // "asked for you" times
   }
 
   /* ---------- metrics ---------- */
@@ -607,6 +1180,7 @@
       S.metrics = m || {};
       S.metricsError = '';
       if (S.screen === 'metrics') renderMetrics();
+      else if (S.screen === 'value') renderValue(); // tier ranges
     }).catch(function (e) {
       if (n !== S.seq.metrics) return;
       if (!S.metrics) {
@@ -727,7 +1301,32 @@
       return b;
     }
   };
-  var METRIC_DEFAULT = ['open', 'booked', 'close_rate', 'speed', 'journey', 'waiting'];
+  // Why leads were lost (cv_metrics().lost_reasons), biggest first, bars like the journey.
+  METRIC_BLOCKS.lost_reasons = function (m) {
+    var b = block('Why leads were lost');
+    var rows = L.lostReasonRows(m.lost_reasons);
+    if (!rows.length) {
+      b.appendChild(make('p', 'm-line m-empty', 'No lost leads with a reason yet.'));
+      return b;
+    }
+    var ol = make('ol', 'funnel');
+    rows.forEach(function (r) {
+      var li = make('li', 'funnel-row');
+      var top = make('div', 'funnel-top');
+      top.appendChild(make('span', 'funnel-label', r.label));
+      top.appendChild(make('span', 'funnel-num', r.count + ' (' + r.pct + '%)'));
+      li.appendChild(top);
+      var track = make('div', 'funnel-track');
+      var bar = make('div', 'funnel-bar');
+      bar.style.width = r.pct + '%'; // CSSOM, allowed under style-src 'self'
+      track.appendChild(bar);
+      li.appendChild(track);
+      ol.appendChild(li);
+    });
+    b.appendChild(ol);
+    return b;
+  };
+  var METRIC_DEFAULT = ['open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey', 'waiting'];
 
   // CV_CUSTOM.metrics order; unknown names ignored; all blocks when the setting is missing or empty.
   function metricOrder() {
@@ -812,16 +1411,78 @@
     el.historyMore.setAttribute('aria-expanded', String(S.historyOpen));
   }
 
+  // Reason chips for the Lost sheet: real radio buttons (labels from CV_CUSTOM.lostReasons).
+  function buildReasons() {
+    var frag = document.createDocumentFragment();
+    L.lostReasons().forEach(function (r) {
+      var lab = make('label', 'reason-chip');
+      var input = make('input');
+      input.type = 'radio'; input.name = 'lost-reason'; input.value = r.key;
+      input.addEventListener('change', function () {
+        show(el.reasonOther, r.key === 'other');
+        setText(el.confirmErr, '');
+      });
+      lab.appendChild(input);
+      lab.appendChild(make('span', '', r.label));
+      frag.appendChild(lab);
+    });
+    el.reasonChips.replaceChildren(frag);
+  }
+
+  function pickedReason() {
+    var c = el.reasonChips.querySelector('input:checked');
+    return c ? c.value : '';
+  }
+
+  function openSheet(kind, text, yes, cls, focus) {
+    S.confirming = kind;
+    el.confirmText.textContent = text;
+    el.confirmYes.textContent = yes;
+    el.confirm.className = 'sheet ' + cls;
+    setText(el.confirmErr, '');
+    if (typeof el.confirm.showModal === 'function') el.confirm.showModal();
+    else el.confirm.setAttribute('open', '');
+    try { (focus || el.confirmNo).focus(); } catch (e) { /* ignore */ }
+  }
+
   function openConfirm(action) {
     var lead = S.thread.lead;
     if (!lead || S.pending) return;
-    S.confirming = action.status;
-    el.confirmText.textContent = L.confirmText(leadName(lead), action.status);
-    el.confirmYes.textContent = action.confirm;
-    el.confirm.className = 'sheet sheet-' + action.status;
-    if (typeof el.confirm.showModal === 'function') el.confirm.showModal();
-    else el.confirm.setAttribute('open', '');
-    try { el.confirmNo.focus(); } catch (e) { /* ignore */ }
+    var booked = action.status === 'booked', lost = action.status === 'lost';
+    // Booked: final price, filled in from the quote. Lost: a reason is required.
+    show(el.priceBox, booked);
+    if (booked) { el.price.value = L.amountInput(lead.quote_total); el.price.removeAttribute('aria-invalid'); }
+    show(el.reasonBox, lost);
+    if (lost) {
+      var checked = el.reasonChips.querySelectorAll('input');
+      for (var i = 0; i < checked.length; i++) checked[i].checked = false;
+      el.reasonNote.value = '';
+      show(el.reasonOther, false);
+    }
+    openSheet({ kind: 'status', status: action.status }, L.confirmText(leadName(lead), action.status), action.confirm,
+      'sheet-' + action.status, booked ? el.price : null);
+  }
+
+  function openNoteDelete(noteId) {
+    show(el.priceBox, false); show(el.reasonBox, false);
+    openSheet({ kind: 'note', id: noteId }, 'Delete this note? It cannot be brought back.', 'Delete note', 'sheet-note');
+  }
+
+  // Yes on the sheet: check the extra fields first; the sheet stays open with a plain error if they are wrong.
+  function confirmYes() {
+    var c = S.confirming;
+    if (!c) return;
+    if (c.kind === 'note') { closeConfirm(); deleteNote(c.id); return; }
+    var lead = S.thread.lead;
+    var x = L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value }, lead && lead.quote_total);
+    if (!x.ok) {
+      setText(el.confirmErr, x.error);
+      if (x.field === 'amount') { el.price.setAttribute('aria-invalid', 'true'); try { el.price.focus(); } catch (e) { /* ignore */ } }
+      else if (x.field === 'reason') { var first = el.reasonChips.querySelector('input'); if (first) try { first.focus(); } catch (e) { /* ignore */ } }
+      return;
+    }
+    closeConfirm();
+    saveStatus(c.status, x.args);
   }
 
   function closeConfirm() {
@@ -833,13 +1494,13 @@
   }
 
   // No optimistic UI: spinner on the button, wait for the server, then refetch.
-  function saveStatus(status) {
+  function saveStatus(status, extra) {
     var id = S.thread.id;
     if (!id || S.pending) return;
     S.pending = status;
     setText(el.actionErr, '');
     renderActions();
-    Promise.resolve().then(function () { return S.api.setStatus(id, status); }).then(function () {
+    Promise.resolve().then(function () { return S.api.setStatus(id, status, extra || {}); }).then(function () {
       S.historyOpen = false;
       return Promise.all([refreshThread(), refreshList()]);
     }).catch(function (e) {
@@ -855,6 +1516,63 @@
         }
       }
     });
+  }
+
+  /* ---------- notes ---------- */
+
+  function renderNotes(lead) {
+    var notes = L.sortNotes(lead.notes);
+    var frag = document.createDocumentFragment();
+    notes.forEach(function (n) {
+      var li = make('li', 'note');
+      li.appendChild(make('p', 'note-body', String(n.body)));
+      var foot = make('div', 'note-foot');
+      var t = make('time', 'note-time', L.fmtStamp(n.created_at));
+      if (L.fmtStamp(n.created_at)) t.dateTime = new Date(n.created_at).toISOString();
+      foot.appendChild(t);
+      if (n.author_is_me === true) {
+        var del = make('button', 'note-del', 'Delete');
+        del.type = 'button';
+        del.setAttribute('aria-label', 'Delete note from ' + L.fmtStamp(n.created_at));
+        del.addEventListener('click', function () { openNoteDelete(n.id); });
+        foot.appendChild(del);
+      }
+      li.appendChild(foot);
+      frag.appendChild(li);
+    });
+    el.notesList.replaceChildren(frag);
+    show(el.notesList, notes.length > 0);
+    // The notes block needs the backend: no `notes` field on the lead (older view) = no block.
+    show(el.recNotes, HAS_NOTES && Array.isArray(lead.notes) && !!S.api.addNote);
+  }
+
+  function noteCount() {
+    var left = L.NOTE_MAX - el.noteText.value.length;
+    setText(el.noteCount, left <= 200 ? L.plural(left, 'character', 'characters') + ' left' : '');
+  }
+
+  function saveNote() {
+    var id = S.thread.id;
+    if (!id || S.noteBusy) return;
+    var c = L.checkNote(el.noteText.value);
+    if (!c.ok) { setText(el.noteErr, c.error); try { el.noteText.focus(); } catch (e) { /* ignore */ } return; }
+    S.noteBusy = true;
+    el.noteSave.disabled = true;
+    setText(el.noteErr, '');
+    Promise.resolve(S.api.addNote(id, c.body)).then(function () {
+      if (id === S.thread.id) { el.noteText.value = ''; noteCount(); }
+      return refreshThread();
+    }).catch(function (e) {
+      if (id === S.thread.id) setText(el.noteErr, isAuthFailure(e) ? 'Your session ran out. Sign out and sign in again.' : "Couldn't save the note. Try again in a moment.");
+    }).then(function () { S.noteBusy = false; el.noteSave.disabled = false; });
+  }
+
+  function deleteNote(noteId) {
+    var id = S.thread.id;
+    setText(el.noteErr, '');
+    Promise.resolve(S.api.deleteNote(noteId)).then(function () { return refreshThread(); }).catch(function (e) {
+      if (id === S.thread.id) setText(el.noteErr, isAuthFailure(e) ? 'Your session ran out. Sign out and sign in again.' : "Couldn't delete the note. Try again in a moment.");
+    }).then(function () { try { el.noteText.focus(); } catch (x) { /* ignore */ } });
   }
 
   /* ---------- thread ---------- */
@@ -959,6 +1677,7 @@
       sum('Subtotal', q.subtotal);
       sum('Travel fee', q.travel);
       sum('Total', q.total, 'is-total');
+      if (L.statusGroup(lead.status) === 'booked') sum('Final price', L.fmtMoney(lead.booked_amount), 'is-final');
       frag.appendChild(sums);
     }
     el.quoteBody.replaceChildren(frag);
@@ -979,7 +1698,7 @@
       a.appendChild(top);
       var bottom = make('span', 'other-bottom');
       bottom.appendChild(make('span', 'other-date', o.event_date ? L.fmtEventDate(o.event_date) : 'No event date'));
-      var st = L.statusInfo(o.status);
+      var st = L.statusChip(o);
       bottom.appendChild(make('span', 'chip tone-' + st.tone, st.label));
       a.appendChild(bottom);
       li.appendChild(a);
@@ -989,11 +1708,19 @@
     show(el.recOthers, others.length > 0);
   }
 
+  // Line under the name. A pending automatic follow-up text (follow_ups) gives the exact send time.
+  function renderNext() {
+    var lead = S.thread.lead;
+    if (!lead) return;
+    var t = L.nextAction(lead, undefined, L.pendingNudge(S.followUps, S.thread.id));
+    if (el.recNext.textContent !== t || el.recNext.hidden !== !t) setText(el.recNext, t);
+  }
+
   function renderRecord() {
     var lead = S.thread.lead;
     el.title.textContent = lead ? leadName(lead) : 'Lead';
     setText(el.subtitle, '');
-    var sections = [el.recHead, el.recContact, el.strip, el.recEvent, el.recQuote, el.recOthers];
+    var sections = [el.recHead, el.recContact, el.strip, el.recNotes, el.recEvent, el.recQuote, el.recOthers];
     if (!lead) {
       sections.forEach(function (n) { show(n, false); });
       show(el.optoutBanner, false);
@@ -1001,19 +1728,22 @@
       return;
     }
     show(el.recordLoading, false);
-    var st = L.statusInfo(lead.status);
+    var st = L.statusChip(lead);
     el.recName.textContent = leadName(lead);
     el.stripChip.className = 'chip tone-' + st.tone;
     el.stripChip.textContent = st.label;
-    setText(el.recNext, L.nextAction(lead));
+    renderNext();
     show(el.recHead, true);
     show(el.optoutBanner, L.isOptedOut(lead));
     renderContact(lead);
     el.strip.className = 'rec-card strip tone-' + st.tone;
     setText(el.stripTime, lead.status_at ? 'Current status since ' + L.fmtStamp(lead.status_at) : '');
+    var lostNote = String(lead.status || '').toLowerCase() === 'lost' ? String(lead.lost_note || '').trim() : '';
+    setText(el.stripNote, lostNote ? 'Why: ' + lostNote : '');
     renderActions();
     renderHistory();
     show(el.strip, true);
+    renderNotes(lead);
     renderEvent(lead);
     renderQuote(lead);
     renderOthers(lead);
@@ -1086,6 +1816,9 @@
       show(el.pill, false);
       setText(el.threadErr, '');
       setText(el.actionErr, '');
+      setText(el.noteErr, '');
+      el.noteText.value = '';
+      noteCount();
       show(el.threadLoading, true);
       renderRecord();
       el.threadScroll.scrollTop = 0;
@@ -1159,6 +1892,14 @@
     S.thread = emptyThread();
     S.filter = 'all'; S.showClosed = false; S.pending = null; S.tab = NAV[0];
     S.seq.metrics++; S.metrics = null; S.metricsError = '';
+    S.seq.followups++; S.followUps = null; S.followUpsError = '';
+    clearSearch();
+    S.quote = { busy: false, seq: S.quote.seq + 1, view: null, req: null };
+    el.qForm.reset(); qBusy(false); qFieldErrors({}); setText(el.qErr, ''); show(el.qKmBox, false); renderQuoteResult();
+    S.cal = null; S.showPossible = false;
+    el.calBody.replaceChildren(); el.calDayList.replaceChildren(); el.notesList.replaceChildren(); el.noteText.value = '';
+    el.fuBody.replaceChildren();
+    renderBadge();
     el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.valueSections.replaceChildren(); el.metricsBody.replaceChildren();
     el.navBrand.textContent = 'Leads';
     closeConfirm();
@@ -1288,10 +2029,30 @@
     });
 
     // Status actions
-    el.confirmYes.addEventListener('click', function () {
-      var status = S.confirming;
-      closeConfirm();
-      if (status) saveStatus(status);
+    el.confirmYes.addEventListener('click', confirmYes);
+    el.price.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); confirmYes(); } });
+    el.price.addEventListener('input', function () { el.price.removeAttribute('aria-invalid'); setText(el.confirmErr, ''); });
+
+    // Search (Leads)
+    el.search.addEventListener('input', onSearchInput);
+    el.search.addEventListener('keydown', function (e) { if (e.key === 'Escape' && el.search.value) { e.preventDefault(); clearSearch(); } });
+
+    // Quote calculator
+    el.qForm.addEventListener('submit', function (e) { e.preventDefault(); submitQuote(); });
+    Array.prototype.forEach.call(el.qForm.querySelectorAll('input[name="q-type"]'), function (r) { r.addEventListener('change', qTypeChanged); });
+    el.qCopy.addEventListener('click', copyQuote);
+
+    // Notes
+    el.noteSave.addEventListener('click', saveNote);
+    el.noteText.addEventListener('input', function () { noteCount(); setText(el.noteErr, ''); });
+
+    // Calendar
+    el.calPrev.addEventListener('click', function () { moveMonth(-1); });
+    el.calNext.addEventListener('click', function () { moveMonth(1); });
+    el.calPossible.addEventListener('change', function () {
+      S.showPossible = el.calPossible.checked;
+      store('set', POSSIBLE_KEY, S.showPossible ? '1' : '0');
+      renderCalendar();
     });
     el.confirmNo.addEventListener('click', closeConfirm);
     el.confirm.addEventListener('close', function () { S.confirming = null; });
@@ -1339,6 +2100,15 @@
       if (S.live !== 'on') scheduleRefresh(0);
       else if (S.listLoaded) renderLeadScreens();
     }, 30000);
+
+    // Follow-up countdowns ("in 1 day 3 h") stay to the minute; text-only updates.
+    setInterval(function () {
+      if (S.signedIn && document.visibilityState === 'visible') tickCountdowns();
+    }, 15000);
+    // Once a minute, refetch while the Follow-ups tab is open (a scheduled text may have gone out).
+    setInterval(function () {
+      if (S.signedIn && document.visibilityState === 'visible' && S.screen === 'followups') refreshFollowUps();
+    }, 60000);
   }
 
   /* ---------- start ---------- */
@@ -1351,6 +2121,7 @@
     var f = store('get', FILTER_KEY);
     S.filter = L.isFilterKey(f) ? f : 'all';
     S.showClosed = store('get', CLOSED_KEY) === '1';
+    S.showPossible = store('get', POSSIBLE_KEY) === '1';
   }
 
   function start() {
@@ -1362,6 +2133,8 @@
     }
     buildNav();
     buildActions();
+    buildReasons();
+    show(el.searchWrap, HAS_SEARCH);
     restorePrefs();
     bindEvents();
     if (!MOCK && (configMissing() || !window.supabase)) {

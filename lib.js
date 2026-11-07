@@ -130,7 +130,7 @@
      configure(window.CV_CUSTOM) applies the client's wording, money format and time zone.
      Anything left out keeps the default. Called once by app.js before the first render. */
 
-  var CUSTOM = { status: {}, tiers: {}, locale: 'en-CA', currency: 'CAD' };
+  var CUSTOM = { status: {}, tiers: {}, lost: {}, locale: 'en-CA', currency: 'CAD' };
 
   function plainMap(o) {
     var out = {};
@@ -147,6 +147,7 @@
     c = c || {};
     CUSTOM.status = plainMap(c.statusLabels);
     CUSTOM.tiers = plainMap(c.tierLabels);
+    CUSTOM.lost = plainMap(c.lostReasons);
     CUSTOM.locale = typeof c.locale === 'string' && c.locale ? c.locale : 'en-CA';
     CUSTOM.currency = typeof c.currency === 'string' && /^[A-Za-z]{3}$/.test(c.currency) ? c.currency.toUpperCase() : 'CAD';
     var tz = typeof c.timeZone === 'string' && c.timeZone ? c.timeZone : 'America/Toronto';
@@ -346,11 +347,24 @@
     not_with_owner: "The assistant is still handling this lead. You can mark it once it's been handed to you."
   };
 
+  // bad_input details from cv_set_lead_status (final price / lost reason) -> plain words.
+  var BAD_INPUT = {
+    amount_out_of_range: 'The final price must be between $0 and $100,000.',
+    bad_amount: 'The final price must be between $0 and $100,000.',
+    reason_required: 'Pick a reason the lead was lost.',
+    bad_reason: 'Pick one of the reasons shown.',
+    note_too_long: 'Keep the note under 500 characters.'
+  };
+
   function friendlyStatusError(err) {
     var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).trim();
     var msg = raw.toLowerCase();
-    var m = /\b(not_owner|bad_status|not_found|not_allowed)\b\s*(?::\s*([^\n]*))?/.exec(msg);
+    var m = /\b(not_owner|bad_status|not_found|not_allowed|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(msg);
     if (m) {
+      if (m[1] === 'bad_input') {
+        var why = String(m[2] || (err && err.details) || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
+        return BAD_INPUT[why] || 'Check the price or the reason and try again.';
+      }
       if (m[1] === 'not_owner') return "Your sign-in isn't linked to this lead's business. Sign out, then sign in with your own number.";
       if (m[1] === 'bad_status') return "The page sent a status the system doesn't accept. Reload the page and try again.";
       if (m[1] === 'not_found') return "This lead can't be found any more. Go back to your list.";
@@ -382,7 +396,8 @@
     var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
     var s = String(h.source || '').toLowerCase();
     var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
-    return [label, fmtStamp(h.at, now), src].filter(Boolean).join(' \u00b7 ');
+    var extra = a === 'booked' ? fmtMoney(h.amount) : a === 'lost' ? lostReasonLabel(h.reason) : '';
+    return [label, extra, fmtStamp(h.at, now), src].filter(Boolean).join(' \u00b7 ');
   }
 
   function sortHistory(rows) {
@@ -586,9 +601,13 @@
   var FOLLOWUP_DAYS = 5;
 
   // One plain line under the name: what is happening and what the owner can do.
-  function nextAction(lead, now) {
+  // `nudge` (optional) is the lead's pending auto_nudge row from follow_ups: its exact due time wins.
+  function nextAction(lead, now, nudge) {
     if (!lead || isOptedOut(lead)) return '';
     var st = String(lead.status || '').toLowerCase();
+    if (nudge && !isClosed(st) && realDate(nudge.due_at) && !realDate(nudge.sent_at)) {
+      return 'Follow-up text goes out ' + fmtDueAt(nudge.due_at, now) + ' — ' + fmtCountdown(nudge.due_at, now);
+    }
     var lc = function (k) { return statusInfo(k).label.toLowerCase(); };
     var markWhen = 'Mark ' + lc('booked') + ' or ' + lc('lost') + ' when you know.';
     if (st === 'booked' || st === 'won') {
@@ -597,7 +616,8 @@
     }
     if (st === 'lost') {
       var la = lead.lost_at || lead.status_at;
-      return 'Marked ' + lc('lost') + (la ? ' ' + fmtShortDate(la, now) : '');
+      var why = lostReasonLabel(lead.lost_reason);
+      return 'Marked ' + lc('lost') + (la ? ' ' + fmtShortDate(la, now) : '') + (why ? ' \u2014 ' + why : '');
     }
     if (st === 'handed_off') {
       var since = lead.status_at || lead.created_at;
@@ -794,6 +814,532 @@
     return { money: fmtMoney(t === null ? 0 : t), count: plural(c, one || 'job', many || 'jobs') };
   }
 
+  /* ---------- feature switches (CV_CUSTOM.features) ---------- */
+
+  // Every feature is on unless the client's settings say exactly false. Off = not shown at all.
+  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics'];
+  function featureOn(features, key) {
+    return !(features && typeof features === 'object' && features[key] === false);
+  }
+
+  /* ---------- quote calculator (Edge Function cv-quote) ---------- */
+
+  var PLACE_RE = /^[\p{L}\p{M}0-9 .,'()&\/-]{2,80}$/u;
+  var OCCASION_RE = /^[\p{L}\p{M}0-9 .,'()&\/-]{1,60}$/u;
+  var QUOTE_HOURS = ['3', '4', '5', '6', '7', '8', 'over_8'];
+
+  function intIn(v, lo, hi) {
+    var s = String(v == null ? '' : v).trim();
+    if (!/^\d+$/.test(s)) return null;
+    var n = Number(s);
+    return n >= lo && n <= hi ? n : null;
+  }
+
+  // The owner's form -> the request body, checked the same way the endpoint checks it.
+  // Empty optional fields are left out (the endpoint refuses unknown or malformed fields).
+  // Returns { ok: true, body } or { ok: false, errors: { field: plain words } }.
+  function quoteRequest(f) {
+    f = f || {};
+    var errors = {};
+    var body = {};
+    var type = f.service_type === 'bar_only' ? 'bar_only' : 'full_service';
+    body.service_type = type;
+    var full = type === 'full_service';
+    var g = String(f.guests == null ? '' : f.guests).trim();
+    if (g || full) {
+      var gn = intIn(g, 1, 2000);
+      if (gn === null) errors.guests = g ? 'Enter a whole number from 1 to 2,000.' : 'Enter the number of guests.';
+      else body.guests = gn;
+    }
+    var h = String(f.service_hours == null ? '' : f.service_hours);
+    if (h || full) {
+      if (QUOTE_HOURS.indexOf(h) === -1) errors.service_hours = 'Pick how many hours.';
+      else body.service_hours = h === 'over_8' ? 'over_8' : Number(h);
+    }
+    var bar = type === 'bar_only' ? true : f.bar_rental === true ? true : f.bar_rental === false ? false : null;
+    if (bar === null) errors.bar_rental = 'Pick yes or no.';
+    else body.bar_rental = bar;
+    var km = String(f.distance_km == null ? '' : f.distance_km).trim().replace(',', '.');
+    if (km) {
+      var kn = /^\d+(\.\d+)?$/.test(km) ? Number(km) : NaN;
+      if (!(kn >= 0 && kn <= 1000)) errors.distance_km = 'Enter the one-way driving distance, 0 to 1,000 km.';
+      else body.distance_km = kn;
+    }
+    var city = String(f.event_city == null ? '' : f.event_city).replace(/\s+/g, ' ').trim();
+    if (city) {
+      if (!PLACE_RE.test(city)) errors.event_city = 'Use 2 to 80 letters, numbers, spaces or . , \' ( ) & / -';
+      else body.event_city = city;
+    } else if (bar && body.distance_km === undefined && !errors.distance_km) {
+      errors.event_city = 'Enter the event city (needed for the delivery fee).';
+    }
+    var date = String(f.event_date == null ? '' : f.event_date).trim();
+    if (date) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(Date.parse(date + 'T00:00:00Z'))) errors.event_date = 'Pick a date.';
+      else body.event_date = date;
+    }
+    var occ = String(f.occasion == null ? '' : f.occasion).replace(/\s+/g, ' ').trim();
+    if (occ) {
+      if (!OCCASION_RE.test(occ)) errors.occasion = 'Use up to 60 letters, numbers, spaces or . , \' ( ) & / -';
+      else body.occasion = occ;
+    }
+    var promo = String(f.promo_code == null ? '' : f.promo_code).trim().toLowerCase();
+    if (promo) {
+      if (!/^[a-z0-9_-]{2,32}$/.test(promo)) errors.promo_code = 'Promo codes are 2 to 32 letters, numbers, - or _.';
+      else body.promo_code = promo;
+    }
+    return Object.keys(errors).length ? { ok: false, errors: errors } : { ok: true, body: body };
+  }
+
+  // A discount line always reads as money off: "−$100", whichever sign the engine used.
+  function signedMoney(v) {
+    var c = toCents(v);
+    return c === null ? '' : '\u2212' + fmtMoney(Math.abs(c) / 100);
+  }
+
+  // Engine response -> what the page prints. No arithmetic: every number is the engine's.
+  function quoteResult(r) {
+    r = r && typeof r === 'object' ? r : {};
+    var defer = String(r.status || '').toLowerCase() !== 'firm' || r.total === null || r.total === undefined;
+    var items = [];
+    if (!defer) {
+      (Array.isArray(r.line_items) ? r.line_items : []).forEach(function (it) {
+        if (!it || typeof it !== 'object') return;
+        var detail = Array.isArray(it.includes) ? it.includes.filter(function (x) { return typeof x === 'string' && x.trim(); }).join(', ') : String(it.detail || '').trim();
+        var hasBase = it.base_amount !== undefined && it.base_amount !== null && toCents(it.discount) !== null && toCents(it.discount) !== 0;
+        items.push({ label: String(it.label || '').trim() || 'Item', detail: hasBase ? String(it.base_detail || detail || '').trim() : detail, amount: fmtMoney(hasBase ? it.base_amount : it.amount) });
+        if (hasBase) items.push({ label: String(it.discount_label || '').trim() || 'Discount', detail: '', amount: signedMoney(it.discount), discount: true });
+      });
+    }
+    var reasons = (Array.isArray(r.defer_reasons) ? r.defer_reasons : []).filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim(); });
+    if (defer && !reasons.length) reasons = deferReasons(r.defer_codes);
+    var km = num(r.distance_km);
+    return {
+      defer: defer,
+      reasons: defer ? reasons : [],
+      items: items,
+      subtotal: defer ? '' : fmtMoney(r.subtotal),
+      travel: defer ? '' : (toCents(r.travel_fee) === 0 ? 'None' : fmtMoney(r.travel_fee)),
+      total: defer ? '' : fmtMoney(r.total),
+      deposit: defer ? '' : fmtMoney(r.deposit),
+      distance: km === null ? '' : Math.round(km).toLocaleString('en-CA') + ' km away',
+      flags: defer ? [] : (Array.isArray(r.flags) ? r.flags : []).filter(function (x) { return typeof x === 'string' && x.trim(); }),
+      needsDistance: String(r.distance_status || '') === 'route_not_found' || (Array.isArray(r.defer_codes) && r.defer_codes.indexOf('missing_distance') !== -1)
+    };
+  }
+
+  // Plain-text summary for "Copy quote".
+  function quoteText(view, req, now) {
+    if (!view || view.defer) return '';
+    var b = (req && req.body) || req || {};
+    var head = [];
+    if (b.occasion) head.push(b.occasion);
+    if (b.event_date) head.push(fmtEventDate(b.event_date, now));
+    if (b.guests) head.push(plural(b.guests, 'guest', 'guests'));
+    if (b.service_hours) head.push(b.service_hours === 'over_8' ? 'more than 8 hours' : b.service_hours + ' hours');
+    if (b.event_city) head.push(b.event_city + (view.distance ? ' (' + view.distance + ')' : ''));
+    var lines = ['Quote' + (head.length ? ': ' + head.join(', ') : '')];
+    view.items.forEach(function (it) { lines.push(it.label + (it.detail ? ' (' + it.detail + ')' : '') + ': ' + it.amount); });
+    if (view.subtotal) lines.push('Subtotal: ' + view.subtotal);
+    if (view.travel) lines.push('Travel fee: ' + view.travel);
+    lines.push('Total: ' + view.total);
+    if (view.deposit) lines.push('Deposit to hold the date: ' + view.deposit);
+    return lines.join('\n');
+  }
+
+  // cv-quote errors -> { message, fields }. bad_input details name the fields.
+  var QUOTE_FIELD_WORDS = {
+    guests: 'Enter a whole number from 1 to 2,000.',
+    service_hours: 'Pick how many hours.',
+    bar_rental: 'Pick yes or no (bar only always includes the bar).',
+    service_type: 'Pick full service or bar only.',
+    event_city: 'Check the city: 2 to 80 letters, numbers or spaces.',
+    distance_km: 'Enter the one-way driving distance, 0 to 1,000 km.',
+    event_date: 'Pick a date.',
+    occasion: 'Use up to 60 letters, numbers or spaces.',
+    promo_code: 'Promo codes are 2 to 32 letters, numbers, - or _.'
+  };
+  function quoteError(err) {
+    var code = String((err && (err.error || err.code)) || '').toLowerCase();
+    var status = err && err.status;
+    if (code === 'bad_input') {
+      var fields = {};
+      var d = err.details;
+      if (d && typeof d === 'object' && !Array.isArray(d)) {
+        Object.keys(d).forEach(function (k) {
+          if (QUOTE_FIELD_WORDS[k]) fields[k] = QUOTE_FIELD_WORDS[k];
+        });
+      }
+      return { message: Object.keys(fields).length ? 'Check the marked fields.' : "The calculator didn't accept that. Reload the page and try again.", fields: fields };
+    }
+    if (code === 'not_signed_in' || status === 401) return { message: 'Your session ran out. Sign out and sign in again.', fields: {} };
+    if (code === 'not_owner' || status === 403) return { message: "Your sign-in isn't linked to this business. Sign out, then sign in with your own number.", fields: {} };
+    if (code === 'engine_error' || status === 500 || status === 502 || status === 503 || status === 504) return { message: 'The calculator is not available right now. Try again later.', fields: {} };
+    return { message: "Couldn't reach the calculator. Check your connection and try again.", fields: {} };
+  }
+
+  /* ---------- final price + lost reason (cv_set_lead_status p_amount / p_reason) ---------- */
+
+  var LOST_REASONS = [
+    { key: 'price', label: 'Price' },
+    { key: 'date_taken', label: 'Date taken' },
+    { key: 'no_reply', label: 'No reply' },
+    { key: 'went_elsewhere', label: 'Went elsewhere' },
+    { key: 'other', label: 'Other' }
+  ];
+  var LOST_NOTE_MAX = 500;
+  var AMOUNT_MAX = 100000;
+
+  // Chips on the Lost sheet, labels from CV_CUSTOM.lostReasons.
+  function lostReasons() {
+    return LOST_REASONS.map(function (r) { return { key: r.key, label: CUSTOM.lost[r.key] || r.label }; });
+  }
+  function lostReasonLabel(key) {
+    var k = String(key || '').toLowerCase();
+    if (!k) return '';
+    var r = lostReasons().filter(function (x) { return x.key === k; })[0];
+    return r ? r.label : humanize(k);
+  }
+
+  // Money typed by the owner -> { ok, value } (dollars, 2 decimals max) or { ok: false, error }.
+  // Accepts "$1,250", "1250.5", "1 250,50"; empty -> { ok: true, value: null }.
+  function parseAmount(input) {
+    var s = String(input == null ? '' : input).replace(/[$\s\u00a0\u202f]/g, '').replace(/(CAD|USD|C)$/i, '');
+    if (!s) return { ok: true, value: null };
+    var n = null;
+    if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(s)) n = Number(s.replace(/,/g, ''));
+    else if (/^\d+,\d{1,2}$/.test(s)) n = Number(s.replace(',', '.'));
+    else if (/^\d+(\.\d{1,2})?$/.test(s) || /^\d*\.\d{1,2}$/.test(s)) n = Number(s);
+    if (n === null || !isFinite(n)) return { ok: false, error: 'Type the price in dollars, like 1250 or 1250.50.' };
+    if (n < 0 || n > AMOUNT_MAX) return { ok: false, error: 'The final price must be between $0 and $100,000.' };
+    return { ok: true, value: Math.round(n * 100) / 100 };
+  }
+
+  // Plain number for the price box: 1180 -> "1180", 1320.5 -> "1320.50".
+  function amountInput(v) {
+    var c = toCents(v);
+    if (c === null) return '';
+    return c % 100 === 0 ? String(c / 100) : (c / 100).toFixed(2);
+  }
+
+  // Extra RPC args for a status change. Keys with no value are left out, so a plain
+  // Contacted call is the same two arguments as before.
+  //   booked: p_amount only when the typed price differs from the quote (empty / unchanged -> left out)
+  //   lost:   p_reason required; p_reason_note only for 'other' and only when something was typed
+  function statusExtras(status, form, quote) {
+    form = form || {};
+    if (status === 'booked') {
+      var a = parseAmount(form.amount);
+      if (!a.ok) return { ok: false, error: a.error, field: 'amount' };
+      var q = toCents(quote);
+      if (a.value === null || (q !== null && Math.round(a.value * 100) === q)) return { ok: true, args: {} };
+      return { ok: true, args: { p_amount: a.value } };
+    }
+    if (status === 'lost') {
+      var r = String(form.reason || '').toLowerCase();
+      if (!LOST_REASONS.some(function (x) { return x.key === r; })) return { ok: false, error: 'Pick a reason the lead was lost.', field: 'reason' };
+      var args = { p_reason: r };
+      var note = String(form.note || '').trim();
+      if (r === 'other' && note) {
+        if (note.length > LOST_NOTE_MAX) return { ok: false, error: 'Keep the note under 500 characters.', field: 'note' };
+        args.p_reason_note = note;
+      }
+      return { ok: true, args: args };
+    }
+    return { ok: true, args: {} };
+  }
+
+  // Status chip with the final price or the lost reason: "Booked · $1,250", "Lost · Price".
+  function statusChip(lead) {
+    var info = statusInfo(lead && lead.status);
+    var st = String((lead && lead.status) || '').toLowerCase();
+    var extra = '';
+    if (statusGroup(st) === 'booked') extra = fmtMoney(lead.booked_amount);
+    else if (st === 'lost') extra = lostReasonLabel(lead.lost_reason);
+    return { label: extra ? info.label + ' \u00b7 ' + extra : info.label, tone: info.tone };
+  }
+
+  // Money beside a lead: "Quoted $1,180" once a different final price is set, else the quote.
+  function quoteMoney(lead) {
+    var q = fmtMoney(lead && lead.quote_total);
+    var b = toCents(lead && lead.booked_amount);
+    if (q && b !== null && statusGroup(lead.status) === 'booked') return 'Quoted ' + q;
+    return q;
+  }
+
+  // cv_metrics().lost_reasons {reason: count} -> rows, biggest first, with % of all lost.
+  function lostReasonRows(obj) {
+    var rows = [];
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+      Object.keys(obj).forEach(function (k) {
+        var c = num(obj[k]);
+        if (c !== null && c > 0) rows.push({ key: k, label: k === 'unknown' || k === 'null' || k === '' ? 'No reason given' : lostReasonLabel(k), count: c });
+      });
+    }
+    var total = rows.reduce(function (s, r) { return s + r.count; }, 0);
+    rows.forEach(function (r) { r.pct = total ? Math.round(r.count / total * 100) : 0; });
+    rows.sort(function (a, b) { return b.count - a.count || a.label.localeCompare(b.label); });
+    return rows;
+  }
+
+  /* ---------- search (lead_detail, server side) ---------- */
+
+  var SEARCH_MIN = 2;
+
+  // PostgREST or-filter for a search box query, or null when it is too short.
+  // `,()*%"\` would break or widen the filter: each becomes `_` (matches exactly one character).
+  // Phones match on digits only, so "(416) 555-01" finds +1416555 01xx.
+  function searchFilter(q) {
+    var raw = String(q == null ? '' : q).replace(/\s+/g, ' ').trim();
+    if (raw.length < SEARCH_MIN) return null;
+    var safe = raw.slice(0, 80).replace(/[,()*%"\\]/g, '_');
+    var parts = ['full_name.ilike.*' + safe + '*', 'email.ilike.*' + safe + '*'];
+    var digits = raw.replace(/\D/g, '');
+    if (digits.length >= 3) parts.push('phone.ilike.*' + digits.slice(0, 15) + '*');
+    return parts.join(',');
+  }
+
+  /* ---------- calendar ---------- */
+
+  var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function ymd(y, m, d) { return y + '-' + pad2(m) + '-' + pad2(d); }
+
+  // Today's date in the client's time zone as {y, m (1-12), d, ymd}.
+  function today(now) {
+    var p = partsOf(nowDate(now));
+    return { y: p.y, m: p.m, d: p.d, ymd: ymd(p.y, p.m, p.d) };
+  }
+
+  function shiftMonth(y, m, delta) {
+    var i = y * 12 + (m - 1) + delta;
+    return { y: Math.floor(i / 12), m: (i % 12 + 12) % 12 + 1 };
+  }
+
+  function monthTitle(y, m) { return MONTH_NAMES[m - 1] + ' ' + y; }
+
+  // Weeks (Sunday first) covering month m (1-12) of year y: each day {ymd, d, inMonth}.
+  function monthGrid(y, m) {
+    var first = new Date(Date.UTC(y, m - 1, 1));
+    var start = new Date(first.getTime() - first.getUTCDay() * 86400000);
+    var days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    var cells = Math.ceil((first.getUTCDay() + days) / 7) * 7;
+    var weeks = [];
+    for (var i = 0; i < cells; i++) {
+      var d = new Date(start.getTime() + i * 86400000);
+      if (i % 7 === 0) weeks.push([]);
+      weeks[weeks.length - 1].push({ ymd: ymd(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()), d: d.getUTCDate(), inMonth: d.getUTCMonth() === m - 1 });
+    }
+    return weeks;
+  }
+
+  // Events by day from lead_list: booked leads always; open leads with a quote when showPossible.
+  // Lost / opted-out leads never show. Each day: { booked: [], possible: [] }, biggest money first.
+  function eventsByDay(leads, opts) {
+    var showPossible = !!(opts && opts.showPossible);
+    var out = {};
+    (Array.isArray(leads) ? leads : []).forEach(function (l) {
+      if (!l || !isUuid(l.lead_id)) return;
+      var m = /^(\d{4}-\d{2}-\d{2})/.exec(String(l.event_date || ''));
+      if (!m) return;
+      var g = statusGroup(l.status);
+      var kind = g === 'booked' ? 'booked' : (g === 'open' && showPossible && toCents(l.quote_total) !== null ? 'possible' : '');
+      if (!kind) return;
+      (out[m[1]] = out[m[1]] || { booked: [], possible: [] })[kind].push(l);
+    });
+    function money(l) { var b = toCents(l.booked_amount); return b !== null ? b : (toCents(l.quote_total) || 0); }
+    Object.keys(out).forEach(function (k) {
+      out[k].booked.sort(function (a, b) { return money(b) - money(a); });
+      out[k].possible.sort(function (a, b) { return money(b) - money(a); });
+    });
+    return out;
+  }
+
+  // Words for a day button: "Sat, Nov 14: 1 booked, 2 possible" (screen readers).
+  function dayLabel(dayYmd, day, now) {
+    var bits = [];
+    if (day && day.booked.length) bits.push(day.booked.length + ' booked');
+    if (day && day.possible.length) bits.push(day.possible.length + ' possible');
+    return fmtEventDate(dayYmd, now) + (bits.length ? ': ' + bits.join(', ') : ': nothing');
+  }
+
+  /* ---------- notes (lead_detail.notes) ---------- */
+
+  var NOTE_MAX = 2000;
+
+  function sortNotes(notes) {
+    return (Array.isArray(notes) ? notes : []).filter(function (n) {
+      return n && typeof n === 'object' && n.id != null && String(n.body == null ? '' : n.body).trim();
+    }).slice().sort(function (a, b) { return (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0); });
+  }
+
+  // Trimmed note body or an error.
+  function checkNote(body) {
+    var s = String(body == null ? '' : body).trim();
+    if (!s) return { ok: false, error: 'Write something first.' };
+    if (s.length > NOTE_MAX) return { ok: false, error: 'Keep a note under 2,000 characters.' };
+    return { ok: true, body: s };
+  }
+
+  /* ---------- value tier ranges (cv_metrics value_tiers) ---------- */
+
+  var TIER_DEFAULT = { high_min: 1000, medium_min: 600 };
+
+  // {high_min, medium_min} from cv_metrics(); the lab defaults when missing or not usable.
+  function valueTiers(m) {
+    var vt = m && m.value_tiers;
+    var hi = num(vt && vt.high_min), med = num(vt && vt.medium_min);
+    if (hi === null || med === null || hi <= 0 || med <= 0 || med >= hi) return { high_min: TIER_DEFAULT.high_min, medium_min: TIER_DEFAULT.medium_min };
+    return { high_min: hi, medium_min: med };
+  }
+
+  // Money range next to a tier title: "$1,000 and up", "$600–$999", "under $600"; '' for 'none'.
+  // Whole dollars: the medium tier ends one dollar below the high threshold.
+  function tierRange(key, tiers) {
+    var t = valueTiers({ value_tiers: tiers });
+    if (key === 'high') return fmtMoney(t.high_min) + ' and up';
+    if (key === 'medium') return fmtMoney(t.medium_min) + '–' + fmtMoney(Math.ceil(t.high_min) - 1);
+    if (key === 'low') return 'under ' + fmtMoney(t.medium_min);
+    return '';
+  }
+
+  /* ---------- follow-ups (view follow_ups) ---------- */
+
+  // Like toDate, but null / '' / undefined mean "no time" (new Date(null) would be 1970).
+  function realDate(v) { return v === null || v === undefined || v === '' ? null : toDate(v); }
+
+  var SENT_WINDOW_DAYS = 14;
+  var SOON_MS = 5 * 60000;
+
+  // "Sat, Nov 8 at 10:00 am" in the client's time zone (adds the year when it is not this year).
+  function fmtDueAt(iso, now) {
+    var d = realDate(iso);
+    if (!d) return '';
+    var p = partsOf(d), n = partsOf(nowDate(now));
+    var wd = WEEKDAYS[new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay()];
+    return wd + ', ' + MONTHS[p.m - 1] + ' ' + p.d + (p.y !== n.y ? ', ' + p.y : '') + ' at ' + p.hour + ':' + p.minute + ' ' + p.period;
+  }
+
+  // "10:00 am" in the client's time zone.
+  function fmtClock(iso) {
+    var d = realDate(iso);
+    if (!d) return '';
+    var p = partsOf(d);
+    return p.hour + ':' + p.minute + ' ' + p.period;
+  }
+
+  // Time left until `iso`, from real elapsed time (a DST change never adds or drops an hour):
+  // "in 2 days", "in 1 day 3 h", "in 3 h 20 min", "in 12 min"; "any minute now" under 5 min or past due.
+  function fmtCountdown(iso, now) {
+    var d = realDate(iso);
+    if (!d) return '';
+    var ms = d.getTime() - nowDate(now).getTime();
+    if (ms < SOON_MS) return 'any minute now';
+    var min = Math.floor(ms / 60000);
+    if (min < 60) return 'in ' + min + ' min';
+    var h = Math.floor(min / 60), mm = min % 60;
+    if (h < 24) return 'in ' + h + ' h' + (mm ? ' ' + mm + ' min' : '');
+    var days = Math.floor(h / 24), hh = h % 24;
+    return 'in ' + plural(days, 'day', 'days') + (hh ? ' ' + hh + ' h' : '');
+  }
+
+  function fuType(r) { return String((r && r.follow_up_type) || '').toLowerCase(); }
+  function timeOf(v) { var d = realDate(v); return d ? d.getTime() : null; }
+
+  // When the lead asked for the owner: the row's own asked_at if the view has one, else the lead's
+  // status_at while it is handed off (from lead_list). null when unknown.
+  function askedAt(row, leads) {
+    if (row && realDate(row.asked_at)) return row.asked_at;
+    var lead = (Array.isArray(leads) ? leads : []).filter(function (l) { return l && l.lead_id === row.lead_id; })[0];
+    if (lead && String(lead.status || '').toLowerCase() === 'handed_off' && realDate(lead.status_at)) return lead.status_at;
+    return null;
+  }
+
+  // Splits follow_ups rows into the tab's blocks:
+  //   needs      owner_callback, oldest ask first (unknown ask time last)
+  //   scheduled  auto_nudge not sent yet with a due time, soonest first (past due stays: "any minute now")
+  //   sent       auto_nudge sent in the last 14 days, newest first
+  //   held       held_alert rows (earliest release first)
+  //   digest     owner_digest rows: leads listed in the owner's 9:00 am "still open" text
+  //   other      any other type, shown generically with its reason
+  function groupFollowUps(rows, leads, now) {
+    var n = nowDate(now).getTime();
+    var out = { needs: [], scheduled: [], sent: [], held: [], digest: [], other: [] };
+    (Array.isArray(rows) ? rows : []).forEach(function (r) {
+      if (!r || !isUuid(r.lead_id)) return;
+      var type = fuType(r);
+      if (type === 'owner_callback') {
+        out.needs.push(Object.assign({}, r, { asked_at: askedAt(r, leads) }));
+      } else if (type === 'auto_nudge') {
+        var sent = timeOf(r.sent_at);
+        if (sent !== null) { if (n - sent <= SENT_WINDOW_DAYS * 86400000) out.sent.push(r); }
+        else if (timeOf(r.due_at) !== null) out.scheduled.push(r);
+      } else if (type === 'held_alert') {
+        out.held.push(r);
+      } else if (type === 'owner_digest') {
+        out.digest.push(r);
+      } else {
+        out.other.push(r);
+      }
+    });
+    function asc(key) {
+      return function (a, b) {
+        var ta = timeOf(a[key]), tb = timeOf(b[key]);
+        if (ta === null && tb === null) return 0;
+        if (ta === null) return 1;
+        if (tb === null) return -1;
+        return ta - tb;
+      };
+    }
+    out.needs.sort(asc('asked_at'));
+    out.scheduled.sort(asc('due_at'));
+    out.held.sort(asc('due_at'));
+    out.digest.sort(asc('due_at'));
+    out.sent.sort(function (a, b) { return timeOf(b.sent_at) - timeOf(a.sent_at); });
+    return out;
+  }
+
+  // Menu badge: leads that asked for the owner and are still waiting.
+  function followUpBadge(rows) {
+    return (Array.isArray(rows) ? rows : []).filter(function (r) { return fuType(r) === 'owner_callback' && r && isUuid(r.lead_id); }).length;
+  }
+
+  // The lead's next unsent automatic follow-up text, or null.
+  function pendingNudge(rows, leadId) {
+    var mine = (Array.isArray(rows) ? rows : []).filter(function (r) {
+      return r && r.lead_id === leadId && fuType(r) === 'auto_nudge' && timeOf(r.sent_at) === null && timeOf(r.due_at) !== null;
+    });
+    mine.sort(function (a, b) { return timeOf(a.due_at) - timeOf(b.due_at); });
+    return mine[0] || null;
+  }
+
+  // "Goes out Sat, Nov 8 at 10:00 am"
+  function nudgeLine(r, now) { var w = fmtDueAt(r && r.due_at, now); return w ? 'Goes out ' + w : ''; }
+  // "Sent Nov 3 · 3 days ago"
+  function sentLine(r, now) {
+    var d = fmtShortDate(r && r.sent_at, now);
+    return d ? 'Sent ' + d + ' · ' + fmtSince(r.sent_at, now) : '';
+  }
+  // "Asked for you 2 days ago"; the reason when the time is unknown.
+  function askedLine(r, now) {
+    if (r && realDate(r.asked_at)) return 'Asked for you ' + fmtSince(r.asked_at, now);
+    return humanize(r && r.reason) || 'Asked for you';
+  }
+  // "2 alerts will reach you at 9:00 am"
+  function heldLine(held) {
+    var list = Array.isArray(held) ? held : [];
+    if (!list.length) return '';
+    var at = fmtClock(list[0].due_at) || '9:00 am';
+    return plural(list.length, 'alert', 'alerts') + ' will reach you at ' + at;
+  }
+  // "3 open leads will be in your 9:00 am summary text"
+  function digestLine(rows) {
+    var list = Array.isArray(rows) ? rows : [];
+    if (!list.length) return '';
+    var at = fmtClock(list[0].due_at) || '9:00 am';
+    return plural(list.length, 'open lead', 'open leads') + ' will be in your ' + at + ' summary text';
+  }
+
   /* ---------- routes + data ---------- */
 
   function isUuid(s) { return typeof s === 'string' && UUID_RE.test(s); }
@@ -891,6 +1437,45 @@
     TIERS: TIERS,
     tierOf: tierOf,
     groupByTier: groupByTier,
+    valueTiers: valueTiers,
+    tierRange: tierRange,
+    fmtDueAt: fmtDueAt,
+    fmtClock: fmtClock,
+    fmtCountdown: fmtCountdown,
+    groupFollowUps: groupFollowUps,
+    followUpBadge: followUpBadge,
+    pendingNudge: pendingNudge,
+    nudgeLine: nudgeLine,
+    sentLine: sentLine,
+    askedLine: askedLine,
+    heldLine: heldLine,
+    digestLine: digestLine,
+    FEATURES: FEATURES,
+    featureOn: featureOn,
+    quoteRequest: quoteRequest,
+    quoteResult: quoteResult,
+    quoteText: quoteText,
+    quoteError: quoteError,
+    lostReasons: lostReasons,
+    lostReasonLabel: lostReasonLabel,
+    parseAmount: parseAmount,
+    amountInput: amountInput,
+    statusExtras: statusExtras,
+    statusChip: statusChip,
+    quoteMoney: quoteMoney,
+    lostReasonRows: lostReasonRows,
+    searchFilter: searchFilter,
+    SEARCH_MIN: SEARCH_MIN,
+    today: today,
+    shiftMonth: shiftMonth,
+    monthTitle: monthTitle,
+    monthGrid: monthGrid,
+    eventsByDay: eventsByDay,
+    dayLabel: dayLabel,
+    sortNotes: sortNotes,
+    checkNote: checkNote,
+    NOTE_MAX: NOTE_MAX,
+    LOST_NOTE_MAX: LOST_NOTE_MAX,
     isUuid: isUuid,
     parseRoute: parseRoute,
     visibleMessages: visibleMessages,

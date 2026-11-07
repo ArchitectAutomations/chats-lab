@@ -37,9 +37,15 @@ window.CV_CUSTOM = {
   currency: 'CAD',
   timeZone: 'America/Toronto',
 
-  // Side menu: which tabs show, in this order. Known tabs: 'list', 'value', 'metrics'.
-  tabs: ['list', 'value', 'metrics'],
-  tabLabels: { list: 'Leads', value: 'Lead value', metrics: 'Metrics' },
+  // Features: true = on, false = off (an off feature is not shown at all, nowhere on the page).
+  // Left out = on. Tabs: followups, calendar, quote, value, metrics. Parts of other screens:
+  // search (top of Leads), notes (on a lead's record).
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true },
+
+  // Side menu: which tabs show, in this order (a tab whose feature is off is skipped).
+  // Known tabs: 'list', 'followups', 'calendar', 'quote', 'value', 'metrics'.
+  tabs: ['list', 'followups', 'calendar', 'quote', 'value', 'metrics'],
+  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', quote: 'Quote calculator', value: 'Lead value', metrics: 'Metrics' },
 
   // Status wording on chips, filter chips, the three buttons and the history lines.
   // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, booked, lost, opted_out.
@@ -49,10 +55,15 @@ window.CV_CUSTOM = {
   // Text is always hidden for a lead who opted out.
   contactActions: ['call', 'text', 'email'],
 
-  // Lead value section names. Keys: high, medium, low, none.
+  // Lead value section names. Keys: high, medium, low, none. The money range after each name
+  // ("High value · $1,000 and up") comes from the database thresholds, in the locale + currency above.
   tierLabels: { high: 'High value', medium: 'Medium', low: 'Low', none: 'No quote yet' },
 
+  // Reason chips on the "Mark as lost" sheet (also used in history lines and Metrics).
+  // Keys are fixed (they are what the database stores): price, date_taken, no_reply, went_elsewhere, other.
+  lostReasons: { price: 'Price', date_taken: 'Date taken', no_reply: 'No reply', went_elsewhere: 'Went elsewhere', other: 'Other' },
+
   // Metrics tab: which blocks show, in this order.
-  // Known: 'open', 'booked', 'close_rate', 'speed', 'journey', 'waiting'.
-  metrics: ['open', 'booked', 'close_rate', 'speed', 'journey', 'waiting']
+  // Known: 'open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey', 'waiting'.
+  metrics: ['open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey', 'waiting']
 };

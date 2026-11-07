@@ -44,6 +44,7 @@
   <header class="topbar" id="topbar" hidden>
     <button class="icon-btn btn-nav" id="btn-nav" type="button" aria-label="Open menu" aria-controls="nav" aria-expanded="false">
       <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      <span class="menu-badge" id="menu-badge" aria-hidden="true" hidden></span>
     </button>
     <button class="icon-btn" id="btn-back" type="button" aria-label="Back" hidden>
       <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -91,6 +92,16 @@
   <!-- Lead list -->
   <main class="screen list-screen" id="screen-list" hidden>
     <div class="scroller" id="list-scroll">
+      <!-- Search: in memory only, never in the URL or storage (it may be a name, phone or email). -->
+      <div class="search" id="search-wrap" role="search">
+        <label class="sr-only" for="lead-search">Search leads by name, phone or email</label>
+        <input class="search-field" id="lead-search" type="search" placeholder="Search name, phone or email" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" maxlength="80">
+      </div>
+      <div id="search-box" hidden>
+        <p class="status-line" id="search-status" role="status" aria-live="polite"></p>
+        <ul class="lead-list" id="search-results" aria-label="Search results" hidden></ul>
+      </div>
+      <div id="browse-box">
       <div class="filters" id="filters" role="group" aria-label="Show leads"></div>
       <p class="status-line" id="list-loading">Loading your leads…</p>
       <ul class="lead-list" id="lead-list" hidden></ul>
@@ -100,6 +111,134 @@
       </div>
       <p class="status-line" id="filter-empty" hidden></p>
       <p class="error pad" id="list-error" role="alert" hidden></p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Follow-ups: who asked for the owner, scheduled follow-up texts, recently sent ones -->
+  <main class="screen followups-screen" id="screen-followups" hidden>
+    <div class="scroller" id="fu-scroll">
+      <div class="fu-wrap">
+        <p class="status-line" id="fu-loading">Loading your follow-ups…</p>
+        <div id="fu-body"></div>
+        <p class="error pad" id="fu-error" role="alert" hidden></p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Calendar: month grid of booked events (and possible ones), list for the picked day -->
+  <main class="screen calendar-screen" id="screen-calendar" hidden>
+    <div class="scroller" id="cal-scroll">
+      <div class="cal-wrap">
+        <div class="cal-bar">
+          <button class="icon-btn cal-nav" id="cal-prev" type="button" aria-label="Previous month">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <h2 class="cal-title" id="cal-title" aria-live="polite"></h2>
+          <button class="icon-btn cal-nav" id="cal-next" type="button" aria-label="Next month">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <label class="toggle cal-toggle">
+          <input type="checkbox" id="cal-possible">
+          <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+          <span>Show possible events</span>
+        </label>
+        <p class="status-line" id="cal-loading">Loading your events…</p>
+        <table class="cal-grid" id="cal-grid" hidden>
+          <thead><tr id="cal-head"></tr></thead>
+          <tbody id="cal-body"></tbody>
+        </table>
+        <p class="cal-month-note" id="cal-month-note" hidden></p>
+        <section class="cal-day" id="cal-day" aria-labelledby="cal-day-title" hidden>
+          <h3 class="cal-day-title" id="cal-day-title"></h3>
+          <ul class="cards" id="cal-day-list"></ul>
+          <p class="cal-day-empty" id="cal-day-empty" hidden></p>
+        </section>
+        <p class="error pad" id="cal-error" role="alert" hidden></p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Quote calculator: read-only price check through the Edge Function cv-quote (same engine as form leads).
+       Nothing is saved or sent from here. -->
+  <main class="screen quote-screen" id="screen-quote" hidden>
+    <div class="scroller" id="q-scroll">
+      <div class="q-wrap">
+        <form class="q-form" id="q-form" novalidate>
+          <p class="q-lede">Same prices your leads get from the form. Nothing is saved or sent.</p>
+
+
+          <div class="q-field">
+            <label class="field-label" for="q-guests">Number of guests</label>
+            <input class="field" id="q-guests" type="text" inputmode="numeric" autocomplete="off" maxlength="4" aria-describedby="q-err-guests">
+            <p class="error" id="q-err-guests" hidden></p>
+          </div>
+
+          <div class="q-field">
+            <label class="field-label" for="q-hours">How many hours of service</label>
+            <select class="field" id="q-hours" aria-describedby="q-err-service_hours">
+              <option value="">Pick hours</option>
+              <option value="3">3 hours</option><option value="4">4 hours</option><option value="5">5 hours</option>
+              <option value="6">6 hours</option><option value="7">7 hours</option><option value="8">8 hours</option>
+              <option value="over_8">More than 8 hours</option>
+            </select>
+            <p class="error" id="q-err-service_hours" hidden></p>
+          </div>
+
+          <fieldset class="q-field" id="q-bar-box" aria-describedby="q-err-bar_rental">
+            <legend class="field-label">Portable bar required?</legend>
+            <div class="q-chips">
+              <label class="q-chip"><input type="radio" name="q-bar" value="yes"><span>Yes</span></label>
+              <label class="q-chip"><input type="radio" name="q-bar" value="no"><span>No</span></label>
+            </div>
+            <p class="error" id="q-err-bar_rental" hidden></p>
+          </fieldset>
+          <p class="hint q-bar-note" id="q-bar-note" hidden>Bar only always includes the portable bar.</p>
+
+          <div class="q-field">
+            <label class="field-label" for="q-city">Event city</label>
+            <input class="field" id="q-city" type="text" autocomplete="off" maxlength="80" aria-describedby="q-err-event_city">
+            <p class="error" id="q-err-event_city" hidden></p>
+          </div>
+
+          <div class="q-field" id="q-km-box" hidden>
+            <label class="field-label" for="q-km">Distance (km, one way)</label>
+            <input class="field" id="q-km" type="text" inputmode="decimal" autocomplete="off" maxlength="7" aria-describedby="q-km-hint q-err-distance_km">
+            <p class="hint" id="q-km-hint">The city could not be found on the map. Enter the driving distance instead.</p>
+            <p class="error" id="q-err-distance_km" hidden></p>
+          </div>
+
+          <details class="q-more" id="q-more">
+            <summary>Event date, occasion, promo code (optional)</summary>
+            <div class="q-field">
+              <label class="field-label" for="q-date">Event date</label>
+              <input class="field" id="q-date" type="date" aria-describedby="q-err-event_date">
+              <p class="error" id="q-err-event_date" hidden></p>
+            </div>
+            <div class="q-field">
+              <label class="field-label" for="q-occasion">Occasion</label>
+              <input class="field" id="q-occasion" type="text" autocomplete="off" maxlength="60" aria-describedby="q-err-occasion">
+              <p class="error" id="q-err-occasion" hidden></p>
+            </div>
+            <div class="q-field">
+              <label class="field-label" for="q-promo">Promo code</label>
+              <input class="field" id="q-promo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32" aria-describedby="q-err-promo_code">
+              <p class="error" id="q-err-promo_code" hidden></p>
+            </div>
+          </details>
+
+          <p class="error" id="q-error" role="alert" hidden></p>
+          <button class="btn primary q-submit" id="q-submit" type="submit"><span class="spinner" aria-hidden="true"></span><span>Get quote</span></button>
+        </form>
+
+        <section class="rec-card q-result" id="q-result" aria-labelledby="q-result-h" hidden>
+          <h2 class="rec-h" id="q-result-h" tabindex="-1">Quote</h2>
+          <div id="q-result-body"></div>
+          <p class="q-copied" id="q-copied" role="status"></p>
+          <button class="btn quiet q-copy" id="q-copy" type="button" hidden>Copy quote</button>
+        </section>
+      </div>
     </div>
   </main>
 
@@ -161,11 +300,22 @@
         <section class="rec-card strip" id="strip" aria-labelledby="h-status" hidden>
           <h3 class="rec-h" id="h-status">Status</h3>
           <p class="strip-time" id="strip-time" hidden></p>
+          <p class="strip-note" id="strip-note" hidden></p>
           <div class="actions" id="actions" role="group" aria-label="Change status"></div>
           <p class="actions-note" id="actions-note" hidden></p>
           <p class="error" id="action-error" role="alert" hidden></p>
           <ol class="history" id="history" aria-label="Status changes" hidden></ol>
           <button type="button" class="history-more" id="history-more" aria-controls="history" aria-expanded="false" hidden></button>
+        </section>
+
+        <section class="rec-card" id="rec-notes" aria-labelledby="h-notes" hidden>
+          <h3 class="rec-h" id="h-notes">Notes</h3>
+          <ul class="notes" id="notes-list" hidden></ul>
+          <label class="sr-only" for="note-text">Add a note</label>
+          <textarea class="field note-field" id="note-text" rows="2" maxlength="2000" placeholder="Add a note for yourself"></textarea>
+          <p class="hint note-count" id="note-count" hidden></p>
+          <p class="error" id="note-error" role="alert" hidden></p>
+          <button class="btn primary note-save" id="note-save" type="button">Save note</button>
         </section>
 
         <section class="rec-card" id="rec-event" aria-labelledby="h-event" hidden>
@@ -188,7 +338,8 @@
         </section>
       </div>
 
-      <section class="convo" id="convo" aria-labelledby="h-convo">
+      <!-- tabindex: on wide screens this column scrolls on its own, so keyboard users must be able to focus it. -->
+      <section class="convo" id="convo" aria-labelledby="h-convo" tabindex="0">
         <h3 class="convo-h" id="h-convo">Conversation</h3>
         <p class="status-line" id="thread-loading">Loading the conversation…</p>
         <div class="thread" id="thread" hidden></div>
@@ -208,6 +359,20 @@
   <dialog class="sheet" id="confirm" aria-labelledby="confirm-text">
     <div class="sheet-body">
       <p class="sheet-text" id="confirm-text"></p>
+      <div class="sheet-field" id="price-box" hidden>
+        <label class="field-label" for="price">Final price</label>
+        <input class="field money-field" id="price" type="text" inputmode="decimal" autocomplete="off" aria-describedby="price-hint">
+        <p class="hint" id="price-hint">Filled in from the quote. Change it if the job was a different price.</p>
+      </div>
+      <fieldset class="sheet-field reason-box" id="reason-box" hidden>
+        <legend class="field-label">Why was it lost?</legend>
+        <div class="reason-chips" id="reason-chips"></div>
+        <div id="reason-other" hidden>
+          <label class="field-label" for="reason-note">What happened? (optional)</label>
+          <textarea class="field note-field" id="reason-note" rows="2" maxlength="500"></textarea>
+        </div>
+      </fieldset>
+      <p class="error" id="confirm-error" role="alert" hidden></p>
       <div class="sheet-actions">
         <button class="btn primary" id="confirm-yes" type="button"></button>
         <button class="btn quiet" id="confirm-no" type="button">Cancel</button>
