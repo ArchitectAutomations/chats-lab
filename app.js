@@ -30,7 +30,7 @@
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
     setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test',
-    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', sendCode: 'auth', verify: 'auth'
+    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', sendCode: 'auth', verify: 'auth'
   };
   function trackApi(api) {
     Object.keys(API_NAMES).forEach(function (k) {
@@ -71,7 +71,7 @@
      Every tab the page knows. Adding a tab = one line here, plus its <main> screen in index.html and
      its show function; config.js (CV_CUSTOM.tabs / tabLabels) picks which ones show, their order and names.
      `route` is the hash name ('list' is '#/'), `icon` is an SVG path (24x24, stroked).
-     The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Quote calculator and Help & support live under More; Lead value is a section inside Metrics
+     The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Quote calculator, Help & support and Download spreadsheet live under More; Lead value is a section inside Metrics
      (L.tabPlan decides, from CV_CUSTOM.tabs and the feature switches). */
   var TABS = [
     { route: 'list', href: '#/', label: 'Leads', show: showList, icon: 'M12 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM5 19.5c.6-3.3 3.3-5 7-5s6.4 1.7 7 5' },
@@ -80,6 +80,7 @@
     { route: 'metrics', href: '#/metrics', label: 'Metrics', show: showMetrics, icon: 'M5 20v-8M12 20V5M19 20v-5M3 20h18' },
     { route: 'quote', href: '#/quote', label: 'Quote calculator', show: showQuote, icon: 'M7 3.5h10v17H7zM9.5 7h5M9.5 11h1M13.5 11h1M9.5 14.5h1M13.5 14.5h1M9.5 18h5' },
     { route: 'support', href: '#/support', label: 'Help & support', show: showSupport, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM9.6 9.6a2.4 2.4 0 1 1 3.5 2.1c-.7.4-1.1.9-1.1 1.7M12 16.6v.2' },
+    { route: 'export', href: '#/export', label: 'Download spreadsheet', show: showExport, icon: 'M12 4v11M7 10l5 5 5-5M5 20h14' },
     { route: 'more', href: '#/more', label: 'More', show: showMore, icon: 'M5 12h2M11 12h2M17 12h2' }
   ];
 
@@ -129,6 +130,8 @@
     qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qMore: $('q-more'),
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
     qCopy: $('q-copy'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
+    exportScreen: $('screen-export'), exGroup: $('ex-group'), exDates: $('ex-dates'), exFrom: $('ex-from'), exTo: $('ex-to'), exMake: $('ex-make'),
+    exStatus: $('ex-status'), exSave: $('ex-save'), exHint: $('ex-hint'), exError: $('ex-error'),
     support: $('screen-support'), spOff: $('sp-off'), spContact: $('sp-contact'), spCall: $('sp-call'), spCallLabel: $('sp-call-label'),
     spText: $('sp-text'), spTextLabel: $('sp-text-label'), spForm: $('sp-form'), spKinds: $('sp-kinds'), spMessage: $('sp-message'),
     spCount: $('sp-count'), spLead: $('sp-lead'), spLeadText: $('sp-lead-text'), spLeadRemove: $('sp-lead-remove'), spInclude: $('sp-include'),
@@ -205,6 +208,7 @@
     quotePrefill: null,  // { guests, area } from a lead's record -> the quote calculator, used once
     nav: { cur: '', from: '', lead: null },  // screen before More / Help, and the lead record Help was reached from (same session)
     support: { cfg: null, cfgState: 'idle', key: null, busy: false, removeLead: false, rows: null, listErr: false, listSeq: 0, cfgSeq: 0 },
+    exp: { busy: false, seq: 0, prepared: null },  // spreadsheet download: the file made by tap 1, kept in memory for tap 2
     actionButtons: {}
   };
 
@@ -413,6 +417,8 @@
       supportConfig: function () { return client.rpc('cv_support_config').then(ok); },
       supportSubmit: function (args) { return client.rpc('cv_support_submit', args).then(ok); },
       supportList: function () { return client.rpc('cv_support_list').then(ok); },
+      // Spreadsheet download (owner-only RPC, sql/013): rows only; labels and CSV are built in lib.js.
+      exportLeads: function (args) { return client.rpc('cv_export_leads', args).then(ok); },
       fetchFollowUps: function () {
         return client.from('follow_ups').select(FOLLOWUP_COLUMNS).limit(1000).then(ok);
       },
@@ -520,13 +526,14 @@
     show(el.quote, name === 'quote');
     show(el.more, name === 'more');
     show(el.support, name === 'support');
+    show(el.exportScreen, name === 'export');
     show(el.thread, name === 'thread');
     show(el.topbar, signedIn);
     show(el.tabbar, signedIn && PLAN.showBar);
     // Back arrow on a lead record and on the tools under More; every other screen is a tab with a plain title.
-    var sub = name === 'thread' || name === 'quote' || name === 'support';
+    var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export';
     show(el.back, sub);
-    if (name === 'quote' || name === 'support') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
+    if (name === 'quote' || name === 'support' || name === 'export') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
     if (name !== 'thread') {
       el.title.textContent = S.tab.label;
       setText(el.subtitle, '');
@@ -1122,6 +1129,123 @@
     renderQuoteResult();
   }
 
+  /* ---------- Download spreadsheet (More) ----------
+     Two taps on purpose: "Make spreadsheet" fetches and builds the file, "Save file" hands it over. On an iPhone or iPad the share
+     sheet must be opened inside the tap itself (an awaited fetch uses up the tap), so Save does no waiting before navigator.share. */
+
+  function buildExportGroups() {
+    var frag = document.createDocumentFragment();
+    L.exportGroups().forEach(function (g) {
+      var lab = make('label', 'reason-chip');
+      var input = make('input');
+      input.type = 'radio'; input.name = 'ex-group'; input.value = g.key;
+      if (g.key === 'all') input.checked = true;   // a backup should never be silently partial
+      input.addEventListener('change', exportChoiceChanged);
+      lab.appendChild(input);
+      lab.appendChild(make('span', '', g.label));
+      frag.appendChild(lab);
+    });
+    el.exGroup.replaceChildren(frag);
+  }
+
+  function exportGroup() {
+    var r = el.exGroup.querySelector('input:checked');
+    return r ? r.value : 'all';
+  }
+
+  // The prepared file belongs to the choices it was made with: any change drops it, so a stale file is never saved.
+  function clearPrepared() {
+    S.exp.seq++;
+    S.exp.prepared = null;
+    setText(el.exStatus, ''); setText(el.exError, ''); setText(el.exHint, '');
+    show(el.exSave, false);
+    setExportBusy(false);
+  }
+  function exportChoiceChanged() { clearPrepared(); }
+
+  function setExportBusy(on) {
+    S.exp.busy = on;
+    el.exMake.disabled = on;
+    el.exMake.classList.toggle('is-busy', on);
+  }
+
+  function resetExport() {
+    clearPrepared();
+    el.exFrom.value = ''; el.exTo.value = ''; el.exDates.open = false;
+    var all = el.exGroup.querySelector('input[value="all"]');
+    if (all) all.checked = true;
+  }
+
+  function exportBrand() {
+    var own = typeof custom.businessName === 'string' ? custom.businessName.trim() : '';
+    return own || (el.moreBrand.textContent || '').trim();
+  }
+
+  function makeExport() {
+    if (S.exp.busy) return;
+    var r = L.exportArgs(exportGroup(), el.exFrom.value, el.exTo.value);
+    clearPrepared();
+    if (!r.ok) { setText(el.exError, r.error); return; }
+    var group = r.args.p_group;
+    var n = S.exp.seq;
+    setExportBusy(true);
+    Promise.resolve().then(function () { return S.api.exportLeads(r.args); }).then(function (env) {
+      if (n !== S.exp.seq) return;
+      var rows = env && Array.isArray(env.rows) ? env.rows : [];
+      var text = L.csvEncode(L.EXPORT_HEADERS(), rows.map(L.exportCells));
+      var name = L.exportFileName(exportBrand(), group, L.today().ymd);
+      var res = L.exportResult(env, name);
+      setText(el.exStatus, res.canSave && res.name ? res.text + ' ' + res.name : res.text);
+      if (!res.canSave) return;
+      var blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+      var file = null;
+      try { file = new File([blob], name, { type: 'text/csv' }); } catch (e) { file = null; }
+      var can = false;
+      try { can = !!(file && navigator.canShare && navigator.canShare({ files: [file] })); } catch (e2) { can = false; }
+      var platform = L.diagDevice(navigator, window).platform;
+      // Mock only: ?export_env=iphone pretends to be an iPhone that can share files, for screenshots.
+      if (MOCK && qs.get('export_env') === 'iphone') { platform = 'iPhone'; can = !!file; }
+      var method = L.exportSaveMethod({ canShareFiles: can, platform: platform });
+      S.exp.prepared = { file: file, blob: blob, name: name, method: method };
+      setText(el.exHint, method === 'share' ? 'Choose “Save to Files”, or open it in Numbers.' : '');
+      show(el.exSave, true);
+    }, function (err) {
+      if (n !== S.exp.seq) return;
+      setText(el.exError, L.exportErrorText(err));
+    }).then(function () { if (n === S.exp.seq) setExportBusy(false); });
+  }
+
+  function downloadExport(p) {
+    var url = URL.createObjectURL(p.blob);
+    var a = make('a');
+    a.href = url; a.download = p.name; a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }
+
+  // Runs inside the tap: nothing is awaited before navigator.share() or the link click.
+  function saveExport() {
+    var p = S.exp.prepared;
+    if (!p) return;
+    setText(el.exError, '');
+    if (p.method !== 'share' || !p.file || typeof navigator.share !== 'function') { downloadExport(p); return; }
+    var shared;
+    try { shared = navigator.share({ files: [p.file], title: p.name }); } catch (e) { downloadExport(p); return; }
+    Promise.resolve(shared).then(null, function (err) {
+      var nm = err && err.name;
+      if (nm === 'AbortError') return;   // the owner closed the sheet
+      if (nm === 'NotAllowedError') { setText(el.exError, 'Tap Save file again.'); return; }
+      try { downloadExport(p); } catch (e2) { setText(el.exError, L.exportErrorText(e2)); }
+    });
+  }
+
+  function showExport() {
+    S.thread.id = null;
+    setScreen('export');
+  }
+
   /* ---------- Help & support (More) ---------- */
 
   var SUPPORT_REFRESH_MS = 60000;
@@ -1338,9 +1462,9 @@
 
   // Remember the screen before More / Help (and the lead record it came from) so a request can say where it was sent from.
   function trackNav(name) {
-    var group = name === 'more' || name === 'support' || name === 'quote';
+    var group = name === 'more' || name === 'support' || name === 'quote' || name === 'export';
     var prev = S.nav.cur;
-    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote';
+    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote' || prev === 'export';
     if (group && !prevGroup) {
       S.nav.from = prev;
       S.nav.lead = prev === 'lead' && S.thread.id ? { id: S.thread.id, lead: S.thread.lead } : null;
@@ -2424,6 +2548,7 @@
     P.seq++; P.cfg = null; P.sub = null; P.busy = false; P.open = false; pushMsg(''); renderPush();
     clearStoredTargets();
     resetSupport();
+    resetExport();
     stopLive();
     clearTimeout(S.refreshTimer);
     S.seq.list++; S.seq.thread++;
@@ -2740,6 +2865,14 @@
     Array.prototype.forEach.call(el.qForm.querySelectorAll('input[name="q-type"]'), function (r) { r.addEventListener('change', qTypeChanged); });
     el.qCopy.addEventListener('click', copyQuote);
 
+    // Download spreadsheet
+    el.exMake.addEventListener('click', makeExport);
+    el.exSave.addEventListener('click', saveExport);
+    el.exFrom.addEventListener('input', exportChoiceChanged);
+    el.exTo.addEventListener('input', exportChoiceChanged);
+    el.exFrom.addEventListener('change', exportChoiceChanged);
+    el.exTo.addEventListener('change', exportChoiceChanged);
+
     // Help & support
     el.spForm.addEventListener('submit', function (e) { e.preventDefault(); submitSupport(); });
     el.spMessage.addEventListener('input', function () { renderSupportCount(); el.spMessage.removeAttribute('aria-invalid'); setText(el.spError, ''); });
@@ -2846,6 +2979,7 @@
     buildReasons();
     buildAddSources();
     buildSupportKinds();
+    buildExportGroups();
     show(el.searchWrap, HAS_SEARCH);
     applyAppName();
     restorePrefs();

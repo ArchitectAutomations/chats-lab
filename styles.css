@@ -886,3 +886,11 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .sp-chip { flex: none; display: inline-flex; padding: 1px 10px; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 650; line-height: 1.5; white-space: nowrap; border: 1.5px solid var(--on-secondary); background: transparent; color: var(--on-secondary); }
 .sp-chip.is-working { background: var(--secondary-deep); border-color: var(--secondary-deep); color: var(--on-secondary); }
 .sp-chip.is-fixed { background: var(--primary); border-color: var(--primary); color: var(--on-accent); }
+
+/* ---------- Download spreadsheet (More) ---------- */
+.ex-dates-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.ex-dates-row .q-field { margin-top: 8px; }
+.ex-dates-row .field { min-height: 52px; font-size: var(--fs-lg); }
+.export-screen .q-more .hint { margin: 0; }
+.ex-status { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; }
+.export-screen .hint { margin-top: 10px; }

@@ -284,6 +284,42 @@
     </div>
   </main>
 
+  <!-- Download spreadsheet (More): all the leads as a CSV for Numbers, Excel or Google Sheets. Two taps: Make spreadsheet, then Save file.
+       Shown only when CV_CUSTOM.features.export is on; the database has its own switch (cv_config export_enabled). -->
+  <main class="screen export-screen" id="screen-export" hidden>
+    <div class="scroller" id="ex-scroll">
+      <div class="sp-wrap">
+        <p class="q-lede">Your leads in a file that opens in Numbers, Excel or Google Sheets. One row per event.</p>
+
+        <fieldset class="q-field">
+          <legend class="field-label">Which leads</legend>
+          <div class="reason-chips sp-chips" id="ex-group"></div>
+        </fieldset>
+
+        <details class="q-more" id="ex-dates">
+          <summary>Pick dates (optional)</summary>
+          <p class="hint">Only leads that came in between</p>
+          <div class="ex-dates-row">
+            <div class="q-field">
+              <label class="field-label" for="ex-from">From</label>
+              <input class="field" id="ex-from" type="date">
+            </div>
+            <div class="q-field">
+              <label class="field-label" for="ex-to">To</label>
+              <input class="field" id="ex-to" type="date">
+            </div>
+          </div>
+        </details>
+
+        <button class="btn primary q-submit" id="ex-make" type="button"><span class="spinner" aria-hidden="true"></span><span>Make spreadsheet</span></button>
+        <p class="ex-status" id="ex-status" role="status" hidden></p>
+        <p class="error" id="ex-error" role="alert" hidden></p>
+        <button class="btn primary" id="ex-save" type="button" hidden>Save file</button>
+        <p class="hint" id="ex-hint" hidden></p>
+      </div>
+    </div>
+  </main>
+
   <!-- Help & support (More): tell Kevin about a problem, a question or an idea; the owner's own requests with their status.
        Shown only when CV_CUSTOM.features.support is on and the database says support is enabled. -->
   <main class="screen support-screen" id="screen-support" hidden>

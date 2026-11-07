@@ -7,6 +7,7 @@
   'use strict';
 
   var TZ = 'America/Toronto'; // default; configure({ timeZone }) can change it
+  var SESSION_RAN_OUT = 'Your session ran out. Sign out and sign in again.';
   var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   var WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -401,7 +402,7 @@
       return reason ? "This change isn't allowed for this lead (" + reason.replace(/_/g, ' ') + ').' : "This change isn't allowed for this lead.";
     }
     var status = err && err.status;
-    if (status === 401 || (err && err.code === 'PGRST301') || /jwt/.test(msg)) return 'Your session ran out. Sign out and sign in again.';
+    if (status === 401 || (err && err.code === 'PGRST301') || /jwt/.test(msg)) return SESSION_RAN_OUT;
     if (/failed to fetch|network|load failed/.test(msg)) return "Can't reach the server. Check your connection and try again.";
     return "Couldn't save that. Try again in a moment.";
   }
@@ -831,7 +832,7 @@
   /* ---------- feature switches (CV_CUSTOM.features) ---------- */
 
   // Every feature is on unless the client's settings say exactly false. Off = not shown at all.
-  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push', 'addLead', 'support'];
+  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push', 'addLead', 'support', 'export'];
   function featureOn(features, key) {
     return !(features && typeof features === 'object' && features[key] === false);
   }
@@ -1861,10 +1862,10 @@
 
   // Which tabs sit in the bar and which live under More. `want` = CV_CUSTOM.tabs, `on(route)` = feature switch.
   // Leads is always on. Names the page does not know are ignored; an empty or unusable list means "everything on".
-  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Quote calculator, Help & support (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
+  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Quote calculator, Help & support, Download spreadsheet (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
   // slots counts the bar tabs plus the More slot; with fewer than 2 the page hides the bar.
   var BAR_TABS = ['list', 'followups', 'calendar', 'metrics'];
-  var MORE_TABS = ['quote', 'support'];
+  var MORE_TABS = ['quote', 'support', 'export'];
   function tabPlan(want, on) {
     var isOn = typeof on === 'function' ? on : function () { return true; };
     var known = BAR_TABS.concat(MORE_TABS);
@@ -1991,7 +1992,8 @@
   }
 
   function diagInt(n, hi) { n = Math.round(Number(n)); return n >= 0 && n <= hi ? n : 0; }
-  function diagRoute(r) { return typeof r === 'string' && /^[a-z-]{1,24}$/.test(r) ? r : ''; }
+  // A screen the server does not list (Download spreadsheet, 'export') is reported as 'more', where it lives; the server list is untouched this round.
+  function diagRoute(r) { return typeof r === 'string' && /^[a-z-]{1,24}$/.test(r) ? (DIAG_ROUTES.indexOf(r) !== -1 ? r : 'more') : ''; }
 
   // state { build, route, fromRoute, viewport {w,h}, device, errors, calls, now } -> exactly the contract object.
   function supportDiagnostics(state) {
@@ -2192,6 +2194,249 @@
     });
   }
 
+
+  /* ---------- spreadsheet download (session 3, round 3) ---------- */
+
+  // The server (cv_export_leads, sql/013) returns plain rows; ALL labels, formatting and CSV escaping live here, so a client's
+  // own wording carries through and the injection guard is in exactly one place. Contract: crm-s3-r3-contract.md, sections 2 + 4.
+  // Shared test vectors: tools/tests/export_vectors.json.
+
+  // Time zone words for a header: America/Toronto -> "Toronto".
+  function tzWord(tz) {
+    var last = String(tz || TZ).split('/').pop() || '';
+    return last.replace(/_/g, ' ');
+  }
+
+  function exportHeaders(tz) {
+    var z = tzWord(tz);
+    return ['Received (' + z + ' time)', 'Customer #', 'Name', 'Phone', 'Email', 'Status', 'Status changed (' + z + ' time)',
+      'Event date', 'Occasion', 'Guests', 'Hours', 'Event city', 'Distance (km)', 'Bar rental', 'Quote', 'Quote total ($)',
+      'Quote details', 'Promotion', 'Value', 'Booked for ($)', 'Lost reason', 'Came from', 'Texts', 'Consent', 'Follow-up',
+      'Last activity (' + z + ' time)', 'Events for this customer', 'Other dates (from form)', 'Additional details',
+      'History', 'Notes', 'Record ID'];
+  }
+
+  // 2026-11-07T03:30:00Z -> "2026-11-06 22:30" (24 h, client time zone). '' for nothing or nonsense.
+  var fmtExport = null;
+  function exportLocal(iso) {
+    var d = iso === null || iso === undefined || iso === '' ? null : toDate(iso);
+    if (!d) return '';
+    if (!fmtExport) fmtExport = { tz: '', f: null };
+    if (fmtExport.tz !== TZ) {
+      fmtExport.tz = TZ;
+      fmtExport.f = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    }
+    var o = {};
+    fmtExport.f.formatToParts(d).forEach(function (p) { o[p.type] = p.value; });
+    var hh = o.hour === '24' ? '00' : o.hour;
+    return o.year + '-' + o.month + '-' + o.day + ' ' + hh + ':' + o.minute;
+  }
+
+  // +14165550123 -> (416) 555-0123. Anything else stays as stored (it is guarded when written). Empty -> ''.
+  function exportPhone(e164) {
+    var s = String(e164 == null ? '' : e164).trim();
+    var m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(s);
+    return m ? '(' + m[1] + ') ' + m[2] + '-' + m[3] : s;
+  }
+
+  function oneLine(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); }
+  function exportNum(v) {
+    if (v === null || v === undefined || v === '') return '';
+    var n = Number(v);
+    return isFinite(n) ? String(n) : '';
+  }
+  function exportMoney(v) {
+    var c = toCents(v);
+    return c === null ? '' : (c / 100).toFixed(2);
+  }
+  function exportYmd(v) {
+    var m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v == null ? '' : v));
+    return m ? m[1] : '';
+  }
+  function exportHours(r) {
+    var label = oneLine(r.service_hours_label);
+    if (label) return label;
+    function hm(t) { var s = oneLine(t); var m = /^(\d{1,2}:\d{2}):\d{2}/.exec(s); return m ? m[1] : s; }
+    var a = hm(r.start_time), b = hm(r.end_time);
+    return a && b ? a + ' to ' + b : (a || b);
+  }
+  function exportQuoteWord(st) {
+    var k = String(st || '').toLowerCase();
+    return k === 'firm' ? 'Priced' : k === 'defer' ? 'Needs your price' : '';
+  }
+  function exportQuoteDetails(r) {
+    if (String(r.quote_status || '').toLowerCase() === 'defer') return deferReasons(r.quote_defer_reasons).join('; ');
+    var items = Array.isArray(r.quote_line_items) ? r.quote_line_items : [];
+    return items.filter(function (it) { return it && typeof it === 'object'; }).map(function (it) {
+      var label = oneLine(it.label), detail = oneLine(it.detail);
+      var head = label + (detail ? ' (' + detail + ')' : '');
+      var money = fmtMoney(it.amount);
+      return head && money ? head + ': ' + money : head || money;
+    }).filter(Boolean).join(' | ');
+  }
+  function exportCameFrom(r) {
+    var s = String(r.source || '').toLowerCase();
+    if (!s) return '';
+    if (s === 'tally_form') return 'Booking form';
+    if (s === 'sms_inbound') return 'Texted first';
+    if (s === 'demo-seed') return 'Sample (demo)';
+    if (s === 'manual') { var m = manualSourceLabel(r.manual_source); return m ? 'Added by you: ' + m : 'Added by you'; }
+    return humanize(s.replace(/-/g, ' '));
+  }
+  function exportLost(r) {
+    var key = String(r.lost_reason || '').trim();
+    if (!key) return '';
+    var label = lostReasonLabel(key);
+    var note = oneLine(r.lost_note);
+    return key.toLowerCase() === 'other' && note ? label + ': ' + note : label;
+  }
+  function exportFollowUp(f) {
+    if (!f || typeof f !== 'object') return '';
+    var type = String(f.type || '').toLowerCase();
+    var reason = oneLine(f.reason);
+    if (type === 'auto_nudge') {
+      if (f.due_at) return 'Automatic text due ' + exportLocal(f.due_at);
+      if (f.sent_at) return 'Automatic text sent ' + exportLocal(f.sent_at);
+      return reason;
+    }
+    if (type === 'owner_callback') return reason ? 'You: ' + reason : 'You';
+    return reason || humanize(type);
+  }
+  function exportHistory(r) {
+    var h = (Array.isArray(r.history) ? r.history : []).filter(Boolean).map(function (e) {
+      var a = String(e.action || '').toLowerCase();
+      var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
+      var s = String(e.source || '').toLowerCase();
+      var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
+      var extra = a === 'booked' ? fmtMoney(e.amount) : a === 'lost' ? lostReasonLabel(e.reason) : '';
+      return [exportLocal(e.at), label, extra, src].filter(Boolean).join(' ');
+    });
+    var more = Number(r.history_more) || 0;
+    if (more > 0) h.push('and ' + more + ' older');
+    return h.join(' | ');
+  }
+  function exportNotes(r) {
+    var n = (Array.isArray(r.notes) ? r.notes : []).filter(Boolean).map(function (x) {
+      return [exportLocal(x.at), oneLine(x.body)].filter(Boolean).join(' ');
+    });
+    var more = Number(r.notes_more) || 0;
+    if (more > 0) n.push('and ' + more + (more === 1 ? ' older note' : ' older notes') + ' in the app');
+    return n.join(' | ');
+  }
+  function exportTier(v) {
+    var k = tierOf({ value_tier: v });
+    return CUSTOM.tiers[k] || TIERS.filter(function (t) { return t.key === k; })[0].label;
+  }
+
+  // One RPC row -> the 32 cells, in header order. kind 't' = text (quoted + guarded when written), 'n' = number (bare).
+  function exportCells(row) {
+    var r = row || {};
+    var t = function (v) { return { v: v == null ? '' : String(v), kind: 't' }; };
+    var n = function (v) { return { v: v, kind: 'n' }; };
+    var texts = r.opted_out === true ? 'Opted out' : r.auto_texts === false ? 'Off: you contact them' : 'On';
+    return [
+      t(exportLocal(r.created_at)), n(exportNum(r.customer_no)), t(oneLine(r.name)), t(exportPhone(r.phone)), t(oneLine(r.email)),
+      t(r.status ? statusInfo(r.status).label : ''), t(exportLocal(r.status_at)),
+      t(exportYmd(r.event_date)), t(oneLine(r.occasion)), n(exportNum(r.guests)), t(exportHours(r)), t(oneLine(r.event_area)),
+      n(exportNum(r.distance_km)), t(r.bar_rental === true ? 'Yes' : r.bar_rental === false ? 'No' : ''),
+      t(exportQuoteWord(r.quote_status)), n(exportMoney(r.quote_total)), t(exportQuoteDetails(r)), t(promoText(r)), t(exportTier(r.value_tier)),
+      n(exportMoney(r.booked_value)), t(exportLost(r)), t(exportCameFrom(r)), t(texts), t(r.consent_basis == null ? '' : r.consent_basis),
+      t(exportFollowUp(r.follow_up)), t(exportLocal(r.last_activity_at)), n(exportNum(r.customer_events)),
+      t(oneLine(r.multi_event_dates)), t(r.additional_details == null ? '' : r.additional_details),
+      t(exportHistory(r)), t(exportNotes(r)), t(r.lead_id == null ? '' : r.lead_id)
+    ];
+  }
+
+  /* CSV (RFC 4180) with the OWASP CSV-injection guard. The only encoder: the server never escapes. */
+  var CSV_GUARD = { '=': 1, '+': 1, '-': 1, '@': 1, '\t': 1, '\n': 1, '＝': 1, '＋': 1, '－': 1, '＠': 1 };
+  function csvCell(v, kind) {
+    if (v === null || v === undefined || v === '') return '';
+    var s = String(v);
+    if (kind === 'n' && /^-?[0-9]+(\.[0-9]+)?$/.test(s)) return s; // a number the page's own formatter built; a leading minus is safe here, text keeps the full guard
+    s = s.replace(/\r\n?/g, '\n')
+      .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
+      .replace(/[‎‏‪-‮⁦-⁩]/g, '');
+    if (s === '') return '';
+    if (CSV_GUARD[s.charAt(0)] === 1) s = "'" + s;
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  function csvEncode(headers, rows) {
+    var lines = [(headers || []).map(function (h) { return csvCell(h, 't'); }).join(',')];
+    (rows || []).forEach(function (cells) {
+      lines.push((cells || []).map(function (c) { return csvCell(c && c.v, c && c.kind); }).join(','));
+    });
+    return '﻿' + lines.join('\r\n') + '\r\n';
+  }
+
+  // <business>-leads[-open|-booked|-lost]-<YYYY-MM-DD>.csv; letters and digits only, accents folded, at most 40 for the business part.
+  function exportFileName(appNameText, group, ymdText) {
+    var s = String(appNameText == null ? '' : appNameText).normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (s.length > 40) {
+      var cut = s.slice(0, 40);
+      if (s.charAt(40) !== '-' && cut.lastIndexOf('-') > 0) cut = cut.slice(0, cut.lastIndexOf('-'));
+      s = cut.replace(/-+$/, '');
+    }
+    if (s === 'leads') s = '';
+    var g = group === 'open' || group === 'booked' || group === 'lost' ? '-' + group : '';
+    return (s ? s + '-' : '') + 'leads' + g + '-' + ymdText + '.csv';
+  }
+
+  // iPhone / iPad (Safari and the home-screen app): a download link often does nothing, so the share sheet ("Save to Files") is used.
+  function exportSaveMethod(env) {
+    var e = env || {};
+    return e.canShareFiles && (e.platform === 'iPhone' || e.platform === 'iPad') ? 'share' : 'link';
+  }
+
+  // The four choices, labels from the client's status words. All first and pre-selected.
+  function exportGroups() {
+    var f = filters();
+    function lab(k) { return f.filter(function (x) { return x.key === k; })[0].label; }
+    return ['all', 'open', 'booked', 'lost'].map(function (k) { return { key: k, label: lab(k) }; });
+  }
+
+  // Page choices -> RPC arguments, or { ok: false, error }.
+  function exportArgs(group, from, to) {
+    var g = String(group || 'all').toLowerCase();
+    if (['all', 'open', 'booked', 'lost'].indexOf(g) === -1) return { ok: false, error: exportErrorText({ message: 'bad_input', details: 'group' }) };
+    var f = String(from || '').trim(), t = String(to || '').trim();
+    var re = /^\d{4}-\d{2}-\d{2}$/;
+    if ((f && !re.test(f)) || (t && !re.test(t))) return { ok: false, error: exportErrorText({ message: 'bad_input', details: 'dates' }) };
+    var yr = function (x) { return x && (x < '2000-01-01' || x > '2100-12-31' || isNaN(Date.parse(x + 'T00:00:00Z')) || new Date(x + 'T00:00:00Z').toISOString().slice(0, 10) !== x); };
+    if (yr(f) || yr(t)) return { ok: false, error: exportErrorText({ message: 'bad_input', details: 'dates_range' }) };
+    if (f && t && t < f) return { ok: false, error: exportErrorText({ message: 'bad_input', details: 'dates' }) };
+    return { ok: true, args: { p_group: g, p_from: f || null, p_to: t || null } };
+  }
+
+  // What the owner reads after "Make spreadsheet": { text, canSave }.
+  function exportResult(env, name) {
+    var e = env || {};
+    var got = Number(e.rows_returned), all = Number(e.rows_matching);
+    var rows = Array.isArray(e.rows) ? e.rows.length : 0;
+    if (!isFinite(got)) got = rows;
+    if (!isFinite(all)) all = got;
+    var fmt = function (x) { return Number(x).toLocaleString('en-CA'); };
+    if (got === 0) return { text: 'No leads match. Nothing to save.', canSave: false };
+    if (e.truncated === true) return { text: 'Only the newest ' + fmt(got) + ' of ' + fmt(all) + ' fit in one file. Pick dates to get the rest.', canSave: true };
+    return { text: fmt(got) + (got === 1 ? ' lead ready.' : ' leads ready.'), canSave: true, name: name };
+  }
+
+  function exportErrorText(err) {
+    var e = err && typeof err === 'object' ? err : {};
+    var msg = String(e.message || e.error || (typeof err === 'string' ? err : '')).trim().toLowerCase();
+    var det = String(e.details || e.detail || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
+    var m = /\b(not_owner|not_allowed|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(msg);
+    var word = m ? m[1] : '';
+    if (!word && (e.code === '42501' || e.status === 403)) word = 'not_owner';
+    if (!word && (e.status === 401 || e.code === 'PGRST301' || /jwt/.test(msg))) return SESSION_RAN_OUT;
+    var why = m && m[2] ? String(m[2]).trim().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_') : det;
+    if (word === 'not_owner') return 'You’re signed out. Sign in again.';
+    if (word === 'not_allowed') return 'Spreadsheet download is turned off. Ask Kevin.';
+    if (word === 'bad_input' && why === 'dates_range') return 'Pick a real date between 2000 and 2100.';
+    if (word === 'bad_input') return why === 'dates' ? 'The end date is before the start date.' : 'Something in the choices isn’t right. Try again.';
+    return 'Couldn’t make the file. Check your connection and try again.';
+  }
+
   return {
     TZ: TZ,
     normalizePhone: normalizePhone,
@@ -2358,6 +2603,18 @@
     supportLeadLine: supportLeadLine,
     supportRow: supportRow,
     splitThread: splitThread,
-    systemFoldText: systemFoldText
+    systemFoldText: systemFoldText,
+    EXPORT_HEADERS: exportHeaders,
+    exportLocal: exportLocal,
+    exportPhone: exportPhone,
+    exportCells: exportCells,
+    csvCell: csvCell,
+    csvEncode: csvEncode,
+    exportFileName: exportFileName,
+    exportSaveMethod: exportSaveMethod,
+    exportGroups: exportGroups,
+    exportArgs: exportArgs,
+    exportResult: exportResult,
+    exportErrorText: exportErrorText
   };
 });
