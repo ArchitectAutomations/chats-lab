@@ -30,7 +30,7 @@
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
     setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test',
-    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', sendCode: 'auth', verify: 'auth'
+    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', ask: 'cv-ask', askConfig: 'cv_ask_config', sendCode: 'auth', verify: 'auth'
   };
   function trackApi(api) {
     Object.keys(API_NAMES).forEach(function (k) {
@@ -71,13 +71,14 @@
      Every tab the page knows. Adding a tab = one line here, plus its <main> screen in index.html and
      its show function; config.js (CV_CUSTOM.tabs / tabLabels) picks which ones show, their order and names.
      `route` is the hash name ('list' is '#/'), `icon` is an SVG path (24x24, stroked).
-     The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Quote calculator, Help & support and Download spreadsheet live under More; Lead value is a section inside Metrics
+     The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Ask your CRM, Quote calculator, Help & support and Download spreadsheet live under More; Lead value is a section inside Metrics
      (L.tabPlan decides, from CV_CUSTOM.tabs and the feature switches). */
   var TABS = [
     { route: 'list', href: '#/', label: 'Leads', show: showList, icon: 'M12 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM5 19.5c.6-3.3 3.3-5 7-5s6.4 1.7 7 5' },
     { route: 'followups', href: '#/followups', label: 'Follow-ups', show: showFollowUps, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 7.5V12l3 2' },
     { route: 'calendar', href: '#/calendar', label: 'Calendar', show: showCalendar, icon: 'M4 6h16v14H4zM4 10.5h16M8.5 3.5v5M15.5 3.5v5' },
     { route: 'metrics', href: '#/metrics', label: 'Metrics', show: showMetrics, icon: 'M5 20v-8M12 20V5M19 20v-5M3 20h18' },
+    { route: 'ask', href: '#/ask', label: 'Ask your CRM', show: showAsk, icon: 'M4 5.5h16v10.5H10l-4.5 3.5V16H4zM10 9.2a2 2 0 1 1 2.8 1.8c-.5.3-.8.6-.8 1.2M12 13.6v.2' },
     { route: 'quote', href: '#/quote', label: 'Quote calculator', show: showQuote, icon: 'M7 3.5h10v17H7zM9.5 7h5M9.5 11h1M13.5 11h1M9.5 14.5h1M13.5 14.5h1M9.5 18h5' },
     { route: 'support', href: '#/support', label: 'Help & support', show: showSupport, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM9.6 9.6a2.4 2.4 0 1 1 3.5 2.1c-.7.4-1.1.9-1.1 1.7M12 16.6v.2' },
     { route: 'export', href: '#/export', label: 'Download spreadsheet', show: showExport, icon: 'M12 4v11M7 10l5 5 5-5M5 20h14' },
@@ -130,6 +131,8 @@
     qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qMore: $('q-more'),
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
     qCopy: $('q-copy'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
+    askScreen: $('screen-ask'), askScroll: $('ask-scroll'), askThread: $('ask-thread'), askStarters: $('ask-starters'), askForm: $('ask-form'), askInput: $('ask-input'),
+    askSend: $('ask-send'), askCount: $('ask-count'), askFooter: $('ask-footer'),
     exportScreen: $('screen-export'), exGroup: $('ex-group'), exDates: $('ex-dates'), exFrom: $('ex-from'), exTo: $('ex-to'), exMake: $('ex-make'),
     exStatus: $('ex-status'), exSave: $('ex-save'), exHint: $('ex-hint'), exError: $('ex-error'),
     support: $('screen-support'), spOff: $('sp-off'), spContact: $('sp-contact'), spCall: $('sp-call'), spCallLabel: $('sp-call-label'),
@@ -208,6 +211,7 @@
     quotePrefill: null,  // { guests, area } from a lead's record -> the quote calculator, used once
     nav: { cur: '', from: '', lead: null },  // screen before More / Help, and the lead record Help was reached from (same session)
     support: { cfg: null, cfgState: 'idle', key: null, busy: false, removeLead: false, rows: null, listErr: false, listSeq: 0, cfgSeq: 0 },
+    ask: { cfg: null, cfgState: 'idle', cfgSeq: 0, cfgPromise: null, items: [], questions: [], busy: false, seq: 0, waitTimer: null },  // Ask your CRM: memory only, never stored
     exp: { busy: false, seq: 0, prepared: null },  // spreadsheet download: the file made by tap 1, kept in memory for tap 2
     actionButtons: {}
   };
@@ -397,6 +401,20 @@
           throw { status: 0, error: String(r.error.name || 'network'), details: String(r.error.message || '') };
         });
       },
+      // Ask your CRM (Edge Function cv-ask, read only). Errors are thrown as { status, error, details } like quote above.
+      ask: function (body) {
+        return client.functions.invoke('cv-ask', { body: body }).then(function (r) {
+          if (!r.error) return r.data;
+          var ctx = r.error.context;
+          if (ctx && typeof ctx.json === 'function') {
+            return ctx.json().catch(function () { return {}; }).then(function (b) {
+              throw { status: ctx.status, error: (b && b.error) || '', details: b && b.details };
+            });
+          }
+          throw { status: 0, error: String(r.error.name || 'network'), details: String(r.error.message || '') };
+        });
+      },
+      askConfig: function () { return client.rpc('cv_ask_config').then(ok); },
       // Owner-only RPC (sql/011): -> [{ lead_id, created }]. args from L.addLeadArgs.
       optedOutPhones: function () {
         return client.from('lead_detail').select('phone').eq('opted_out', true).limit(1000)
@@ -494,6 +512,7 @@
       var a = make('a', 'more-row');
       a.href = n.href;
       if (n.route === 'support') { li.hidden = true; supportRowNode = li; }  // shown once the database says support is on
+      if (n.route === 'ask') { li.hidden = true; askRowNode = li; }  // shown once the database says Ask is on
       a.appendChild(icon(n.icon, 24));
       a.appendChild(make('span', 'more-label', n.label));
       a.appendChild(icon('M9 5l7 7-7 7', 20)).classList.add('more-chev');
@@ -526,14 +545,15 @@
     show(el.quote, name === 'quote');
     show(el.more, name === 'more');
     show(el.support, name === 'support');
+    show(el.askScreen, name === 'ask');
     show(el.exportScreen, name === 'export');
     show(el.thread, name === 'thread');
     show(el.topbar, signedIn);
     show(el.tabbar, signedIn && PLAN.showBar);
     // Back arrow on a lead record and on the tools under More; every other screen is a tab with a plain title.
-    var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export';
+    var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export' || name === 'ask';
     show(el.back, sub);
-    if (name === 'quote' || name === 'support' || name === 'export') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
+    if (name === 'quote' || name === 'support' || name === 'export' || name === 'ask') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
     if (name !== 'thread') {
       el.title.textContent = S.tab.label;
       setText(el.subtitle, '');
@@ -974,6 +994,7 @@
     S.thread.id = null;
     setScreen('more');
     renderPush();
+    loadAskConfig(); // once per sign-in: decides whether the Ask row shows
     refreshFollowUps(); // the held-alert and 9 am text lines in Alerts come from the follow-ups view
   }
 
@@ -1246,6 +1267,204 @@
     setScreen('export');
   }
 
+  /* ---------- Ask your CRM (More) ----------
+     Read only: the question goes to the cv-ask Edge Function, the answer comes back as pieces (text, figures, lead chips) that are
+     drawn with createElement / textContent only. The conversation is a plain array in memory: never written to storage, gone on
+     sign-out or reload. Only the owner's last two QUESTIONS go along with a new one, never the answers. */
+
+  var ASK_WAIT = 'Looking it up…';
+  var ASK_WAIT_LONG = 'Still working…';
+  var ASK_WAIT_MS = 12000;
+  var ASK_KEEP = 60;       // bubbles kept on screen
+  var askRowNode = null;   // the More row; hidden until the database says Ask is on
+
+  function askAvailable() {
+    return feature('ask') && TAB_ROUTES.indexOf('ask') !== -1 && !!S.api && typeof S.api.ask === 'function' && typeof S.api.askConfig === 'function';
+  }
+  function askOn() { var a = S.ask; return askAvailable() && a.cfgState === 'ready' && !!a.cfg && a.cfg.enabled === true; }
+  function applyAskRow() { if (askRowNode) askRowNode.hidden = !askOn(); }
+
+  // cv_ask_config(): asked once per sign-in, kept for the session. Any error = Ask stays hidden.
+  function loadAskConfig() {
+    var a = S.ask;
+    if (!askAvailable()) { a.cfgState = 'off'; return Promise.resolve(); }
+    if (a.cfgState !== 'idle') return a.cfgPromise || Promise.resolve();
+    var seq = ++a.cfgSeq;
+    a.cfgState = 'loading';
+    a.cfgPromise = Promise.resolve().then(function () { return S.api.askConfig(); }).then(function (c) {
+      if (seq !== a.cfgSeq) return;
+      a.cfg = L.askConfigView(c); a.cfgState = 'ready';
+    }, function () {
+      if (seq !== a.cfgSeq) return;
+      a.cfg = null; a.cfgState = 'failed';
+    }).then(function () {
+      if (seq !== a.cfgSeq) return;
+      applyAskRow();
+      if (S.screen === 'ask') { if (askOn()) renderAsk(); else location.replace('#/'); }
+    });
+    return a.cfgPromise;
+  }
+
+  function askLeadName(id) {
+    var rows = S.leads || [];
+    for (var i = 0; i < rows.length; i++) if (rows[i] && rows[i].lead_id === id) return L.displayName(rows[i]);
+    return '';
+  }
+
+  function buildAskRow(it) {
+    var li = make('li', 'ask-row');
+    var b = make('div', 'ask-bubble');
+    if (it.role === 'q') {
+      li.classList.add('is-q');
+      b.textContent = it.text;
+    } else if (it.role === 'wait') {
+      li.classList.add('is-a', 'is-wait');
+      b.textContent = it.text;
+    } else if (it.role === 'err') {
+      li.classList.add('is-a', 'is-err');
+      b.setAttribute('role', 'alert');
+      b.textContent = it.text;
+    } else {
+      li.classList.add('is-a');
+      var v = L.askView(it.res, askLeadName);
+      var p = make('p', 'ask-text');
+      v.parts.forEach(function (part) {
+        if (part.t === 'text') p.appendChild(document.createTextNode(part.v));
+        else if (part.t === 'fig') p.appendChild(make('strong', 'ask-fig', part.v));
+        else if (part.t === 'quote') p.appendChild(make('span', 'ask-quote', '\u201C' + part.v + '\u201D'));
+        else {
+          var a = make('a', 'ask-chip', part.name);
+          a.href = '#/lead/' + part.id;
+          a.setAttribute('aria-label', 'Open ' + part.name);
+          p.appendChild(a);
+        }
+      });
+      b.appendChild(p);
+      if (v.from) b.appendChild(make('span', 'ask-from', v.from));
+    }
+    li.appendChild(b);
+    return li;
+  }
+
+  // Draws only what changed, so a screen reader announces a new bubble once and never re-reads the old ones.
+  function syncAskThread() {
+    var a = S.ask;
+    Array.prototype.slice.call(el.askThread.children).forEach(function (n) {
+      if (!a.items.some(function (it) { return it.node === n; })) n.remove();
+    });
+    a.items.forEach(function (it) {
+      if (!it.node) it.node = buildAskRow(it);
+      if (it.node.parentNode !== el.askThread) el.askThread.appendChild(it.node);
+    });
+  }
+
+  function renderAskStarters() {
+    var frag = document.createDocumentFragment();
+    if (!S.ask.items.length) {
+      L.askStarters(custom.askStarters).forEach(function (q) {
+        var btn = make('button', 'ask-starter', q);
+        btn.type = 'button';
+        btn.addEventListener('click', function () { el.askInput.value = q; submitAsk(); });
+        frag.appendChild(btn);
+      });
+    }
+    el.askStarters.replaceChildren(frag);
+  }
+
+  function renderAskCount() {
+    var max = S.ask.cfg ? S.ask.cfg.max : L.ASK_MAX_DEFAULT;
+    var n = el.askInput.value.length;
+    var near = n >= Math.ceil(max * 0.8);
+    el.askCount.textContent = near ? n + ' of ' + max : '';
+    el.askCount.hidden = !near;
+    el.askCount.classList.toggle('is-full', n >= max);
+  }
+
+  function sizeAskInput() {
+    el.askInput.style.height = 'auto';
+    el.askInput.style.height = Math.min(el.askInput.scrollHeight, 120) + 'px';
+  }
+
+  function renderAsk() {
+    var a = S.ask, on = askOn();
+    show(el.askScroll, on); show(el.askForm, on); show(el.askFooter, on);
+    if (!on) return;
+    el.askInput.maxLength = a.cfg.max;
+    el.askInput.disabled = a.busy;
+    el.askSend.disabled = a.busy;
+    syncAskThread();
+    renderAskStarters();
+    renderAskCount();
+    sizeAskInput();
+    el.askScroll.scrollTop = el.askScroll.scrollHeight;
+  }
+
+  function askDropOldBubbles() {
+    var a = S.ask;
+    while (a.items.length > ASK_KEEP) a.items.shift();
+  }
+
+  function submitAsk() {
+    var a = S.ask;
+    if (a.busy || !askOn()) return;
+    var r = L.askRequest(el.askInput.value, a.questions, a.cfg.max);
+    if (!r.ok) {
+      if (r.error) { a.items.push({ role: 'err', text: r.error }); renderAsk(); }
+      return;
+    }
+    var it = a.items, n = ++a.seq;
+    // A retry of a question that just failed replaces the failed try instead of stacking a second copy.
+    if (it.length >= 2 && it[it.length - 1].role === 'err' && it[it.length - 2].role === 'q' && it[it.length - 2].text === r.body.question) it.splice(-2, 2);
+    it.push({ role: 'q', text: r.body.question });
+    var wait = { role: 'wait', text: ASK_WAIT };
+    it.push(wait);
+    a.busy = true;
+    askDropOldBubbles();
+    renderAsk();
+    clearTimeout(a.waitTimer);
+    a.waitTimer = setTimeout(function () {
+      if (n !== a.seq || !a.busy || wait.role !== 'wait') return;
+      wait.text = ASK_WAIT_LONG;
+      if (wait.node) wait.node.firstChild.textContent = ASK_WAIT_LONG;
+    }, ASK_WAIT_MS);
+    Promise.resolve().then(function () { return S.api.ask(r.body); }).then(function (res) {
+      if (n !== a.seq) return;
+      wait.role = 'a'; wait.res = res; wait.text = '';
+      a.questions.push(r.body.question); a.questions = a.questions.slice(-2);
+      el.askInput.value = '';
+    }, function (err) {
+      if (n !== a.seq) return;
+      wait.role = 'err'; wait.text = L.askErrorText(err);  // the question stays in the box
+    }).then(function () {
+      if (n !== a.seq) return;
+      clearTimeout(a.waitTimer);
+      if (wait.node) { wait.node.remove(); wait.node = null; }
+      a.busy = false;
+      renderAsk();
+    });
+  }
+
+  function showAsk() {
+    S.thread.id = null;
+    setScreen('ask');
+    var a = S.ask;
+    if (a.cfgState === 'idle') loadAskConfig();
+    if (a.cfgState === 'ready' || a.cfgState === 'failed' || a.cfgState === 'off') {
+      if (!askOn()) { location.replace('#/'); return; }
+    }
+    renderAsk();
+  }
+
+  function resetAsk() {
+    var a = S.ask;
+    clearTimeout(a.waitTimer);
+    S.ask = { cfg: null, cfgState: 'idle', cfgSeq: a.cfgSeq + 1, cfgPromise: null, items: [], questions: [], busy: false, seq: a.seq + 1, waitTimer: null };
+    el.askThread.replaceChildren(); el.askStarters.replaceChildren();
+    el.askInput.value = ''; el.askInput.disabled = false; el.askSend.disabled = false;
+    renderAskCount();
+    if (askRowNode) askRowNode.hidden = true;
+  }
+
   /* ---------- Help & support (More) ---------- */
 
   var SUPPORT_REFRESH_MS = 60000;
@@ -1462,9 +1681,9 @@
 
   // Remember the screen before More / Help (and the lead record it came from) so a request can say where it was sent from.
   function trackNav(name) {
-    var group = name === 'more' || name === 'support' || name === 'quote' || name === 'export';
+    var group = name === 'more' || name === 'support' || name === 'quote' || name === 'export' || name === 'ask';
     var prev = S.nav.cur;
-    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote' || prev === 'export';
+    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote' || prev === 'export' || prev === 'ask';
     if (group && !prevGroup) {
       S.nav.from = prev;
       S.nav.lead = prev === 'lead' && S.thread.id ? { id: S.thread.id, lead: S.thread.lead } : null;
@@ -2549,6 +2768,7 @@
     clearStoredTargets();
     resetSupport();
     resetExport();
+    resetAsk();
     stopLive();
     clearTimeout(S.refreshTimer);
     S.seq.list++; S.seq.thread++;
@@ -2866,6 +3086,11 @@
     el.qCopy.addEventListener('click', copyQuote);
 
     // Download spreadsheet
+    el.askForm.addEventListener('submit', function (e) { e.preventDefault(); submitAsk(); });
+    el.askInput.addEventListener('input', function () { renderAskCount(); sizeAskInput(); });
+    el.askInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submitAsk(); }
+    });
     el.exMake.addEventListener('click', makeExport);
     el.exSave.addEventListener('click', saveExport);
     el.exFrom.addEventListener('input', exportChoiceChanged);

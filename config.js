@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261107-0319-f1721a81";
+window.CV_BUILD = "20261107-0502-6b67a7d8";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -42,20 +42,24 @@ window.CV_CUSTOM = {
   timeZone: 'America/Toronto',
 
   // Features: true = on, false = off (an off feature is not shown at all, nowhere on the page).
-  // Left out = on. Tabs: followups, calendar, quote, support, export, metrics. 'value' = the Lead value section of Metrics. Parts of other screens:
+  // Left out = on. Tabs: followups, calendar, ask, quote, support, export, metrics. 'value' = the Lead value section of Metrics. Parts of other screens:
   // search (top of Leads), notes (on a lead's record), push ("Alerts on this phone" under More),
   // addLead (the "+ Add lead" button on Leads; the database has its own switch, cv_config add_lead_enabled).
+  // ask (More > Ask your CRM: questions about your leads answered by AI, read only; the database has its own switch, cv_config ask_enabled).
   // support (More > Help & support: tell Kevin about a problem; the database has its own switch, cv_config support_enabled).
   // export (More > Download spreadsheet: all your leads as a file for Numbers, Excel or Google Sheets; the database has its own switch, cv_config export_enabled).
   // Hours a "Needs you" lead may wait before its wait turns red with "· overdue" (1–720; default 24, Kevin 11-06).
   waitWarnHours: 24,
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true, push: true, addLead: true, support: true, export: true },
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true },
+
+  // Ask your CRM: the starter questions shown under the empty chat (at most 4, each 80 characters at most).
+  askStarters: ['How much did I book this month?', 'Who needs me right now?', "What's booked this weekend?", 'Where are my leads coming from?'],
 
   // Bottom bar and More: which tabs show, in this order (a tab whose feature is off is skipped).
-  // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar; 'quote', 'support' and 'export' sit under More
+  // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar; 'ask', 'quote', 'support' and 'export' sit under More
   // (More itself is always the last slot and also holds Alerts and Sign out).
-  tabs: ['list', 'followups', 'calendar', 'quote', 'support', 'export', 'metrics'],
-  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', quote: 'Quote calculator', support: 'Help & support', export: 'Download spreadsheet' },
+  tabs: ['list', 'followups', 'calendar', 'ask', 'quote', 'support', 'export', 'metrics'],
+  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', ask: 'Ask your CRM', quote: 'Quote calculator', support: 'Help & support', export: 'Download spreadsheet' },
 
   // Status wording on chips, filter chips, the three buttons and the history lines.
   // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, booked, lost, opted_out.

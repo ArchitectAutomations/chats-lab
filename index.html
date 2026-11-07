@@ -320,6 +320,31 @@
     </div>
   </main>
 
+  <!-- Ask your CRM (More): type a question about the leads, bookings and money; the answer comes back as text with tappable lead names.
+       Read only. Shown only when CV_CUSTOM.features.ask is on and the database says Ask is enabled (cv_config ask_enabled).
+       The conversation lives in memory only (never saved on this phone). -->
+  <main class="screen ask-screen" id="screen-ask" hidden>
+    <div class="scroller" id="ask-scroll">
+      <div class="ask-wrap">
+        <p class="q-lede">Ask about your leads, bookings and money. It only reads; it never changes anything.</p>
+        <ol class="ask-thread" id="ask-thread" aria-label="Your questions and the answers"></ol>
+        <div class="ask-starters" id="ask-starters" role="group" aria-label="Questions to try"></div>
+      </div>
+    </div>
+    <form class="ask-composer" id="ask-form" autocomplete="off">
+      <div class="ask-composer-row">
+        <label class="sr-only" for="ask-input">Your question</label>
+        <textarea class="field ask-input" id="ask-input" rows="1" maxlength="300" placeholder="Ask a question" aria-describedby="ask-count ask-footer"></textarea>
+        <button class="btn primary ask-send" id="ask-send" type="submit">Ask</button>
+      </div>
+      <p class="hint ask-count" id="ask-count" hidden></p>
+    </form>
+    <div class="ask-footer" id="ask-footer">
+      <p>Answers come from your CRM, but AI can make mistakes. Tap a lead to check.</p>
+      <p>Your question and the matching lead details are sent to OpenAI (USA) to write the answer.</p>
+    </div>
+  </main>
+
   <!-- Help & support (More): tell Kevin about a problem, a question or an idea; the owner's own requests with their status.
        Shown only when CV_CUSTOM.features.support is on and the database says support is enabled. -->
   <main class="screen support-screen" id="screen-support" hidden>

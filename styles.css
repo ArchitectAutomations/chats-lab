@@ -894,3 +894,44 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .export-screen .q-more .hint { margin: 0; }
 .ex-status { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; }
 .export-screen .hint { margin-top: 10px; }
+
+/* ---------- Ask your CRM (More) ----------
+   Owner questions: raised green, right. Answers: sand, left, figures in bold, lead names as purple-outlined chips.
+   Purple is only the Ask button and the chips (10% rule). The composer and the honest lines stay above the tab bar. */
+.ask-wrap { max-width: var(--content); margin: 0 auto; padding: 0 calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-4) calc(var(--gutter) + env(safe-area-inset-left)); }
+.ask-thread { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.ask-row { display: flex; }
+.ask-row.is-q { justify-content: flex-end; }
+.ask-bubble { max-width: 88%; min-width: 0; padding: 10px 14px; border-radius: var(--r-lg); overflow-wrap: anywhere; font-size: var(--fs-md); line-height: 1.45; }
+.ask-row.is-q .ask-bubble { background: var(--primary-raised); color: var(--on-primary); border-bottom-right-radius: 6px; white-space: pre-wrap; }
+.ask-row.is-a .ask-bubble { background: var(--secondary); color: var(--on-secondary); border-bottom-left-radius: 6px; }
+.ask-row.is-wait .ask-bubble { animation: pulse 1.2s ease-in-out infinite; }
+.ask-text { margin: 0; white-space: pre-wrap; }
+.ask-fig { font-weight: 750; font-variant-numeric: tabular-nums; }
+.ask-quote { font-weight: 400; }
+.ask-chip {
+  display: inline-flex; align-items: center; min-height: 32px; margin: 2px 1px; padding: 0 12px; border-radius: var(--r-pill);
+  border: 1.5px solid var(--accent-strong); color: var(--accent-strong); font-weight: 700; font-size: var(--fs-sm); line-height: 1.2;
+  text-decoration: none; vertical-align: baseline;
+}
+.ask-chip:active { background: var(--secondary-deep); }
+.ask-chip:focus-visible { outline: 3px solid var(--accent-strong); outline-offset: 2px; }
+.ask-from { display: block; margin: 6px 0 0; font-size: var(--fs-xs); color: var(--muted-on-secondary); }
+.ask-row.is-err .ask-bubble { background: transparent; border: 1.5px solid var(--muted-on-primary); color: var(--on-primary); border-bottom-left-radius: 6px; }
+.ask-starters { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-4); }
+.ask-starters:empty { display: none; }
+.ask-starter {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 8px 16px; border-radius: var(--r-pill);
+  background: transparent; border: 1.5px solid var(--muted-on-primary); color: var(--on-primary); font: inherit; font-size: var(--fs-md); font-weight: 650; text-align: left; cursor: pointer;
+}
+.ask-starter:active { background: var(--primary-raised); }
+.ask-starter:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.ask-composer { flex: none; background: var(--primary); border-top: 1px solid var(--line-on-primary); padding: var(--sp-2) calc(var(--gutter) + env(safe-area-inset-right)) 0 calc(var(--gutter) + env(safe-area-inset-left)); }
+.ask-composer-row { display: flex; align-items: flex-end; gap: var(--sp-2); max-width: var(--content); margin: 0 auto; }
+.ask-input { flex: 1; min-width: 0; min-height: 48px; max-height: 120px; resize: none; padding: 11px 14px; font-size: var(--fs-md); line-height: 1.35; }
+.ask-send { flex: none; width: auto; min-width: 76px; min-height: 48px; margin: 0; padding: 0 20px; }
+.ask-count { margin: 4px 0 0; text-align: right; font-variant-numeric: tabular-nums; }
+.ask-count.is-full { color: var(--on-primary); font-weight: 650; }
+.ask-footer { flex: none; max-width: var(--content); width: 100%; margin: 0 auto; padding: var(--sp-1) calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-2) calc(var(--gutter) + env(safe-area-inset-left)); background: var(--primary); }
+.ask-footer p { margin: 2px 0 0; font-size: var(--fs-xs); line-height: 1.35; color: var(--muted-on-primary); }
+@media (prefers-reduced-motion: reduce) { .ask-row.is-wait .ask-bubble { animation: none; } }

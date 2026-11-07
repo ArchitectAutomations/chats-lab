@@ -832,7 +832,7 @@
   /* ---------- feature switches (CV_CUSTOM.features) ---------- */
 
   // Every feature is on unless the client's settings say exactly false. Off = not shown at all.
-  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push', 'addLead', 'support', 'export'];
+  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push', 'addLead', 'support', 'export', 'ask'];
   function featureOn(features, key) {
     return !(features && typeof features === 'object' && features[key] === false);
   }
@@ -1862,10 +1862,10 @@
 
   // Which tabs sit in the bar and which live under More. `want` = CV_CUSTOM.tabs, `on(route)` = feature switch.
   // Leads is always on. Names the page does not know are ignored; an empty or unusable list means "everything on".
-  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Quote calculator, Help & support, Download spreadsheet (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
+  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Ask your CRM, Quote calculator, Help & support, Download spreadsheet (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
   // slots counts the bar tabs plus the More slot; with fewer than 2 the page hides the bar.
   var BAR_TABS = ['list', 'followups', 'calendar', 'metrics'];
-  var MORE_TABS = ['quote', 'support', 'export'];
+  var MORE_TABS = ['ask', 'quote', 'support', 'export'];
   function tabPlan(want, on) {
     var isOn = typeof on === 'function' ? on : function () { return true; };
     var known = BAR_TABS.concat(MORE_TABS);
@@ -2437,6 +2437,179 @@
     return 'Couldn’t make the file. Check your connection and try again.';
   }
 
+  /* ---------- Ask your CRM (session 3, round 4) ---------- */
+
+  // Contract: .workflow/scratch/crm-s3-r4-contract.md, section 9. The page sends the owner's question (plus the last two QUESTIONS, never answers)
+  // to the cv-ask Edge Function and renders the answer it gets back: text pieces, figure pieces (a value the server pulled from the database
+  // result, shown here with the page's own money / date / number helpers) and lead pieces (a tappable chip). The model's words are only ever
+  // shown as plain text (textContent in app.js): no HTML, no links, no markdown.
+  var ASK_MAX_DEFAULT = 300;
+  var ASK_HISTORY = 2;
+  var ASK_STARTERS = ['How much did I book this month?', 'Who needs me right now?', 'What’s booked this weekend?', 'Where are my leads coming from?'];
+  var ASK_STATUSES = ['answered', 'no_data', 'out_of_scope', 'unclear', 'invalid'];
+  var ASK_FALLBACK = 'I couldn’t answer that one reliably. Try asking it another way, or check Metrics.';
+  var ASK_FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  var ASK_KINDS = { auto_text: 'Automatic text', call_back: 'Call back', held_alert: 'Held alert', morning_list: 'Morning list' };
+  var ASK_QUOTE_STATES = { priced: 'Priced', needs_price: 'Needs a price' };
+  var ASK_WINDOWS = { due_now: 'Due now', next_7_days: 'Next 7 days', later: 'Later', call_backs: 'Call backs', sent_recently: 'Sent recently', all: 'All' };
+  // follow_ups.reason keys (sql/014 ask_reason_key) -> plain words.
+  var ASK_REASONS = {
+    auto_overdue: 'Automatic text is overdue', auto_day5: 'Day-5 follow-up text', auto_sent: 'Day-5 follow-up text sent',
+    added_by_you: 'Added by you: contact them yourself', needs_price: 'Needs your price', asked_for_you: 'Asked for you in the chat',
+    new_quote_sent: 'Quote sent: waiting for your call', held_overnight: 'Alert held overnight', texted_overnight: 'Texted you overnight',
+    morning_list: 'In your morning list', other: 'Other'
+  };
+  var ASK_SOURCES = { form: 'Your booking form', text: 'Texted you first', manual: 'Added by you' };
+
+  // The text shown on screen is always safe plain text: control characters and direction overrides are dropped.
+  function askPlain(v) {
+    return String(v === null || v === undefined ? '' : v).replace(/[\u0000-\u0008\u000b-\u001f\u007f‪-‮⁦-⁩]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  // cv_ask_config() -> { enabled, max }. Anything but a real `true` is off.
+  function askConfigView(c) {
+    var o = c && typeof c === 'object' ? c : {};
+    var m = Number(o.max_question_chars);
+    return { enabled: o.enabled === true, max: isFinite(m) && m >= 20 && m <= 1000 ? Math.floor(m) : ASK_MAX_DEFAULT };
+  }
+
+  // The starter questions under the empty chat: CV_CUSTOM.askStarters (at most 4, each 1..80 characters), else the defaults.
+  function askStarters(list) {
+    var out = [];
+    (Array.isArray(list) ? list : []).forEach(function (s) {
+      var q = typeof s === 'string' ? askPlain(s) : '';
+      if (q && q.length <= 80 && out.indexOf(q) === -1 && out.length < 4) out.push(q);
+    });
+    return out.length ? out : ASK_STARTERS.slice();
+  }
+
+  // The body sent to cv-ask. `history` = the owner's earlier questions in this session (newest last); only the last two go along.
+  // { ok: true, body } or { ok: false, error } (error '' = nothing to send).
+  function askRequest(question, history, max) {
+    var lim = isFinite(Number(max)) && Number(max) > 0 ? Math.floor(Number(max)) : ASK_MAX_DEFAULT;
+    var q = askPlain(question);
+    if (!q) return { ok: false, error: '' };
+    if (q.length > lim) return { ok: false, error: 'Please shorten the question.' };
+    var prev = (Array.isArray(history) ? history : []).filter(function (x) { return typeof x === 'string'; })
+      .map(function (x) { return askPlain(x).slice(0, lim); }).filter(Boolean).slice(-ASK_HISTORY);
+    var body = { question: q };
+    if (prev.length) body.previous_questions = prev;
+    return { ok: true, body: body };
+  }
+
+  function askNumber(v, digits) {
+    var n = Number(v);
+    if (v === null || v === undefined || v === '' || !isFinite(n)) return '';
+    var o = { maximumFractionDigits: digits };
+    try { return new Intl.NumberFormat(CUSTOM.locale, o).format(n); } catch (e) { return new Intl.NumberFormat('en-CA', o).format(n); }
+  }
+
+  // "Sat, Dec 5, 2026": always with the year, because an answer can reach into next year.
+  function askDate(ymd) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || ''));
+    if (!m) return '';
+    var y = Number(m[1]), mo = Number(m[2]), da = Number(m[3]);
+    if (mo < 1 || mo > 12 || da < 1 || da > 31) return '';
+    return WEEKDAYS[new Date(Date.UTC(y, mo - 1, da)).getUTCDay()] + ', ' + MONTHS[mo - 1] + ' ' + da + ', ' + y;
+  }
+
+  // A label value (a status, a tier, a lost reason, a source, a follow-up kind, a quote state, a window) -> the page's own wording.
+  function askLabel(v) {
+    var raw = askPlain(v);
+    var k = raw.toLowerCase();
+    if (!k) return '';
+    if (STATUS[k] || CUSTOM.status[k]) return statusInfo(k).label;
+    if (k === 'high' || k === 'medium' || k === 'low' || k === 'none') return CUSTOM.tiers[k] || TIERS.filter(function (t) { return t.key === k; })[0].label;
+    if (LOST_REASONS.some(function (r) { return r.key === k; })) return lostReasonLabel(k);
+    if (Object.prototype.hasOwnProperty.call(ASK_SOURCES, k)) return ASK_SOURCES[k];
+    if (k.indexOf('manual:') === 0) return 'Added by you · ' + manualSourceLabel(k.slice(7));
+    if (Object.prototype.hasOwnProperty.call(ASK_KINDS, k)) return ASK_KINDS[k];
+    if (Object.prototype.hasOwnProperty.call(ASK_QUOTE_STATES, k)) return ASK_QUOTE_STATES[k];
+    if (Object.prototype.hasOwnProperty.call(ASK_WINDOWS, k)) return ASK_WINDOWS[k];
+    if (Object.prototype.hasOwnProperty.call(ASK_REASONS, k)) return ASK_REASONS[k];
+    return /^[a-z][a-z0-9_:]*$/.test(raw) ? humanize(raw.replace(/:/g, ' ')) : raw;
+  }
+
+  // One figure piece -> the text shown in bold. Unusable values show a dash, never a guess.
+  function askFigure(kind, v, now) {
+    var out = '';
+    switch (kind) {
+      case 'money': out = fmtMoney(v); break;
+      case 'count': case 'guests': out = askNumber(v, 0); break;
+      case 'percent': {
+        var n = Number(v) * 100;
+        if (v !== null && v !== undefined && v !== '' && isFinite(n)) out = (Math.abs(n - Math.round(n)) < 1e-9 ? askNumber(Math.round(n), 0) : askNumber(Math.round(n * 10) / 10, 1)) + '%';
+        break;
+      }
+      case 'date': out = askDate(v); break;
+      case 'datetime': out = fmtDueAt(v, now); break;
+      case 'minutes': { var mi = num(v); out = mi === null ? '' : fmtDuration(mi * 60); break; }
+      case 'seconds': out = fmtDuration(v); break;
+      case 'month': {
+        var mm = /^(\d{4})-(\d{2})/.exec(String(v || ''));
+        if (mm && Number(mm[2]) >= 1 && Number(mm[2]) <= 12) out = ASK_FULL_MONTHS[Number(mm[2]) - 1] + ' ' + mm[1];
+        break;
+      }
+      case 'label': out = askLabel(v); break;
+      default: out = askPlain(v);
+    }
+    return out || '—';
+  }
+
+  // The 200 envelope -> what the bubble shows. `nameFor(id)` may give the page's own name for a lead it has loaded (else the server's name is used).
+  // Unknown piece types are dropped; a lead piece needs a real uuid; nothing here is HTML.
+  function askView(res, nameFor, now) {
+    var r = res && typeof res === 'object' ? res : {};
+    var status = ASK_STATUSES.indexOf(r.status) !== -1 ? r.status : 'invalid';
+    var parts = [];
+    (Array.isArray(r.segments) ? r.segments : []).slice(0, 80).forEach(function (s) {
+      if (!s || typeof s !== 'object') return;
+      if (s.t === 'text') {
+        var txt = String(s.v === null || s.v === undefined ? '' : s.v).replace(/[\u0000-\u0008\u000b-\u001f\u007f‪-‮⁦-⁩]/g, '');
+        if (txt) parts.push({ t: 'text', v: txt });
+      } else if (s.t === 'fig') {
+        // Free text from the database (city, occasion, hours, a quote line) is quoted plain text, never styled like a computed figure.
+        if (s.kind === 'text') { var q = askPlain(s.v); parts.push(q ? { t: 'quote', v: q } : { t: 'fig', v: '—' }); }
+        else parts.push({ t: 'fig', v: askFigure(s.kind, s.v, now) });
+      } else if (s.t === 'lead' && isUuid(s.id)) {
+        var id = s.id.toLowerCase();
+        var own = typeof nameFor === 'function' ? askPlain(nameFor(id)) : '';
+        parts.push({ t: 'lead', id: id, name: own || askPlain(s.name) || 'Unnamed lead' });
+      }
+    });
+    if (!parts.length) { parts = [{ t: 'text', v: ASK_FALLBACK }]; if (status === 'answered') status = 'invalid'; }
+    var from = (Array.isArray(r.from) ? r.from : []).map(askPlain).filter(Boolean).slice(0, 4).map(function (x) { return x.slice(0, 30); });
+    return { status: status, parts: parts, from: from.length ? 'From: ' + from.join(' · ') : '' };
+  }
+
+  // The error bubble. `err` is { status, error, details } as unwrapped from the cv-ask response (or a network error).
+  var ASK_TOO_MANY = {
+    ten_minutes: 'That’s a lot of questions at once. Try again in a few minutes.',
+    day: 'You’ve reached today’s question limit. It resets tomorrow.',
+    tokens: 'Ask has reached its limit for now. Tell Kevin.',
+    budget: 'Ask has reached its limit for now. Tell Kevin.'
+  };
+  function askErrorText(err) {
+    var e = err && typeof err === 'object' ? err : {};
+    var word = String(e.error || e.message || (typeof err === 'string' ? err : '')).trim().toLowerCase();
+    var det = e.details;
+    var detText = det && typeof det === 'object' ? Object.keys(det).join(' ') : String(det === null || det === undefined ? '' : det);
+    detText = detText.trim().toLowerCase().replace(/[.\s-]+/g, '_').replace(/^_+|_+$/g, '');
+    var m = /\b(not_owner|not_signed_in|not_allowed|too_many|bad_input|not_configured|timeout|provider_error)\b/.exec(word);
+    word = m ? m[1] : '';
+    if (!word && (e.code === '42501' || e.status === 403)) word = 'not_owner';
+    if (!word && (e.status === 401 || e.code === 'PGRST301')) word = 'not_signed_in';
+    if (!word && e.status === 429) word = 'too_many';
+    if (!word && e.status === 504) word = 'timeout';
+    if (word === 'not_owner' || word === 'not_signed_in') return 'You’re signed out. Sign in again.';
+    if (word === 'not_allowed') return 'Ask is turned off.';
+    if (word === 'too_many') return ASK_TOO_MANY[detText] || ASK_TOO_MANY.ten_minutes;
+    if (word === 'bad_input' && detText.indexOf('question_length') !== -1) return 'Please shorten the question.';
+    if (word === 'timeout') return 'That took too long. Try a simpler question.';
+    if (word === 'not_configured') return 'Ask isn’t set up yet. Tell Kevin.';
+    return 'Couldn’t get an answer. Check your connection and try again.';
+  }
+
   return {
     TZ: TZ,
     normalizePhone: normalizePhone,
@@ -2615,6 +2788,15 @@
     exportGroups: exportGroups,
     exportArgs: exportArgs,
     exportResult: exportResult,
-    exportErrorText: exportErrorText
+    exportErrorText: exportErrorText,
+    ASK_MAX_DEFAULT: ASK_MAX_DEFAULT,
+    ASK_FALLBACK: ASK_FALLBACK,
+    askConfigView: askConfigView,
+    askStarters: askStarters,
+    askRequest: askRequest,
+    askLabel: askLabel,
+    askFigure: askFigure,
+    askView: askView,
+    askErrorText: askErrorText
   };
 });
