@@ -284,6 +284,67 @@
     </div>
   </main>
 
+  <!-- Help & support (More): tell Kevin about a problem, a question or an idea; the owner's own requests with their status.
+       Shown only when CV_CUSTOM.features.support is on and the database says support is enabled. -->
+  <main class="screen support-screen" id="screen-support" hidden>
+    <div class="scroller" id="sp-scroll">
+      <div class="sp-wrap">
+        <p class="q-lede" id="sp-lede">Something not working, a question or an idea? Tell Kevin here.</p>
+        <p class="sp-off" id="sp-off" role="status" hidden>Help requests are turned off right now.</p>
+
+        <div class="sp-contact" id="sp-contact" hidden>
+          <a class="contact-btn contact-call" id="sp-call" href="#"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6.6 3.5h2.6l1.4 4-2 1.4a12 12 0 0 0 6.5 6.5l1.4-2 4 1.4v2.6a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.6 5.7a2 2 0 0 1 2-2.2z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="sp-call-label">Call Kevin</span></a>
+          <a class="contact-btn contact-text" id="sp-text" href="#"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 5.5h16v10.5H10l-4.5 3.5V16H4z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="sp-text-label">Text Kevin</span></a>
+        </div>
+
+        <form class="sp-form" id="sp-form" novalidate>
+          <h2 class="sp-h" id="sp-form-h">Tell Kevin</h2>
+          <fieldset class="q-field sp-kinds">
+            <legend class="field-label">What is it?</legend>
+            <div class="reason-chips sp-chips" id="sp-kinds"></div>
+          </fieldset>
+
+          <div class="q-field">
+            <label class="field-label" for="sp-message">Your message</label>
+            <textarea class="field note-field sp-message" id="sp-message" rows="5" maxlength="2000" autocomplete="off" aria-describedby="sp-count"></textarea>
+            <p class="hint sp-count" id="sp-count" hidden></p>
+          </div>
+
+          <div class="sp-lead" id="sp-lead" hidden>
+            <p class="sp-lead-line"><span id="sp-lead-text"></span> <button type="button" class="sp-link" id="sp-lead-remove">Remove</button></p>
+            <label class="sp-check" id="sp-include-row">
+              <input type="checkbox" id="sp-include">
+              <span>Include this customer’s name and phone</span>
+            </label>
+          </div>
+
+          <div class="sp-urgent" id="sp-urgent-row" hidden>
+            <label class="toggle">
+              <input type="checkbox" id="sp-urgent">
+              <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+              <span>Urgent: text Kevin now</span>
+            </label>
+            <p class="hint">Only for something that stops you working right now.</p>
+          </div>
+
+          <p class="hint sp-disclose" id="sp-disclose"></p>
+          <p class="sp-nosend" id="sp-nosend" hidden></p>
+          <p class="error" id="sp-error" role="alert" hidden></p>
+          <button class="btn primary q-submit" id="sp-send" type="submit"><span class="spinner" aria-hidden="true"></span><span id="sp-send-label">Send to Kevin</span></button>
+          <p class="sp-done" id="sp-done" role="status" aria-live="polite" tabindex="-1" hidden></p>
+        </form>
+
+        <section class="sp-requests" aria-labelledby="sp-list-h">
+          <h2 class="sp-h" id="sp-list-h">Your requests</h2>
+          <p class="status-line sp-status" id="sp-list-loading">Loading…</p>
+          <ul class="sp-list" id="sp-list"></ul>
+          <p class="status-line sp-status" id="sp-list-empty" hidden>No requests yet.</p>
+          <p class="error" id="sp-list-error" role="alert" hidden></p>
+        </section>
+      </div>
+    </div>
+  </main>
+
   <!-- Metrics -->
   <main class="screen metrics-screen" id="screen-metrics" hidden>
     <div class="scroller" id="metrics-scroll">

@@ -831,7 +831,7 @@
   /* ---------- feature switches (CV_CUSTOM.features) ---------- */
 
   // Every feature is on unless the client's settings say exactly false. Off = not shown at all.
-  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push', 'addLead'];
+  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push', 'addLead', 'support'];
   function featureOn(features, key) {
     return !(features && typeof features === 'object' && features[key] === false);
   }
@@ -1861,10 +1861,10 @@
 
   // Which tabs sit in the bar and which live under More. `want` = CV_CUSTOM.tabs, `on(route)` = feature switch.
   // Leads is always on. Names the page does not know are ignored; an empty or unusable list means "everything on".
-  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Quote calculator (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
+  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Quote calculator, Help & support (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
   // slots counts the bar tabs plus the More slot; with fewer than 2 the page hides the bar.
   var BAR_TABS = ['list', 'followups', 'calendar', 'metrics'];
-  var MORE_TABS = ['quote'];
+  var MORE_TABS = ['quote', 'support'];
   function tabPlan(want, on) {
     var isOn = typeof on === 'function' ? on : function () { return true; };
     var known = BAR_TABS.concat(MORE_TABS);
@@ -1877,6 +1877,267 @@
     if (!bar.length) bar = ['list'];
     var slots = bar.length + 1;
     return { bar: bar, more: more, slots: slots, showBar: slots >= 2 };
+  }
+
+  /* ---------- Help & support (session 3, round 2) ---------- */
+
+  // Diagnostics: what the page may tell Kevin about a problem. Contract: HANDOFF / round-2 design, section 3.5.
+  // The server rebuilds and re-scrubs it (cv_private.support_clean_diag); this side keeps the same rules so nothing sensitive
+  // is even sent. Never: bodies, arguments, message texts, tokens, cookies, storage, full URLs, names, phones, emails.
+  var DIAG_MAX = 10;
+  var DIAG_MAX_AGE_MS = 30 * 60 * 1000;
+  var DIAG_ROUTES = ['list', 'followups', 'calendar', 'metrics', 'more', 'quote', 'support', 'lead', 'signin'];
+
+  // Same rules, same order as cv_private.support_scrub (sql/012b_support_fixes.sql); the shared vectors
+  // (tools/tests/support_scrub_vectors.json) lock the two together. A uuid, an ISO date and a build id survive.
+  function diagScrub(str, max) {
+    var s = String(str === null || str === undefined ? '' : str);
+    s = s.replace(/Bearer\s+\S+/gi, '[token]');
+    s = s.replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]*)?/g, '[token]');
+    s = s.replace(/(?<![A-Za-z0-9_])sb_(?:secret|publishable)_[A-Za-z0-9_-]+/gi, '[token]');
+    s = s.replace(/(?<![0-9A-Fa-f])(?=[0-9A-Fa-f]*[0-9])[0-9A-Fa-f]{32,}(?![0-9A-Fa-f])/g, '[token]');
+    s = s.replace(/(access_token|refresh_token|id_token|client_secret|apikey|api_key|authorization|password|passwd|sessionid|session|secret|signature|token|auth|code|jwt|key|pwd|sig)=[^&\s"']+/gi, '$1=[x]');
+    // JSON form, plain or escaped inside a string: "refresh_token":"abc" -> "refresh_token":"[x]" (not "code": PostgREST error codes stay)
+    s = s.replace(/(\\?"[A-Za-z0-9_-]*(?:token|key|secret|password|passwd|pwd|auth|authorization|jwt|session|sessionid|sig|signature)\\?"\s*:\s*\\?")[^"\\]*/gi, '$1[x]');
+    s = s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]');
+    s = s.replace(/(https?:\/\/[^\s?#"']+)[?#][^\s"']*/g, '$1');
+    // Phone: 7+ digits. The look-arounds keep a uuid, an ISO date and a build id whole (shared vectors, support_scrub_vectors.json).
+    s = s.replace(/(?<![A-Za-z0-9][.-]?)(?![0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-)\+?\(?[0-9](?:[ .()-]*[0-9]){6,}(?![.-]?[A-Za-z0-9])/g, '[number]');
+    // Phones glued to letters: a bare run of 10+ digits (not the tail of a uuid), or a formatted (416) 555-0123.
+    s = s.replace(/(?<![0-9])(?<![0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{0,2})[0-9]{10,}/g, '[number]');
+    s = s.replace(/(?<![0-9])\(?[0-9]{3}\)?[ .-]?[0-9]{3}[ .-][0-9]{4}(?![0-9])/g, '[number]');
+    // Whitespace controls become one space; every other control / bidi / zero-width character is removed.
+    s = s.replace(/[\t\n\u000b\f\r]/g, ' ');
+    s = s.replace(/[\u0001-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, '');
+    var n = Number(max);
+    return n > 0 ? s.slice(0, n) : s;
+  }
+
+  // Append to a ring buffer: entries older than 30 minutes drop out, the newest `max` (10) stay. Returns a new array.
+  function diagPush(buf, entry, max, now) {
+    var cap = Number(max) > 0 ? Number(max) : DIAG_MAX;
+    var t = nowDate(now).getTime();
+    var out = (Array.isArray(buf) ? buf : []).concat(entry ? [entry] : []).filter(function (e) {
+      var at = e && toDate(e.at);
+      return at && t - at.getTime() <= DIAG_MAX_AGE_MS;
+    });
+    return out.slice(-cap);
+  }
+
+  function diagFile(name) {
+    var base = String(name || '').split(/[?#]/)[0].split('/').pop();
+    return /^[A-Za-z0-9._-]{1,40}$/.test(base) ? base : '';
+  }
+  function diagSrc(file, line, col) {
+    var f = diagFile(file);
+    if (!f) return '';
+    var l = parseInt(line, 10), c = parseInt(col, 10);
+    return f + (l > 0 && l < 1000000 ? ':' + l + (c > 0 && c < 1000000 ? ':' + c : '') : '');
+  }
+
+  // window 'error' event -> { at, msg, src }.
+  function diagFromError(ev, now) {
+    ev = ev || {};
+    var raw = ev.message || (ev.error && ev.error.message) || 'error';
+    return { at: nowDate(now).toISOString(), msg: diagScrub(raw, 200), src: diagSrc(ev.filename, ev.lineno, ev.colno) };
+  }
+
+  // window 'unhandledrejection' event -> { at, msg, src } (src from the Error's stack when it names a file).
+  function diagFromRejection(ev, now) {
+    var r = ev && ev.reason;
+    var raw = r && typeof r === 'object' ? (r.message || r.error || '') : (r === undefined || r === null ? '' : r);
+    var src = '';
+    var m = r && typeof r.stack === 'string' ? /([A-Za-z0-9._-]+\.js)(?:\?[^\s:)]*)?:(\d+)(?::(\d+))?/.exec(r.stack) : null;
+    if (m) src = diagSrc(m[1], m[2], m[3]);
+    return { at: nowDate(now).toISOString(), msg: diagScrub(raw || 'unhandled rejection', 200), src: src };
+  }
+
+  // A failed call -> { at, name, status, code }. Only the name of the call, the HTTP-ish status and a short code word:
+  // never the error message, details, arguments or body.
+  function diagCall(name, err, now) {
+    var e = err && typeof err === 'object' ? err : {};
+    var st = parseInt(e.status !== undefined ? e.status : (e.context && e.context.status), 10);
+    if (!(st >= 0 && st <= 599)) st = 0;
+    var code = '';
+    [e.code, e.error, e.message].forEach(function (c) {
+      if (code) return;
+      var w = String(c === undefined || c === null ? '' : c).trim();
+      if (/^[A-Za-z0-9_]{1,40}$/.test(w) && (c === e.code || /^[a-z_]{1,40}$/.test(w))) code = w;
+    });
+    var nm = String(name || '').toLowerCase().replace(/[^a-z0-9_.-]/g, '_').slice(0, 40) || 'call';
+    return { at: nowDate(now).toISOString(), name: nm, status: st, code: code };
+  }
+
+  // navigator + window -> the `device` object. Words only; ua is scrubbed and cut.
+  function diagDevice(nav, win) {
+    nav = nav || {}; win = win || {};
+    var ua = String(nav.userAgent || '');
+    var touch = Number(nav.maxTouchPoints) > 1;
+    var platform = /iPhone|iPod/.test(ua) ? 'iPhone' : /iPad/.test(ua) || (/Macintosh/.test(ua) && touch) ? 'iPad'
+      : /Android/.test(ua) ? 'Android' : /Macintosh|Mac OS X/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Other';
+    var browser = /Edg(e|A|iOS)?\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung' : /Firefox|FxiOS/.test(ua) ? 'Firefox'
+      : /Chrome|CriOS/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'Other';
+    var standalone = nav.standalone === true;
+    try { if (!standalone && typeof win.matchMedia === 'function') standalone = !!win.matchMedia('(display-mode: standalone)').matches; } catch (e) { /* keep false */ }
+    var lang = String(nav.language || '').trim();
+    var tz = '';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e2) { tz = ''; }
+    return {
+      platform: platform, browser: browser, standalone: standalone, online: nav.onLine !== false,
+      lang: /^[A-Za-z0-9-]{2,12}$/.test(lang) ? lang : '',
+      tz: /^[A-Za-z0-9_\/+-]{1,40}$/.test(tz) ? tz : '',
+      ua: diagScrub(ua, 200)
+    };
+  }
+
+  function diagInt(n, hi) { n = Math.round(Number(n)); return n >= 0 && n <= hi ? n : 0; }
+  function diagRoute(r) { return typeof r === 'string' && /^[a-z-]{1,24}$/.test(r) ? r : ''; }
+
+  // state { build, route, fromRoute, viewport {w,h}, device, errors, calls, now } -> exactly the contract object.
+  function supportDiagnostics(state) {
+    var s = state || {};
+    var d = {
+      app_version: /^[A-Za-z0-9._-]{1,40}$/.test(String(s.build || '')) ? String(s.build) : 'dev',
+      route: diagRoute(s.route) || 'more'
+    };
+    var from = diagRoute(s.fromRoute);
+    if (from) d.from_route = from;
+    d.viewport = { w: diagInt(s.viewport && s.viewport.w, 10000), h: diagInt(s.viewport && s.viewport.h, 10000) };
+    d.device = s.device || diagDevice({}, {});
+    var t = nowDate(s.now).getTime();
+    function live(list) {
+      return (Array.isArray(list) ? list : []).filter(function (e) { var a = e && toDate(e.at); return a && t - a.getTime() <= DIAG_MAX_AGE_MS; }).slice(-DIAG_MAX);
+    }
+    d.errors = live(s.errors).map(function (e) {
+      return { at: String(e.at), msg: diagScrub(e.msg, 200), src: /^[A-Za-z0-9._-]{1,40}(:[0-9]{1,6}){0,2}$/.test(String(e.src || '')) ? String(e.src) : '' };
+    });
+    d.calls = live(s.calls).map(function (e) {
+      return { at: String(e.at), name: String(e.name || '').toLowerCase().replace(/[^a-z0-9_.-]/g, '_').slice(0, 40) || 'call',
+        status: diagInt(e.status, 599), code: /^[A-Za-z0-9_]{0,40}$/.test(String(e.code || '')) ? String(e.code || '') : '' };
+    });
+    return d;
+  }
+
+  // One key per compose; the same key on every retry makes the server treat a repeat as the same request.
+  function newClientKey(cr) {
+    cr = cr || (typeof crypto !== 'undefined' ? crypto : null);
+    if (cr && typeof cr.randomUUID === 'function') return cr.randomUUID();
+    var b = new Array(16);
+    if (cr && typeof cr.getRandomValues === 'function') { var u = new Uint8Array(16); cr.getRandomValues(u); b = Array.prototype.slice.call(u); }
+    else for (var i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+    b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+    var h = b.map(function (x) { return (x + 256).toString(16).slice(1); }).join('');
+    return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20);
+  }
+
+  var SUPPORT_KINDS = [
+    { key: 'broken', label: "Something's broken", short: 'Broken' },
+    { key: 'question', label: 'A question', short: 'Question' },
+    { key: 'idea', label: 'An idea', short: 'Idea' }
+  ];
+  var SUPPORT_MAX = 2000;
+  function supportKindWord(k) { var r = SUPPORT_KINDS.filter(function (x) { return x.key === k; })[0]; return r ? r.short : ''; }
+
+  // The config RPC answer -> what the page shows. enabled / sendEnabled only when exactly true; the phone only when E.164.
+  function supportConfigView(cfg) {
+    var c = cfg && typeof cfg === 'object' ? cfg : {};
+    var name = String(c.contact_name || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 20) || 'Kevin';
+    var phone = typeof c.contact_phone === 'string' && /^\+[1-9][0-9]{7,14}$/.test(c.contact_phone.trim()) ? c.contact_phone.trim() : '';
+    return { enabled: c.enabled === true, sendEnabled: c.send_enabled === true, name: name, phone: phone,
+      callHref: phone ? 'tel:' + phone : '', textHref: phone ? 'sms:' + phone : '' };
+  }
+
+  // Form values -> RPC arguments, or { ok: false, error } with the server's own error words.
+  // form: { kind, message, urgent, lead_id, include_customer, client_key, diagnostics, sendEnabled }
+  function supportArgs(form) {
+    var f = form || {};
+    if (!SUPPORT_KINDS.some(function (k) { return k.key === f.kind; })) return { ok: false, error: 'kind' };
+    var msg = String(f.message === undefined || f.message === null ? '' : f.message).replace(/\r\n?/g, '\n').trim();
+    if (!msg) return { ok: false, error: 'message_empty' };
+    if (msg.length > SUPPORT_MAX) return { ok: false, error: 'message_too_long' };
+    if (!isUuid(f.client_key)) return { ok: false, error: 'client_key' };
+    var lead = isUuid(f.lead_id) ? String(f.lead_id).toLowerCase() : null;
+    return { ok: true, args: {
+      p_kind: f.kind, p_message: msg, p_urgent: f.urgent === true && f.sendEnabled !== false,
+      p_lead_id: lead, p_include_customer: !!(lead && f.include_customer === true),
+      p_client_key: String(f.client_key).toLowerCase(), p_diagnostics: f.diagnostics || {}
+    } };
+  }
+
+  // The line under the form after a send. `told` = kevin_told from the server.
+  function supportConfirm(told, ref) {
+    var r = String(ref || '');
+    switch (told) {
+      case 'email': return 'Sent. Kevin has it. Your reference is ' + r + '.';
+      case 'text_and_email': return 'Sent. Kevin is getting a text now. Your reference is ' + r + '.';
+      case 'email_urgent_limit': return 'Sent as ' + r + '. Kevin gets it by email: you’ve sent 3 urgent requests today. Call him if it can’t wait.';
+      case 'off': return 'Saved as ' + r + '. Kevin isn’t told automatically yet: call or text him if it can’t wait.';
+      case 'failed': return 'Saved as ' + r + ', but Kevin wasn’t told. Call or text him.';
+      default: return 'Sent. Your reference is ' + r + '.';
+    }
+  }
+
+  // A failed send/list -> { code, text, removeLead }.
+  function supportErrorText(err) {
+    var e = err && typeof err === 'object' ? err : {};
+    var msg = String(e.message || e.error || (typeof err === 'string' ? err : '')).trim().toLowerCase();
+    var det = String(e.details || e.detail || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
+    var m = /\b(not_owner|disabled|too_many|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(msg);
+    var word = m ? m[1] : '';
+    if (!word && (e.code === '42501' || e.status === 403)) word = 'not_owner';
+    var why = m && m[2] ? String(m[2]).trim().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_') : det;
+    if (word === 'not_owner') return { code: word, text: 'You’re signed out. Sign in again.', removeLead: false };
+    if (word === 'disabled') return { code: word, text: 'Help requests are turned off. Call or text Kevin.', removeLead: false };
+    if (word === 'too_many') return { code: word, text: 'That’s a lot of requests in a short time. Call or text Kevin instead.', removeLead: false };
+    if (word === 'bad_input') {
+      if (why === 'message_empty') return { code: why, text: 'Write a message first.', removeLead: false };
+      if (why === 'message_too_long') return { code: why, text: 'Keep it under 2,000 characters.', removeLead: false };
+      if (why === 'kind') return { code: why, text: 'Pick what it is.', removeLead: false };
+      if (why === 'lead' || why === 'include_customer') return { code: 'lead', text: 'That lead is gone; sent without it?', removeLead: true };
+    }
+    return { code: 'network', text: 'Couldn’t send. Check your connection and try again.', removeLead: false };
+  }
+
+  // "Sat 7 Nov" (a year too when it is not this year), in the client's time zone.
+  function fmtSupportDate(iso, now) {
+    var d = toDate(iso);
+    if (!d) return '';
+    var p = partsOf(d), n = partsOf(nowDate(now));
+    return WEEKDAYS[new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay()] + ' ' + p.d + ' ' + MONTHS[p.m - 1] + (p.y !== n.y ? ' ' + p.y : '');
+  }
+
+  // "About: Sarah · Sat 14 Nov" from a lead record.
+  function supportLeadLine(lead, now) {
+    if (!lead) return '';
+    var first = String(displayName(lead)).split(/\s+/)[0] || '';
+    var ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(lead.event_date || ''));
+    var date = '';
+    if (ymd) {
+      var mo = Number(ymd[2]), da = Number(ymd[3]), y = Number(ymd[1]);
+      if (mo >= 1 && mo <= 12) {
+        date = WEEKDAYS[new Date(Date.UTC(y, mo - 1, da)).getUTCDay()] + ' ' + da + ' ' + MONTHS[mo - 1] + (y !== partsOf(nowDate(now)).y ? ' ' + y : '');
+      }
+    }
+    return 'About: ' + first + (date ? ' · ' + date : '');
+  }
+
+  var SUPPORT_STATUS = {
+    received: { label: 'Received', tone: 'received' },
+    working: { label: 'Working on it', tone: 'working' },
+    fixed: { label: 'Fixed', tone: 'fixed' }
+  };
+
+  // One row of cv_support_list -> what the list shows (text only; every value is set with textContent).
+  function supportRow(row, now) {
+    var r = row || {};
+    var st = SUPPORT_STATUS[r.status] || SUPPORT_STATUS.received;
+    var first = String(r.message || '').split('\n').map(function (x) { return x.trim(); }).filter(Boolean)[0] || '';
+    var note = String(r.kevin_note || '').trim();
+    return {
+      kind: supportKindWord(r.kind) || 'Request', first: first, status: st.label, tone: st.tone,
+      date: fmtSupportDate(r.created_at, now), note: note ? 'Kevin: ' + note : '',
+      ref: /^H-[A-HJ-NP-Z2-9]{4,5}$/.test(String(r.ref || '')) ? String(r.ref) : '', urgent: r.urgent === true
+    };
   }
 
   /* ---------- conversation: customer thread + folded automatic texts ---------- */
@@ -2080,6 +2341,22 @@
     homeCounts: homeCounts,
     jobBits: jobBits,
     tabPlan: tabPlan,
+    diagScrub: diagScrub,
+    diagPush: diagPush,
+    diagCall: diagCall,
+    diagDevice: diagDevice,
+    diagFromError: diagFromError,
+    diagFromRejection: diagFromRejection,
+    supportDiagnostics: supportDiagnostics,
+    newClientKey: newClientKey,
+    SUPPORT_KINDS: SUPPORT_KINDS,
+    supportConfigView: supportConfigView,
+    supportArgs: supportArgs,
+    supportConfirm: supportConfirm,
+    supportErrorText: supportErrorText,
+    fmtSupportDate: fmtSupportDate,
+    supportLeadLine: supportLeadLine,
+    supportRow: supportRow,
     splitThread: splitThread,
     systemFoldText: systemFoldText
   };

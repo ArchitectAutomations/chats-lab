@@ -9,6 +9,44 @@
   var cfg = window.CV_CONFIG || {};
   var custom = window.CV_CUSTOM || {};
   L.configure(custom);
+
+  /* ---------- diagnostics for Help & support (installed first, so an early error is caught) ----------
+     Two small ring buffers (page errors, failed calls): at most 10 each, 30 minutes, kept in sessionStorage so a reload in the
+     same tab keeps them. Only the words L.diagFromError / L.diagCall produce: never bodies, arguments, tokens or customer data. */
+  var DIAG_KEY = 'cv_diag';
+  var diag = { errors: [], calls: [] };
+  try {
+    var savedDiag = JSON.parse(sessionStorage.getItem(DIAG_KEY) || 'null');
+    if (savedDiag && Array.isArray(savedDiag.errors) && Array.isArray(savedDiag.calls)) diag = { errors: savedDiag.errors, calls: savedDiag.calls };
+  } catch (e) { /* storage blocked or old value: start empty (memory only) */ }
+  function diagSave() { try { sessionStorage.setItem(DIAG_KEY, JSON.stringify(diag)); } catch (e) { /* memory only */ } }
+  function diagNoteError(entry) { diag.errors = L.diagPush(diag.errors, entry); diagSave(); }
+  function diagNoteCall(name, err) { diag.calls = L.diagPush(diag.calls, L.diagCall(name, err)); diagSave(); }
+  function diagClear() { diag = { errors: [], calls: [] }; try { sessionStorage.removeItem(DIAG_KEY); } catch (e) { /* ignore */ } }
+  window.addEventListener('error', function (ev) { try { diagNoteError(L.diagFromError(ev)); } catch (e) { /* never throw from the error handler */ } });
+  window.addEventListener('unhandledrejection', function (ev) { try { diagNoteError(L.diagFromRejection(ev)); } catch (e) { /* never throw */ } });
+  // Every backend call goes through one wrapper that records FAILURES only: the call's name, a status and a short code word.
+  var API_NAMES = {
+    fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
+    setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics',
+    quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test',
+    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', sendCode: 'auth', verify: 'auth'
+  };
+  function trackApi(api) {
+    Object.keys(API_NAMES).forEach(function (k) {
+      var fn = api[k];
+      if (typeof fn !== 'function') return;
+      api[k] = function () {
+        var p;
+        try { p = fn.apply(api, arguments); } catch (e) { diagNoteCall(API_NAMES[k], e); throw e; }
+        return Promise.resolve(p).then(function (v) {
+          if (API_NAMES[k] === 'auth' && v && v.error) diagNoteCall('auth', v.error);
+          return v;
+        }, function (e) { diagNoteCall(API_NAMES[k], e); throw e; });
+      };
+    });
+    return api;
+  }
   applyTheme(custom.theme);
   var host = location.hostname;
   var isLocal = location.protocol === 'file:' || host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
@@ -33,7 +71,7 @@
      Every tab the page knows. Adding a tab = one line here, plus its <main> screen in index.html and
      its show function; config.js (CV_CUSTOM.tabs / tabLabels) picks which ones show, their order and names.
      `route` is the hash name ('list' is '#/'), `icon` is an SVG path (24x24, stroked).
-     The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Quote calculator lives under More; Lead value is a section inside Metrics
+     The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Quote calculator and Help & support live under More; Lead value is a section inside Metrics
      (L.tabPlan decides, from CV_CUSTOM.tabs and the feature switches). */
   var TABS = [
     { route: 'list', href: '#/', label: 'Leads', show: showList, icon: 'M12 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM5 19.5c.6-3.3 3.3-5 7-5s6.4 1.7 7 5' },
@@ -41,6 +79,7 @@
     { route: 'calendar', href: '#/calendar', label: 'Calendar', show: showCalendar, icon: 'M4 6h16v14H4zM4 10.5h16M8.5 3.5v5M15.5 3.5v5' },
     { route: 'metrics', href: '#/metrics', label: 'Metrics', show: showMetrics, icon: 'M5 20v-8M12 20V5M19 20v-5M3 20h18' },
     { route: 'quote', href: '#/quote', label: 'Quote calculator', show: showQuote, icon: 'M7 3.5h10v17H7zM9.5 7h5M9.5 11h1M13.5 11h1M9.5 14.5h1M13.5 14.5h1M9.5 18h5' },
+    { route: 'support', href: '#/support', label: 'Help & support', show: showSupport, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM9.6 9.6a2.4 2.4 0 1 1 3.5 2.1c-.7.4-1.1.9-1.1 1.7M12 16.6v.2' },
     { route: 'more', href: '#/more', label: 'More', show: showMore, icon: 'M5 12h2M11 12h2M17 12h2' }
   ];
 
@@ -90,6 +129,12 @@
     qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qMore: $('q-more'),
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
     qCopy: $('q-copy'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
+    support: $('screen-support'), spOff: $('sp-off'), spContact: $('sp-contact'), spCall: $('sp-call'), spCallLabel: $('sp-call-label'),
+    spText: $('sp-text'), spTextLabel: $('sp-text-label'), spForm: $('sp-form'), spKinds: $('sp-kinds'), spMessage: $('sp-message'),
+    spCount: $('sp-count'), spLead: $('sp-lead'), spLeadText: $('sp-lead-text'), spLeadRemove: $('sp-lead-remove'), spInclude: $('sp-include'),
+    spIncludeRow: $('sp-include-row'), spUrgentRow: $('sp-urgent-row'), spUrgent: $('sp-urgent'), spDisclose: $('sp-disclose'), spNoSend: $('sp-nosend'), spSendLabel: $('sp-send-label'), spLede: $('sp-lede'), spFormH: $('sp-form-h'),
+    spError: $('sp-error'), spSend: $('sp-send'), spDone: $('sp-done'), spListLoading: $('sp-list-loading'), spList: $('sp-list'),
+    spListEmpty: $('sp-list-empty'), spListError: $('sp-list-error'),
     followups: $('screen-followups'), fuBody: $('fu-body'), fuLoading: $('fu-loading'), fuErr: $('fu-error'),
     metricsBody: $('metrics-body'), metricsLoading: $('metrics-loading'), metricsErr: $('metrics-error'), metricsUpdated: $('metrics-updated'),
     formPhone: $('form-phone'), phone: $('phone'), phoneErr: $('phone-error'), btnSend: $('btn-send'),
@@ -158,6 +203,8 @@
     addBusy: false,
     toastTimer: null,
     quotePrefill: null,  // { guests, area } from a lead's record -> the quote calculator, used once
+    nav: { cur: '', from: '', lead: null },  // screen before More / Help, and the lead record Help was reached from (same session)
+    support: { cfg: null, cfgState: 'idle', key: null, busy: false, removeLead: false, rows: null, listErr: false, listSeq: 0, cfgSeq: 0 },
     actionButtons: {}
   };
 
@@ -267,7 +314,11 @@
       realtime: { params: { eventsPerSecond: 5 } }
     });
 
-    function ok(r) { if (r.error) throw r.error; return r.data; }
+    // The HTTP status rides along on the error so a failed call can be recorded for Help & support (status + code word only).
+    function ok(r) {
+      if (r.error) { if (r.status && typeof r.error === 'object' && r.error.status === undefined) { try { r.error.status = r.status; } catch (e) { /* frozen: no status */ } } throw r.error; }
+      return r.data;
+    }
 
     return {
       getSession: function () {
@@ -358,6 +409,10 @@
       },
       pushUnsubscribe: function (endpoint) { return client.rpc('cv_push_unsubscribe', { p_endpoint: endpoint }).then(ok); },
       pushTest: function () { return client.rpc('cv_push_test').then(ok); },
+      // Help & support (owner-only RPCs, sql/012): config, send, the owner's own requests.
+      supportConfig: function () { return client.rpc('cv_support_config').then(ok); },
+      supportSubmit: function (args) { return client.rpc('cv_support_submit', args).then(ok); },
+      supportList: function () { return client.rpc('cv_support_list').then(ok); },
       fetchFollowUps: function () {
         return client.from('follow_ups').select(FOLLOWUP_COLUMNS).limit(1000).then(ok);
       },
@@ -432,6 +487,7 @@
       var li = make('li');
       var a = make('a', 'more-row');
       a.href = n.href;
+      if (n.route === 'support') { li.hidden = true; supportRowNode = li; }  // shown once the database says support is on
       a.appendChild(icon(n.icon, 24));
       a.appendChild(make('span', 'more-label', n.label));
       a.appendChild(icon('M9 5l7 7-7 7', 20)).classList.add('more-chev');
@@ -463,13 +519,14 @@
     show(el.calendar, name === 'calendar');
     show(el.quote, name === 'quote');
     show(el.more, name === 'more');
+    show(el.support, name === 'support');
     show(el.thread, name === 'thread');
     show(el.topbar, signedIn);
     show(el.tabbar, signedIn && PLAN.showBar);
     // Back arrow on a lead record and on the tools under More; every other screen is a tab with a plain title.
-    var sub = name === 'thread' || name === 'quote';
+    var sub = name === 'thread' || name === 'quote' || name === 'support';
     show(el.back, sub);
-    if (name === 'quote') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
+    if (name === 'quote' || name === 'support') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
     if (name !== 'thread') {
       el.title.textContent = S.tab.label;
       setText(el.subtitle, '');
@@ -510,7 +567,7 @@
       function () { scheduleRefresh(400); },
       function (status) {
         if (status === 'SUBSCRIBED') { setLive('on'); scheduleRefresh(0); }
-        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setLive('retry');
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { diagNoteCall('live', { status: 0, code: String(status).toLowerCase() }); setLive('retry'); }
         else if (status === 'CLOSED') setLive(S.signedIn ? 'retry' : 'off');
       }
     );
@@ -1063,6 +1120,233 @@
     }
     qTypeChanged();
     renderQuoteResult();
+  }
+
+  /* ---------- Help & support (More) ---------- */
+
+  var SUPPORT_REFRESH_MS = 60000;
+  var supportRowNode = null;  // the More row; hidden until the database says support is on
+
+  function loadSupportConfig() {
+    var sp = S.support;
+    if (!feature('support') || !S.api || typeof S.api.supportConfig !== 'function') { sp.cfgState = 'off'; return Promise.resolve(); }
+    var seq = ++sp.cfgSeq;
+    sp.cfgState = 'loading';
+    return Promise.resolve().then(function () { return S.api.supportConfig(); }).then(function (c) {
+      if (seq !== sp.cfgSeq) return;
+      sp.cfg = L.supportConfigView(c); sp.cfgState = 'ready';
+    }, function () {
+      if (seq !== sp.cfgSeq) return;
+      sp.cfg = null; sp.cfgState = 'failed';  // soft-fail: the More row stays hidden
+    }).then(function () {
+      if (seq !== sp.cfgSeq) return;
+      if (supportRowNode) supportRowNode.hidden = !(sp.cfg && sp.cfg.enabled);
+      if (S.screen === 'support') renderSupport();
+    });
+  }
+
+  function supportLeadActive() { return !!(S.nav.lead && !S.support.removeLead); }
+
+  function buildSupportKinds() {
+    var frag = document.createDocumentFragment();
+    L.SUPPORT_KINDS.forEach(function (k) {
+      var lab = make('label', 'reason-chip');
+      var input = make('input');
+      input.type = 'radio'; input.name = 'sp-kind'; input.value = k.key;
+      input.addEventListener('change', function () { setText(el.spError, ''); });
+      lab.appendChild(input);
+      lab.appendChild(make('span', '', k.label));
+      frag.appendChild(lab);
+    });
+    el.spKinds.replaceChildren(frag);
+  }
+
+  function supportKind() {
+    var r = el.spKinds.querySelector('input:checked');
+    return r ? r.value : '';
+  }
+
+  // Wording by switch state. While send_enabled is false nothing reaches Kevin, so the screen must not say it does.
+  var SUPPORT_TEXT = {
+    on: { lede: 'Something not working, a question or an idea? Tell Kevin here.', heading: 'Tell Kevin', button: 'Send to Kevin',
+      disclose: 'Kevin also gets your screen, phone type, the time and recent page errors. Never your customers’ messages.', noSend: '' },
+    off: { lede: 'Something not working, a question or an idea? Write it down here.', heading: 'Write it down', button: 'Save request',
+      disclose: 'Your screen, phone type, the time and recent page errors are saved with it. Never your customers’ messages.',
+      noSend: 'Kevin isn’t told automatically yet. It’s saved here; call or text him if it can’t wait.' }
+  };
+
+  function renderSupportDisclose() {
+    var on = !!(S.support.cfg && S.support.cfg.sendEnabled);
+    var T = SUPPORT_TEXT[on ? 'on' : 'off'];
+    var t = T.disclose;
+    if (supportLeadActive() && el.spInclude.checked) t += ' This time also the customer’s name and phone.';
+    el.spDisclose.textContent = t;
+    setText(el.spNoSend, T.noSend);
+    el.spLede.textContent = T.lede; el.spFormH.textContent = T.heading; el.spSendLabel.textContent = T.button;
+  }
+
+  function renderSupportCount() {
+    var n = el.spMessage.value.length;
+    setText(el.spCount, n >= 1800 ? n + ' of 2,000' : '');
+  }
+
+  // The whole screen from S.support: contact buttons, form or "off" line, the lead line, the urgent toggle.
+  function renderSupport() {
+    var sp = S.support;
+    var c = sp.cfg;
+    var ready = sp.cfgState === 'ready' && c && c.enabled;
+    var offText = sp.cfgState === 'loading' || sp.cfgState === 'idle' ? '' :
+      (sp.cfgState === 'failed' ? 'Couldn’t load Help right now. Try again in a moment.' : 'Help requests are turned off right now.');
+    setText(el.spOff, ready ? '' : offText);
+    // Call / Text Kevin: only with a valid number, in the owner's own words from the config (Kevin by default).
+    var hasPhone = !!(c && c.phone);
+    show(el.spContact, hasPhone);
+    if (hasPhone) {
+      el.spCall.href = c.callHref; el.spText.href = c.textHref;
+      el.spCallLabel.textContent = 'Call ' + c.name; el.spTextLabel.textContent = 'Text ' + c.name;
+    } else { el.spCall.removeAttribute('href'); el.spText.removeAttribute('href'); }
+    show(el.spForm, !!ready);
+    show(el.spUrgentRow, !!(ready && c.sendEnabled));
+    var lead = supportLeadActive();
+    show(el.spLead, lead && !!ready);
+    if (lead) el.spLeadText.textContent = L.supportLeadLine(S.nav.lead.lead) || 'About: this lead';
+    renderSupportDisclose();
+    renderSupportCount();
+    renderSupportList();
+  }
+
+  function setSupportBusy(on) {
+    S.support.busy = on;
+    el.spSend.disabled = on;
+    el.spSend.classList.toggle('is-busy', on);
+    if (on) el.spSend.setAttribute('aria-busy', 'true'); else el.spSend.removeAttribute('aria-busy');
+  }
+
+  function supportError(text) {
+    setText(el.spError, text);
+    if (text) setText(el.spDone, '');
+  }
+
+  // What the page tells Kevin about itself: the exact contract object (L.supportDiagnostics); the server rebuilds it again.
+  function collectDiagnostics() {
+    return L.supportDiagnostics({
+      build: window.CV_BUILD, route: 'support', fromRoute: S.nav.from,
+      viewport: { w: window.innerWidth, h: window.innerHeight }, device: L.diagDevice(navigator, window),
+      errors: diag.errors, calls: diag.calls
+    });
+  }
+
+  function submitSupport() {
+    var sp = S.support;
+    if (sp.busy || !sp.cfg || !sp.cfg.enabled) return;
+    if (!sp.key) sp.key = L.newClientKey();   // one key per compose: a retry after a failed send reuses it
+    var lead = supportLeadActive() ? S.nav.lead : null;
+    var r = L.supportArgs({
+      kind: supportKind(), message: el.spMessage.value, urgent: el.spUrgent.checked, sendEnabled: sp.cfg.sendEnabled,
+      lead_id: lead ? lead.id : null, include_customer: el.spInclude.checked, client_key: sp.key, diagnostics: collectDiagnostics()
+    });
+    if (!r.ok) {
+      supportError(L.supportErrorText({ message: 'bad_input', details: r.error }).text);
+      (r.error === 'kind' ? el.spKinds.querySelector('input') : el.spMessage).focus();
+      if (r.error !== 'kind') el.spMessage.setAttribute('aria-invalid', 'true');
+      return;
+    }
+    supportError('');
+    setText(el.spDone, '');
+    setSupportBusy(true);
+    Promise.resolve().then(function () { return S.api.supportSubmit(r.args); }).then(function (res) {
+      if (!S.signedIn) return;
+      var out = res && typeof res === 'object' ? res : {};
+      setText(el.spDone, L.supportConfirm(out.kevin_told, out.ref));
+      el.spForm.reset();
+      el.spMessage.removeAttribute('aria-invalid');
+      sp.key = null;   // the form is cleared: the next compose gets a new key
+      renderSupportCount(); renderSupportDisclose();
+      try { el.spDone.focus({ preventScroll: false }); } catch (e) { /* focus is a nicety */ }
+      refreshSupportList();
+    }, function (err) {
+      if (!S.signedIn) return;
+      var t = L.supportErrorText(err);
+      if (t.removeLead) { sp.removeLead = true; el.spInclude.checked = false; renderSupport(); }
+      supportError(t.text);   // the form keeps its text and the same client_key
+    }).then(function () { setSupportBusy(false); });
+  }
+
+  function renderSupportList() {
+    var sp = S.support;
+    var rows = sp.rows;
+    var ready = sp.cfgState === 'ready' && sp.cfg && sp.cfg.enabled;
+    show(el.spListLoading, !!ready && rows === null && !sp.listErr);
+    setText(el.spListError, ready && sp.listErr ? 'Couldn’t load your requests.' : '');
+    show(el.spListEmpty, !!ready && rows !== null && rows.length === 0);
+    show(el.spList, !!ready && rows !== null && rows.length > 0);
+    document.getElementById('sp-list-h').parentNode.hidden = !ready;
+    var frag = document.createDocumentFragment();
+    (ready && rows ? rows : []).forEach(function (row) {
+      var v = L.supportRow(row);
+      var li = make('li', 'sp-row');
+      var top = make('div', 'sp-row-top');
+      var kind = make('span', 'sp-kind', v.kind);
+      if (v.urgent) kind.appendChild(make('span', 'sp-urgent-tag', 'Urgent'));
+      top.appendChild(kind);
+      top.appendChild(make('span', 'sp-chip is-' + v.tone, v.status));
+      li.appendChild(top);
+      if (v.first) li.appendChild(make('p', 'sp-msg', v.first));
+      if (v.note) li.appendChild(make('p', 'sp-note', v.note));
+      li.appendChild(make('p', 'sp-meta', [v.date, v.ref].filter(Boolean).join(' · ')));
+      frag.appendChild(li);
+    });
+    el.spList.replaceChildren(frag);
+  }
+
+  function refreshSupportList() {
+    var sp = S.support;
+    if (!S.signedIn || !S.api || typeof S.api.supportList !== 'function' || !sp.cfg || !sp.cfg.enabled) return;
+    var n = ++sp.listSeq;
+    Promise.resolve().then(function () { return S.api.supportList(); }).then(function (rows) {
+      if (n !== sp.listSeq) return;
+      sp.rows = Array.isArray(rows) ? rows : []; sp.listErr = false;
+    }, function () {
+      if (n !== sp.listSeq) return;
+      sp.listErr = true;   // old rows stay on screen
+    }).then(function () { if (n === sp.listSeq && S.screen === 'support') renderSupportList(); });
+  }
+
+  function showSupport() {
+    S.thread.id = null;
+    setScreen('support');
+    renderSupport();
+    var sp = S.support;
+    // The config may still be on its way (a direct #/support link); render again when it lands, then load the list.
+    (sp.cfgState === 'ready' ? Promise.resolve() : loadSupportConfig()).then(function () {
+      if (S.screen === 'support') { renderSupport(); refreshSupportList(); }
+    });
+    if (sp.cfgState === 'ready') refreshSupportList();
+  }
+
+  function resetSupport() {
+    var sp = S.support;
+    sp.cfgSeq++; sp.listSeq++;
+    S.support = { cfg: null, cfgState: 'idle', key: null, busy: false, removeLead: false, rows: null, listErr: false, listSeq: sp.listSeq, cfgSeq: sp.cfgSeq };
+    el.spForm.reset(); el.spMessage.removeAttribute('aria-invalid');
+    setSupportBusy(false); setText(el.spError, ''); setText(el.spDone, '');
+    el.spList.replaceChildren();
+    if (supportRowNode) supportRowNode.hidden = true;
+    S.nav = { cur: '', from: '', lead: null };
+    diagClear();
+  }
+
+  // Remember the screen before More / Help (and the lead record it came from) so a request can say where it was sent from.
+  function trackNav(name) {
+    var group = name === 'more' || name === 'support' || name === 'quote';
+    var prev = S.nav.cur;
+    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote';
+    if (group && !prevGroup) {
+      S.nav.from = prev;
+      S.nav.lead = prev === 'lead' && S.thread.id ? { id: S.thread.id, lead: S.thread.lead } : null;
+      S.support.removeLead = false; el.spInclude.checked = false;
+    } else if (!group) { S.nav.from = ''; S.nav.lead = null; }
+    S.nav.cur = name;
   }
 
   /* ---------- calendar ---------- */
@@ -2086,6 +2370,7 @@
       store('del', TARGET_KEY);
       if (r.name === 'list' && L.isUuid(target)) { location.replace('#/lead/' + target); return; }
     }
+    trackNav(r.name);
     if (r.name === 'lead') { showThread(r.id); return; }
     S.tab = navFor(r.name);
     S.tab.show();
@@ -2116,6 +2401,7 @@
     startLive();
     loadBrand();
     loadPush();
+    loadSupportConfig();
     route();
   }
 
@@ -2137,6 +2423,7 @@
     if (P.sub) { try { Promise.resolve(P.sub.unsubscribe()).catch(function () { /* ignore */ }); } catch (e) { /* ignore */ } }
     P.seq++; P.cfg = null; P.sub = null; P.busy = false; P.open = false; pushMsg(''); renderPush();
     clearStoredTargets();
+    resetSupport();
     stopLive();
     clearTimeout(S.refreshTimer);
     S.seq.list++; S.seq.thread++;
@@ -2453,6 +2740,14 @@
     Array.prototype.forEach.call(el.qForm.querySelectorAll('input[name="q-type"]'), function (r) { r.addEventListener('change', qTypeChanged); });
     el.qCopy.addEventListener('click', copyQuote);
 
+    // Help & support
+    el.spForm.addEventListener('submit', function (e) { e.preventDefault(); submitSupport(); });
+    el.spMessage.addEventListener('input', function () { renderSupportCount(); el.spMessage.removeAttribute('aria-invalid'); setText(el.spError, ''); });
+    el.spInclude.addEventListener('change', renderSupportDisclose);
+    el.spLeadRemove.addEventListener('click', function () {
+      S.support.removeLead = true; el.spInclude.checked = false; renderSupport(); el.spMessage.focus();
+    });
+
     // Notes
     el.noteSave.addEventListener('click', saveNote);
     el.noteText.addEventListener('input', function () { noteCount(); setText(el.noteErr, ''); });
@@ -2501,7 +2796,7 @@
 
     // Phones background tabs and drop sockets: catch up the moment the page is back.
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible' && S.signedIn) scheduleRefresh(0);
+      if (document.visibilityState === 'visible' && S.signedIn) { scheduleRefresh(0); if (S.screen === 'support') refreshSupportList(); }
     });
     window.addEventListener('online', function () { if (S.signedIn) scheduleRefresh(0); });
 
@@ -2516,6 +2811,10 @@
     setInterval(function () {
       if (S.signedIn && document.visibilityState === 'visible') tickCountdowns();
     }, 15000);
+    // Help: the list of requests refreshes every 60 s while that screen is open (nothing runs on other screens).
+    setInterval(function () {
+      if (S.signedIn && document.visibilityState === 'visible' && S.screen === 'support') refreshSupportList();
+    }, SUPPORT_REFRESH_MS);
     // Once a minute, refetch while the Follow-ups tab is open (a scheduled text may have gone out).
     setInterval(function () {
       if (S.signedIn && document.visibilityState === 'visible' && S.screen === 'followups') refreshFollowUps();
@@ -2546,6 +2845,7 @@
     buildActions();
     buildReasons();
     buildAddSources();
+    buildSupportKinds();
     show(el.searchWrap, HAS_SEARCH);
     applyAppName();
     restorePrefs();
@@ -2557,11 +2857,11 @@
       return;
     }
     (MOCK ? loadMock() : Promise.resolve(makeRealApi())).then(function (api) {
-      S.api = api;
+      S.api = trackApi(api);
       api.onAuth(function (ev) { setTimeout(function () { handleAuthEvent(ev); }, 0); });
       return api.getSession();
     }).then(function (session) {
-      if (session) { S.signedIn = true; startLive(); loadBrand(); loadPush(); }
+      if (session) { S.signedIn = true; startLive(); loadBrand(); loadPush(); loadSupportConfig(); }
       route();
       if (MOCK && !session && qs.get('screen') === 'code') showCodeStep('+14165550123');
     }).catch(function () {
