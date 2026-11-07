@@ -1,4 +1,4 @@
-/* Owner page: every lead, each lead's SMS thread, status changes (Contacted / Booked / Lost) and lead value.
+/* Owner page: every lead, each lead's SMS thread, status changes (Contacted / Booked / Lost), calendar, metrics and the quote calculator.
    Backend: Supabase (phone OTP auth, views `lead_list` + `conversation` + `lead_history`,
    RPC `cv_set_lead_status`, Realtime on base tables).
    Every message body and lead name is untrusted lead input: it is only ever written with textContent. */
@@ -14,6 +14,8 @@
   var isLocal = location.protocol === 'file:' || host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
   var qs = new URLSearchParams(location.search);
   var MOCK = isLocal && qs.get('mock') === '1';
+  // Mock mode sets a business name so the real brand path (More heading) runs in mock too, and a missing element would throw visibly.
+  if (MOCK && !(typeof custom.businessName === 'string' && custom.businessName.trim())) custom.businessName = 'Mock Bartending Co';
   var TARGET_KEY = 'cv_target_lead';
   var FILTER_KEY = 'cv_filter';
   var CLOSED_KEY = 'cv_show_closed';
@@ -31,36 +33,35 @@
   /* ---------- navigation ----------
      Every tab the page knows. Adding a tab = one line here, plus its <main> screen in index.html and
      its show function; config.js (CV_CUSTOM.tabs / tabLabels) picks which ones show, their order and names.
-     `route` is the hash name ('list' is '#/'), `icon` is an SVG path (24x24, stroked). */
+     `route` is the hash name ('list' is '#/'), `icon` is an SVG path (24x24, stroked).
+     The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Quote calculator and Lead value live under More
+     (L.tabPlan decides, from CV_CUSTOM.tabs and the feature switches). */
   var TABS = [
-    { route: 'list', href: '#/', label: 'Leads', show: showList, icon: 'M4 5.5h16v10.5H10l-4.5 3.5V16H4z' },
+    { route: 'list', href: '#/', label: 'Leads', show: showList, icon: 'M12 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM5 19.5c.6-3.3 3.3-5 7-5s6.4 1.7 7 5' },
     { route: 'followups', href: '#/followups', label: 'Follow-ups', show: showFollowUps, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 7.5V12l3 2' },
     { route: 'calendar', href: '#/calendar', label: 'Calendar', show: showCalendar, icon: 'M4 6h16v14H4zM4 10.5h16M8.5 3.5v5M15.5 3.5v5' },
+    { route: 'metrics', href: '#/metrics', label: 'Metrics', show: showMetrics, icon: 'M5 20v-8M12 20V5M19 20v-5M3 20h18' },
     { route: 'quote', href: '#/quote', label: 'Quote calculator', show: showQuote, icon: 'M7 3.5h10v17H7zM9.5 7h5M9.5 11h1M13.5 11h1M9.5 14.5h1M13.5 14.5h1M9.5 18h5' },
     { route: 'value', href: '#/value', label: 'Lead value', show: showValue, icon: 'M12 3v18M16.5 7.5c-.6-1.4-2.3-2.3-4.5-2.3-2.6 0-4.5 1.3-4.5 3.2 0 4.3 9 2.3 9 6.6 0 1.9-1.9 3.3-4.5 3.3-2.3 0-4-.9-4.7-2.4' },
-    { route: 'metrics', href: '#/metrics', label: 'Metrics', show: showMetrics, icon: 'M5 20v-8M12 20V5M19 20v-5M3 20h18' }
+    { route: 'more', href: '#/more', label: 'More', show: showMore, icon: 'M5 12h2M11 12h2M17 12h2' }
   ];
 
-  // Feature switches (CV_CUSTOM.features): an off feature is not shown anywhere. Leads ('list') is always on.
+  // Feature switches (CV_CUSTOM.features): an off feature is not shown anywhere. Leads ('list') and More are always on.
   function feature(key) { return L.featureOn(custom.features, key); }
-  function tabOn(t) { return t.route === 'list' || feature(t.route); }
+  function tabByRoute(r) { return TABS.filter(function (x) { return x.route === r; })[0]; }
 
-  // The client's menu: CV_CUSTOM.tabs order (unknown names and switched-off features ignored),
-  // labels from CV_CUSTOM.tabLabels. Falls back to every switched-on tab when the setting names nothing usable.
-  var NAV = (function () {
-    var want = Array.isArray(custom.tabs) ? custom.tabs : [];
+  // The client's bar and More list (CV_CUSTOM.tabs order, labels from CV_CUSTOM.tabLabels).
+  var PLAN = L.tabPlan(custom.tabs, feature);
+  function labelled(route) {
+    var t = tabByRoute(route);
     var labels = custom.tabLabels || {};
-    var picked = [];
-    want.forEach(function (r) {
-      var t = TABS.filter(function (x) { return x.route === r && tabOn(x); })[0];
-      if (t && picked.indexOf(t) === -1) picked.push(t);
-    });
-    if (!picked.length) picked = TABS.filter(tabOn);
-    return picked.map(function (t) {
-      var label = typeof labels[t.route] === 'string' && labels[t.route].trim() ? labels[t.route].trim() : t.label;
-      return { route: t.route, href: t.href, label: label, show: t.show, icon: t.icon };
-    });
-  })();
+    var label = typeof labels[route] === 'string' && labels[route].trim() ? labels[route].trim() : t.label;
+    return { route: t.route, href: t.href, label: label, show: t.show, icon: t.icon };
+  }
+  var BAR = PLAN.bar.concat(['more']).map(labelled);
+  var MORE_ITEMS = PLAN.more.map(labelled);
+  // Every screen the router can open (bar tabs, More and the tools under it).
+  var NAV = BAR.concat(MORE_ITEMS);
   var TAB_ROUTES = NAV.map(function (n) { return n.route; });
   var HAS_FOLLOWUPS = TAB_ROUTES.indexOf('followups') !== -1;
   var HAS_SEARCH = feature('search');
@@ -69,8 +70,9 @@
 
   function $(id) { return document.getElementById(id); }
   var el = {
-    app: $('app'), main: $('main'), nav: $('nav'), navList: $('nav-list'), navBrand: $('nav-brand'), navClose: $('btn-nav-close'),
-    scrim: $('scrim'), navBtn: $('btn-nav'), signout: $('btn-signout'),
+    app: $('app'), main: $('main'), tabbar: $('tabbar'), tabbarList: $('tabbar-list'), signout: $('btn-signout'),
+    more: $('screen-more'), moreList: $('more-list'), moreBrand: $('more-brand'),
+    needs: $('needs'), needsTitle: $('needs-title'), needsCount: $('needs-count'), needsList: $('needs-list'), filterNote: $('filter-note'),
     alerts: $('alerts'), alertsText: $('alerts-text'), alertsOn: $('alerts-on'), alertsRow: $('alerts-row'),
     alertsTest: $('alerts-test'), alertsOff: $('alerts-off'), alertsMsg: $('alerts-msg'),
     topbar: $('topbar'), back: $('btn-back'), title: $('title'), subtitle: $('subtitle'),
@@ -88,7 +90,7 @@
     qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qMore: $('q-more'),
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
     qCopy: $('q-copy'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
-    followups: $('screen-followups'), fuBody: $('fu-body'), fuLoading: $('fu-loading'), fuErr: $('fu-error'), menuBadge: $('menu-badge'),
+    followups: $('screen-followups'), fuBody: $('fu-body'), fuLoading: $('fu-loading'), fuErr: $('fu-error'),
     metricsBody: $('metrics-body'), metricsLoading: $('metrics-loading'), metricsErr: $('metrics-error'), metricsUpdated: $('metrics-updated'),
     formPhone: $('form-phone'), phone: $('phone'), phoneErr: $('phone-error'), btnSend: $('btn-send'),
     formCode: $('form-code'), code: $('code'), codePhone: $('code-phone'), codeErr: $('code-error'), codeNote: $('code-note'),
@@ -98,24 +100,23 @@
     valueTotal: $('value-total'), showClosed: $('show-closed'), valueLoading: $('value-loading'),
     valueSections: $('value-sections'), valueErr: $('value-error'),
     strip: $('strip'), stripChip: $('strip-chip'), stripTime: $('strip-time'),
-    recordLoading: $('record-loading'), recHead: $('rec-head'), recName: $('rec-name'), recNext: $('rec-next'),
-    optoutBanner: $('optout-banner'), recContact: $('rec-contact'), contactFacts: $('contact-facts'),
+    recordLoading: $('record-loading'), recHead: $('rec-head'), recName: $('rec-name'), recNext: $('rec-next'), recJob: $('rec-job'), recPhone: $('rec-phone'), recHistory: $('rec-history'),
+    optoutBanner: $('optout-banner'), recContact: $('rec-contact'),
     contactActions: $('contact-actions'), contactNote: $('contact-note'),
     recEvent: $('rec-event'), eventFacts: $('event-facts'), eventWords: $('event-words'), eventDetails: $('event-details'),
     recQuote: $('rec-quote'), quoteBody: $('quote-body'), recOthers: $('rec-others'), othersList: $('others-list'),
-    convo: $('convo'),
+    convo: $('convo'), convoScroll: $('convo-scroll'),
     actions: $('actions'), actionsNote: $('actions-note'), actionErr: $('action-error'), history: $('history'), historyMore: $('history-more'),
     threadScroll: $('thread-scroll'), threadLoading: $('thread-loading'), threadBox: $('thread'), threadEmpty: $('thread-empty'),
     threadErr: $('thread-error'), pill: $('new-pill'),
     confirm: $('confirm'), confirmText: $('confirm-text'), confirmYes: $('confirm-yes'), confirmNo: $('confirm-no')
   };
 
-  var wide = window.matchMedia('(min-width: 900px)');
   // From this width the record shows the conversation and the details side by side, each scrolling on its own.
   var split = window.matchMedia('(min-width: 1200px)');
 
   function emptyThread(id) {
-    return { id: id || null, lead: null, rows: [], history: null, loaded: false, sig: '', count: 0 };
+    return { id: id || null, lead: null, rows: [], history: null, loaded: false, sig: '', count: 0, sysOpen: false };
   }
 
   var S = {
@@ -126,6 +127,7 @@
     listError: '',
     thread: emptyThread(),
     live: 'off',
+    liveTimer: null,
     stopLive: null,
     seq: { list: 0, thread: 0, metrics: 0, followups: 0 },
     metrics: null,
@@ -145,9 +147,8 @@
     busy: false,
     screen: '',
     tab: NAV[0],
-    filter: 'all',
+    filter: 'open',
     showClosed: false,
-    navOpen: false,
     pending: null,       // status being saved from the page
     confirming: null,    // status waiting in the confirm sheet
     historyOpen: false,
@@ -192,17 +193,18 @@
     return n;
   }
 
-  function icon(d) {
+  // One icon style everywhere: 24-unit grid, round caps, 1.75 stroke (size is the only thing that varies).
+  function icon(d, size) {
     var svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('width', '22');
-    svg.setAttribute('height', '22');
+    svg.setAttribute('width', String(size || 22));
+    svg.setAttribute('height', String(size || 22));
     svg.setAttribute('aria-hidden', 'true');
     var p = document.createElementNS(SVG_NS, 'path');
     p.setAttribute('d', d);
     p.setAttribute('fill', 'none');
     p.setAttribute('stroke', 'currentColor');
-    p.setAttribute('stroke-width', '2');
+    p.setAttribute('stroke-width', '1.75');
     p.setAttribute('stroke-linecap', 'round');
     p.setAttribute('stroke-linejoin', 'round');
     svg.appendChild(p);
@@ -345,24 +347,29 @@
     });
   }
 
-  /* ---------- navigation shell ---------- */
+  /* ---------- navigation shell: the bottom bar ---------- */
 
   function navFor(route) {
     return NAV.filter(function (n) { return n.route === route; })[0] || NAV[0];
   }
 
-  function buildNav() {
+  // Which bar slot lights up: the tab itself, or More for the tools that live under it.
+  function barRoute(route) {
+    return BAR.some(function (n) { return n.route === route; }) ? route : 'more';
+  }
+
+  function buildTabbar() {
     var frag = document.createDocumentFragment();
-    NAV.forEach(function (n) {
+    BAR.forEach(function (n) {
       var li = make('li');
-      var a = make('a', 'nav-item');
+      var a = make('a', 'tab');
       a.href = n.href;
       a.setAttribute('data-route', n.route);
-      a.appendChild(icon(n.icon));
-      a.appendChild(make('span', 'nav-label', n.label));
-      if (n.route === 'followups') {
-        // Visible count + words for screen readers; filled by renderBadge().
-        var badge = make('span', 'nav-badge');
+      a.appendChild(icon(n.icon, 24));
+      a.appendChild(make('span', 'tab-label', n.label));
+      if (n.route === 'list') {
+        // The one badge: how many leads need the owner. Count for the eye, words for screen readers; filled by renderBadge().
+        var badge = make('span', 'tab-badge');
         badge.hidden = true;
         var num = make('span', '', '0');
         num.setAttribute('aria-hidden', 'true');
@@ -370,57 +377,32 @@
         badge.appendChild(make('span', 'sr-only', ''));
         a.appendChild(badge);
       }
-      a.addEventListener('click', function () { closeNav(false); });
       li.appendChild(a);
       frag.appendChild(li);
     });
-    el.navList.replaceChildren(frag);
+    el.tabbarList.replaceChildren(frag);
+    // More: the tools under it (Quote calculator, Lead value). Alerts and Sign out are fixed in index.html.
+    var rows = document.createDocumentFragment();
+    MORE_ITEMS.forEach(function (n) {
+      var li = make('li');
+      var a = make('a', 'more-row');
+      a.href = n.href;
+      a.appendChild(icon(n.icon, 24));
+      a.appendChild(make('span', 'more-label', n.label));
+      a.appendChild(icon('M9 5l7 7-7 7', 20)).classList.add('more-chev');
+      li.appendChild(a);
+      rows.appendChild(li);
+    });
+    el.moreList.replaceChildren(rows);
   }
 
-  function markNav() {
-    var items = el.navList.querySelectorAll('.nav-item');
+  function markTabs() {
+    var cur = barRoute(S.tab.route);
+    var items = el.tabbarList.querySelectorAll('.tab');
     for (var i = 0; i < items.length; i++) {
-      if (items[i].getAttribute('data-route') === S.tab.route) items[i].setAttribute('aria-current', 'page');
+      if (items[i].getAttribute('data-route') === cur) items[i].setAttribute('aria-current', 'page');
       else items[i].removeAttribute('aria-current');
     }
-  }
-
-  function setMainInert(on) {
-    el.main.inert = on;
-    if (on) el.main.setAttribute('inert', ''); else el.main.removeAttribute('inert');
-  }
-
-  function openNav() {
-    if (wide.matches || S.navOpen) return;
-    S.navOpen = true;
-    el.nav.classList.add('open');
-    show(el.scrim, true);
-    setMainInert(true);
-    el.navBtn.setAttribute('aria-expanded', 'true');
-    var current = el.navList.querySelector('[aria-current="page"]') || el.navList.querySelector('.nav-item');
-    setTimeout(function () { try { (current || el.navClose).focus(); } catch (e) { /* ignore */ } }, 30);
-  }
-
-  function closeNav(returnFocus) {
-    if (!S.navOpen) return;
-    S.navOpen = false;
-    el.nav.classList.remove('open');
-    show(el.scrim, false);
-    setMainInert(false);
-    el.navBtn.setAttribute('aria-expanded', 'false');
-    if (returnFocus) { try { el.navBtn.focus(); } catch (e) { /* ignore */ } }
-  }
-
-  // Keep Tab inside the open drawer.
-  function trapNavFocus(e) {
-    var items = Array.prototype.filter.call(
-      el.nav.querySelectorAll('a[href], button:not([disabled])'),
-      function (n) { return n.offsetParent !== null; }
-    );
-    if (!items.length) return;
-    var first = items[0], last = items[items.length - 1];
-    if (e.shiftKey && (document.activeElement === first || !el.nav.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && (document.activeElement === last || !el.nav.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
   }
 
   /* ---------- screens ---------- */
@@ -429,7 +411,6 @@
     S.screen = name;
     var signedIn = name !== 'signin';
     el.app.classList.toggle('signed-in', signedIn);
-    show(el.nav, signedIn);
     show(el.signin, name === 'signin');
     show(el.list, name === 'list');
     show(el.value, name === 'value');
@@ -437,17 +418,22 @@
     show(el.followups, name === 'followups');
     show(el.calendar, name === 'calendar');
     show(el.quote, name === 'quote');
+    show(el.more, name === 'more');
     show(el.thread, name === 'thread');
     show(el.topbar, signedIn);
-    show(el.back, name === 'thread');
-    show(el.navBtn, name !== 'thread');
+    show(el.tabbar, signedIn && PLAN.showBar);
+    // Back arrow on a lead record and on the tools under More; every other screen is a tab with a plain title.
+    var sub = name === 'thread' || (name === 'quote' || name === 'value');
+    show(el.back, sub);
+    if (name === 'quote' || name === 'value') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
     if (name !== 'thread') {
       el.title.textContent = S.tab.label;
       setText(el.subtitle, '');
     }
     if (el.confirm.open) el.confirm.close();
-    markNav();
-    if (!signedIn) closeNav(false);
+    markTabs();
+    if (!signedIn) setLive('off');
+    renderConn();
   }
 
   function showSignin() {
@@ -456,10 +442,19 @@
 
   /* ---------- live status ---------- */
 
+  // The connection strip only shows when the connection is down for a moment (2.5 s), never as a status light.
   function setLive(state) {
     S.live = state;
-    el.live.className = 'live ' + (state === 'on' ? 'on' : state === 'retry' ? 'retry' : '');
-    el.liveText.textContent = state === 'on' ? 'Live' : state === 'retry' ? 'Reconnecting' : 'Offline';
+    el.liveText.textContent = 'Reconnecting…';
+    clearTimeout(S.liveTimer);
+    S.liveTimer = null;
+    if (state === 'on' || state === 'off') { renderConn(); return; }
+    S.liveTimer = setTimeout(function () { S.liveTimer = null; renderConn(); }, 2500);
+  }
+
+  function renderConn() {
+    var down = S.signedIn && S.live !== 'on' && S.live !== 'off' && !S.liveTimer;
+    show(el.live, down);
   }
 
   function startLive() {
@@ -519,6 +514,7 @@
       S.leads = L.sortLeads(rows);
       S.listLoaded = true;
       S.listError = '';
+      renderBadge();
       renderLeadScreens();
     }).catch(function (e) {
       if (n !== S.seq.list) return;
@@ -554,14 +550,13 @@
   /* ---------- list ---------- */
 
   var FILTER_EMPTY = {
-    needs: 'Nobody is waiting on you right now.',
     open: 'No open leads right now.',
     booked: 'No booked leads yet.',
     lost: 'No lost leads.'
   };
 
   function renderFilters() {
-    var counts = L.filterCounts(S.leads);
+    var counts = L.homeCounts(S.leads);
     var frag = document.createDocumentFragment();
     L.filters().forEach(function (f) {
       var b = make('button', 'filter');
@@ -569,6 +564,7 @@
       b.setAttribute('aria-pressed', String(S.filter === f.key));
       b.appendChild(make('span', '', f.label));
       if (S.listLoaded) b.appendChild(make('span', 'filter-count', String(counts[f.key])));
+      if (f.key === 'lost') b.setAttribute('aria-label', f.label + (S.listLoaded ? ', ' + counts[f.key] : '') + ', includes people who opted out');
       b.addEventListener('click', function () {
         if (S.filter === f.key) return;
         S.filter = f.key;
@@ -581,18 +577,54 @@
     el.filters.replaceChildren(frag);
   }
 
+  // The Needs-you block: the one place on Home for "who is waiting on me", longest wait first.
+  function renderNeeds(rows) {
+    show(el.needs, rows.length > 0);
+    if (!rows.length) { el.needsList.replaceChildren(); return; }
+    el.needsTitle.textContent = L.statusInfo('handed_off').label;
+    el.needsCount.textContent = String(rows.length);
+    var frag = document.createDocumentFragment();
+    rows.forEach(function (r) {
+      var lead = r.lead;
+      var li = make('li');
+      var a = make('a', 'need-row');
+      a.href = '#/lead/' + encodeURIComponent(lead.lead_id);
+      var top = make('span', 'need-top');
+      top.appendChild(make('span', 'need-name', leadName(lead)));
+      var money = L.fmtMoney(lead.quote_total);
+      if (money) top.appendChild(make('span', 'need-money', money));
+      a.appendChild(top);
+      a.appendChild(make('span', 'need-job', L.jobBits(lead, { money: false }).join(' \u00b7 ')));
+      if (r.waiting) {
+        var w = make('span', 'need-wait');
+        w.appendChild(icon('M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 7.5V12l3 2', 16));
+        w.appendChild(make('span', '', r.waiting));
+        a.appendChild(w);
+      }
+      li.appendChild(a);
+      frag.appendChild(li);
+    });
+    el.needsList.replaceChildren(frag);
+  }
+
   function renderList() {
     renderFilters();
     if (!S.listLoaded) {
       show(el.listLoading, !S.listError);
       setText(el.listErr, S.listError);
+      renderNeeds([]);
       return;
     }
     show(el.listLoading, false);
     setText(el.listErr, '');
-    var leads = L.filterLeads(S.leads, S.filter);
+    var view = L.homeView(S.leads, S.filter);
+    var leads = view.rest;
+    renderNeeds(view.needs);
     show(el.listEmpty, S.leads.length === 0);
-    setText(el.filterEmpty, S.leads.length > 0 && leads.length === 0 ? FILTER_EMPTY[S.filter] || 'No leads here.' : '');
+    var none = FILTER_EMPTY[S.filter] || 'No leads here.';
+    if (view.needs.length && S.filter === 'open') none = 'No other open leads right now.';
+    setText(el.filterEmpty, S.leads.length > 0 && leads.length === 0 && !(view.needs.length && S.filter === 'all') ? none : '');
+    setText(el.filterNote, S.filter === 'lost' && S.leads.length > 0 ? 'Includes people who opted out.' : '');
     show(el.leadList, leads.length > 0);
     var frag = document.createDocumentFragment();
     leads.forEach(function (lead) { frag.appendChild(leadRow(lead)); });
@@ -762,6 +794,14 @@
     renderValue();
     refreshList();
     refreshMetrics(); // tier thresholds
+  }
+
+  /* ---------- More ---------- */
+
+  function showMore() {
+    S.thread.id = null;
+    setScreen('more');
+    renderPush();
   }
 
   /* ---------- quote calculator ---------- */
@@ -1034,7 +1074,6 @@
       if (n !== S.seq.followups || !S.signedIn) return;
       S.followUps = Array.isArray(rows) ? rows : [];
       S.followUpsError = '';
-      renderBadge();
       if (S.screen === 'followups') renderFollowUps();
       else if (S.screen === 'thread' && S.thread.lead) renderNext();
     }).catch(function (e) {
@@ -1047,18 +1086,14 @@
     });
   }
 
-  // Count on the Follow-ups menu item and on the phone menu button: leads that asked for the owner.
+  // The one badge in the page: leads waiting on the owner, on the Leads tab. Counted from the lead list (same leads as the Needs-you block).
   function renderBadge() {
-    var count = HAS_FOLLOWUPS ? L.followUpBadge(S.followUps) : 0;
-    var item = el.navList.querySelector('[data-route="followups"] .nav-badge');
-    if (item) {
-      item.hidden = !count;
-      item.firstChild.textContent = String(count);
-      item.lastChild.textContent = ', ' + count + ' waiting on you';
-    }
-    el.menuBadge.hidden = !count;
-    el.menuBadge.textContent = String(count);
-    el.navBtn.setAttribute('aria-label', count ? 'Open menu, ' + L.plural(count, 'follow-up', 'follow-ups') + ' waiting on you' : 'Open menu');
+    var count = S.listLoaded ? L.needsYou(S.leads).length : 0;
+    var item = el.tabbarList.querySelector('[data-route="list"] .tab-badge');
+    if (!item) return;
+    item.hidden = !count;
+    item.firstChild.textContent = String(count);
+    item.lastChild.textContent = ', ' + count + ' waiting on you';
   }
 
   function fuBlock(title, empty) {
@@ -1088,8 +1123,6 @@
     return li;
   }
 
-  function eventBit(r) { return r.event_date ? 'Event ' + L.fmtEventDate(r.event_date) : 'No event date'; }
-
   function renderFollowUps() {
     if (!S.followUps) {
       show(el.fuLoading, !S.followUpsError);
@@ -1102,18 +1135,7 @@
     var g = L.groupFollowUps(S.followUps, S.leads);
     var frag = document.createDocumentFragment();
 
-    // 1. Needs you: the most important block, always first.
-    var needs = fuBlock(L.statusInfo('handed_off').label, g.needs.length ? '' : 'Nothing waiting on you.');
-    if (g.needs.length) {
-      var ul = make('ul', 'fu-list');
-      g.needs.forEach(function (r) {
-        ul.appendChild(fuRow(r, [{ text: L.askedLine(r), cls: 'fu-asked' }, { text: eventBit(r), cls: 'fu-meta' }], { cls: 'is-needs' }));
-      });
-      needs.appendChild(ul);
-    }
-    frag.appendChild(needs);
-
-    // 2. Scheduled follow-up texts, soonest first, with a live countdown.
+    // 1. Scheduled follow-up texts, soonest first, with a live countdown. (Who is waiting on the owner lives on Home.)
     var sched = fuBlock('Scheduled follow-up texts', g.scheduled.length ? '' : 'No follow-up texts scheduled.');
     if (g.scheduled.length) {
       var stop = 'Mark ' + L.statusInfo('booked').label.toLowerCase() + ' or ' + L.statusInfo('lost').label.toLowerCase() + ' to stop it';
@@ -1129,13 +1151,13 @@
     }
     frag.appendChild(sched);
 
-    // 3. Held owner alerts and the morning summary: one plain line each, only when there are any.
+    // 2. Held owner alerts and the morning summary: one plain line each, only when there are any.
     var held = L.heldLine(g.held);
     if (held) frag.appendChild(make('p', 'fu-held', held + '.'));
     var digest = L.digestLine(g.digest);
     if (digest) frag.appendChild(make('p', 'fu-held', digest + '.'));
 
-    // 4. Anything new the backend adds: shown plainly with its reason.
+    // 3. Anything new the backend adds: shown plainly with its reason.
     if (g.other.length) {
       var oth = fuBlock('Other follow-ups');
       var uo = make('ul', 'fu-list');
@@ -1150,7 +1172,7 @@
       frag.appendChild(oth);
     }
 
-    // 5. Sent recently (last 14 days).
+    // 4. Sent recently (last 14 days).
     var sent = fuBlock('Sent recently', g.sent.length ? '' : 'No follow-up texts sent in the last 14 days.');
     if (g.sent.length) {
       var ust = make('ul', 'fu-list');
@@ -1288,27 +1310,6 @@
       });
       b.appendChild(ol);
       return b;
-    },
-    waiting: function (m) {
-      var b = block('Waiting on you');
-      var waiting = (Array.isArray(m.waiting) ? m.waiting : []).filter(function (w) { return w && L.isUuid(w.lead_id); })
-        .slice().sort(function (x, y) { return (Number(y.waiting_minutes) || 0) - (Number(x.waiting_minutes) || 0); });
-      if (!waiting.length) {
-        b.appendChild(make('p', 'm-line m-empty', 'Nothing waiting on you.'));
-        return b;
-      }
-      var ul = make('ul', 'waiting');
-      waiting.forEach(function (w) {
-        var li = make('li');
-        var a = make('a', 'waiting-row');
-        a.href = '#/lead/' + encodeURIComponent(w.lead_id);
-        a.appendChild(make('span', 'waiting-name', leadName(w)));
-        a.appendChild(make('span', 'waiting-time', L.fmtWaiting(w.waiting_minutes)));
-        li.appendChild(a);
-        ul.appendChild(li);
-      });
-      b.appendChild(ul);
-      return b;
     }
   };
   // Why leads were lost (cv_metrics().lost_reasons), biggest first, bars like the journey.
@@ -1336,7 +1337,7 @@
     b.appendChild(ol);
     return b;
   };
-  var METRIC_DEFAULT = ['open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey', 'waiting'];
+  var METRIC_DEFAULT = ['open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey'];
 
   // CV_CUSTOM.metrics order; unknown names ignored; all blocks when the setting is missing or empty.
   function metricOrder() {
@@ -1415,6 +1416,7 @@
     });
     el.history.replaceChildren(frag);
     show(el.history, rows.length > 0);
+    show(el.recHistory, all.length > 0);
     var extra = all.length - HISTORY_SHORT;
     show(el.historyMore, extra > 0);
     el.historyMore.textContent = S.historyOpen ? 'Show fewer changes' : 'Show all ' + all.length + ' changes';
@@ -1587,12 +1589,23 @@
 
   /* ---------- thread ---------- */
 
-  // Phones: the whole record scrolls as one. Wide: the conversation column scrolls on its own.
-  function convoScroller() { return split.matches ? el.convo : el.threadScroll; }
+  // The conversation is its own scrolling box on every screen size (chat order: oldest at the top, newest at the bottom).
+  function convoScroller() { return el.convoScroll; }
 
   function isNearBottom() {
     var s = convoScroller();
     return s.scrollHeight - s.scrollTop - s.clientHeight < 100;
+  }
+
+  // First paint: cap the box to the room left above the tab bar (min 280 px) so the newest text is on screen. It scrolls inside.
+  function fitConvo() {
+    var s = convoScroller();
+    if (!s || !el.tabbar || el.tabbar.hidden || window.matchMedia('(min-width: 1200px)').matches) return;
+    s.style.maxHeight = '';
+    var room = el.tabbar.getBoundingClientRect().top - s.getBoundingClientRect().top - 12;
+    if (room > 0) s.style.maxHeight = Math.max(280, Math.floor(room)) + 'px';
+    // No page scroll on open (chair 11-06): the first screen must show who, status and Call/Text (C1).
+    // The box is already at its newest message; one short swipe brings it into view.
   }
 
   function scrollToBottom() {
@@ -1618,12 +1631,12 @@
     dl.appendChild(dd);
   }
 
+  // Call / Text / Email under the header. The phone number itself is the tappable line in the header; the email sits behind its button.
   function renderContact(lead) {
     var phone = L.fmtPhoneNational(lead.phone);
-    var email = L.validEmail(lead.email) || String(lead.email || '').trim();
-    el.contactFacts.replaceChildren();
-    if (phone) fact(el.contactFacts, 'Phone', phone);
-    if (email) fact(el.contactFacts, 'Email', email);
+    var tel = L.telHref(lead.phone);
+    if (phone && tel) { el.recPhone.textContent = phone; el.recPhone.href = tel; show(el.recPhone, true); }
+    else { el.recPhone.textContent = ''; el.recPhone.removeAttribute('href'); show(el.recPhone, false); }
     var actions = L.contactActions(lead, custom.contactActions);
     var frag = document.createDocumentFragment();
     actions.forEach(function (a) {
@@ -1636,7 +1649,7 @@
     el.contactActions.replaceChildren(frag);
     show(el.contactActions, actions.length > 0);
     setText(el.contactNote, L.isOptedOut(lead) ? 'Texting is off because this person opted out. Calling and email still work.' : '');
-    show(el.recContact, !!(phone || email || actions.length));
+    show(el.recContact, actions.length > 0 || L.isOptedOut(lead));
   }
 
   function renderEvent(lead) {
@@ -1728,9 +1741,9 @@
 
   function renderRecord() {
     var lead = S.thread.lead;
-    el.title.textContent = lead ? leadName(lead) : 'Lead';
+    el.title.textContent = S.tab.label; // the lead's name is the big heading below; the bar says where Back goes
     setText(el.subtitle, '');
-    var sections = [el.recHead, el.recContact, el.strip, el.recNotes, el.recEvent, el.recQuote, el.recOthers];
+    var sections = [el.recHead, el.recContact, el.strip, el.recNotes, el.recEvent, el.recQuote, el.recOthers, el.recHistory];
     if (!lead) {
       sections.forEach(function (n) { show(n, false); });
       show(el.optoutBanner, false);
@@ -1743,6 +1756,7 @@
     el.stripChip.className = 'chip tone-' + st.tone;
     el.stripChip.textContent = st.label;
     renderNext();
+    setText(el.recJob, L.jobBits(lead).join(' \u00b7 '));
     show(el.recHead, true);
     show(el.optoutBanner, L.isOptedOut(lead));
     renderContact(lead);
@@ -1765,7 +1779,6 @@
     var row = make('div', 'row ' + (out ? 'out' : 'in') + (owner ? ' owner' : ''));
     var b = make('div', 'bubble');
     var label = L.kindLabel(m.kind);
-    if (owner) label = label ? 'To you: ' + label : 'To you';
     if (label) b.appendChild(make('div', 'label', label));
     b.appendChild(make('p', 'text', m.body == null ? '' : String(m.body)));
     var t = make('time', 'stamp', L.fmtStamp(m.at));
@@ -1775,26 +1788,49 @@
     return row;
   }
 
+  // The automatic texts to the owner (alert, 9 am text, confirmation): one line at the top, "N automatic texts · show".
+  function sysFold(system) {
+    var wrap = make('div', 'sys');
+    var btn = make('button', 'sys-fold', L.systemFoldText(system.length, S.thread.sysOpen));
+    btn.type = 'button';
+    btn.setAttribute('aria-expanded', String(S.thread.sysOpen));
+    btn.addEventListener('click', function () {
+      S.thread.sysOpen = !S.thread.sysOpen;
+      S.thread.sig = '';
+      renderThread();
+    });
+    wrap.appendChild(btn);
+    if (S.thread.sysOpen) {
+      var list = make('div', 'sys-list');
+      system.forEach(function (m) { list.appendChild(bubble(m)); });
+      wrap.appendChild(list);
+    }
+    return wrap;
+  }
+
   function renderThread() {
     renderRecord();
-    var rows = L.visibleMessages(S.thread.rows);
+    var parts = L.splitThread(S.thread.rows);
+    var rows = parts.chat;
     show(el.threadLoading, false);
-    if (!S.thread.lead && rows.length === 0) {
+    if (!S.thread.lead && rows.length === 0 && parts.system.length === 0) {
       show(el.threadBox, false);
       show(el.threadEmpty, false);
       setText(el.threadErr, "We can't find that lead. Go back to your list and pick one.");
       return;
     }
-    var sig = rows.map(function (r) { return r.msg_id + ':' + String(r.body == null ? '' : r.body).length; }).join('|');
+    var all = rows.concat(parts.system);
+    var sig = all.map(function (r) { return r.msg_id + ':' + String(r.body == null ? '' : r.body).length; }).join('|') + (S.thread.sysOpen ? '|open' : '');
     var first = S.thread.sig === '' && !el.threadBox.hasChildNodes();
     if (sig === S.thread.sig && !first) return;
 
-    // First paint: wide screens open the conversation at its latest text; phones open at the name.
-    var wasNear = first ? split.matches : isNearBottom();
+    // First paint opens at the newest text (like a chat app); later refreshes keep your place unless you were at the bottom.
     var scroller = convoScroller();
+    var wasNear = first ? true : isNearBottom();
     var prevTop = scroller.scrollTop;
     var grew = rows.length > S.thread.count;
     var frag = document.createDocumentFragment();
+    if (parts.system.length) frag.appendChild(sysFold(parts.system));
     var prev = null;
     rows.forEach(function (m) {
       if (!prev || !L.sameDay(prev.at, m.at)) frag.appendChild(make('div', 'day', L.fmtDay(m.at)));
@@ -1802,10 +1838,11 @@
       prev = m;
     });
     el.threadBox.replaceChildren(frag);
-    show(el.threadBox, rows.length > 0);
-    show(el.threadEmpty, rows.length === 0);
+    show(el.threadBox, all.length > 0);
+    show(el.threadEmpty, rows.length === 0 && parts.system.length === 0);
     S.thread.sig = sig;
     S.thread.count = rows.length;
+    if (first) fitConvo();
 
     if (wasNear) { scrollToBottom(); show(el.pill, false); }
     else {
@@ -1832,9 +1869,8 @@
       show(el.threadLoading, true);
       renderRecord();
       el.threadScroll.scrollTop = 0;
-      el.convo.scrollTop = 0;
-      var cached = S.leads.filter(function (l) { return l.lead_id === id; })[0];
-      el.title.textContent = cached ? leadName(cached) : 'Lead';
+      el.convoScroll.scrollTop = 0;
+      el.title.textContent = S.tab.label;
     } else if (S.thread.loaded) {
       renderThread();
     }
@@ -1856,7 +1892,6 @@
       store('del', TARGET_KEY);
       if (r.name === 'list' && L.isUuid(target)) { location.replace('#/lead/' + target); return; }
     }
-    closeNav(false);
     if (r.name === 'lead') { showThread(r.id); return; }
     S.tab = navFor(r.name);
     S.tab.show();
@@ -1864,13 +1899,13 @@
 
   /* ---------- auth + sign-in UI ---------- */
 
-  // CV_CUSTOM.businessName wins; else whatever the backend offers (the mock says "Lab Bar"); else "Leads".
+  // CV_CUSTOM.businessName wins; else whatever the backend offers (the mock says "Lab Bar"); else nothing. Shown at the top of More.
   function loadBrand() {
     var own = typeof custom.businessName === 'string' ? custom.businessName.trim() : '';
-    if (own) { el.navBrand.textContent = own; return; }
+    if (own) { el.moreBrand.textContent = own; return; }
     Promise.resolve(S.api.businessName ? S.api.businessName() : null).then(function (name) {
-      if (S.signedIn) el.navBrand.textContent = (name && String(name).trim()) || 'Leads';
-    }).catch(function () { /* keep "Leads" */ });
+      if (S.signedIn) el.moreBrand.textContent = (name && String(name).trim()) || '';
+    }).catch(function () { /* keep it empty */ });
   }
 
   function onSignedIn() {
@@ -1905,7 +1940,7 @@
     S.seq.list++; S.seq.thread++;
     S.leads = []; S.listLoaded = false; S.listError = '';
     S.thread = emptyThread();
-    S.filter = 'all'; S.showClosed = false; S.pending = null; S.tab = NAV[0];
+    S.filter = 'open'; S.showClosed = false; S.pending = null; S.tab = NAV[0];
     S.seq.metrics++; S.metrics = null; S.metricsError = '';
     S.seq.followups++; S.followUps = null; S.followUpsError = '';
     clearSearch();
@@ -1914,11 +1949,10 @@
     S.cal = null; S.showPossible = false;
     el.calBody.replaceChildren(); el.calDayList.replaceChildren(); el.notesList.replaceChildren(); el.noteText.value = '';
     el.fuBody.replaceChildren();
-    renderBadge();
+    renderBadge(); renderNeeds([]);
     el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.valueSections.replaceChildren(); el.metricsBody.replaceChildren();
-    el.navBrand.textContent = 'Leads';
+    el.moreBrand.textContent = '';
     closeConfirm();
-    closeNav(false);
     show(el.listLoading, true);
     resetSignin();
     route();
@@ -2143,26 +2177,14 @@
   function bindEvents() {
     window.addEventListener('hashchange', route);
 
-    el.back.addEventListener('click', function () { location.hash = S.tab.href; });
-
-    // Drawer (phones) / sidebar (wide)
-    el.navBtn.addEventListener('click', function () { if (S.navOpen) closeNav(true); else openNav(); });
-    el.navClose.addEventListener('click', function () { closeNav(true); });
-    el.scrim.addEventListener('click', function () { closeNav(true); });
-    document.addEventListener('keydown', function (e) {
-      if (!S.navOpen) return;
-      if (e.key === 'Escape') { e.preventDefault(); closeNav(true); }
-      else if (e.key === 'Tab') trapNavFocus(e);
-    });
-    var onWide = function () { if (wide.matches) closeNav(false); };
-    if (wide.addEventListener) wide.addEventListener('change', onWide); else if (wide.addListener) wide.addListener(onWide);
+    // Back: from a lead record to the tab it was opened from; from a tool under More to More.
+    el.back.addEventListener('click', function () { location.hash = S.screen === 'thread' ? S.tab.href : navFor('more').href; });
 
     el.alertsOn.addEventListener('click', onAlertsOn);
     el.alertsTest.addEventListener('click', onAlertsTest);
     el.alertsOff.addEventListener('click', onAlertsOff);
 
     el.signout.addEventListener('click', function () {
-      closeNav(false);
       // This phone stops getting alerts first (while the session can still authorise the call). Soft-fail, 3 s cap, never blocks sign-out.
       Promise.race([dropPushSubscription(), new Promise(function (res) { setTimeout(res, 3000); })])
         .catch(function () { /* sign out anyway */ })
@@ -2235,8 +2257,7 @@
 
     el.pill.addEventListener('click', function () { scrollToBottom(); show(el.pill, false); });
     var onConvoScroll = function () { if (!el.pill.hidden && isNearBottom()) show(el.pill, false); };
-    el.threadScroll.addEventListener('scroll', onConvoScroll, { passive: true });
-    el.convo.addEventListener('scroll', onConvoScroll, { passive: true });
+    el.convoScroll.addEventListener('scroll', onConvoScroll, { passive: true });
 
     // Phones background tabs and drop sockets: catch up the moment the page is back.
     document.addEventListener('visibilitychange', function () {
@@ -2269,7 +2290,7 @@
 
   function restorePrefs() {
     var f = store('get', FILTER_KEY);
-    S.filter = L.isFilterKey(f) ? f : 'all';
+    S.filter = L.isFilterKey(f) ? f : 'open';
     S.showClosed = store('get', CLOSED_KEY) === '1';
     S.showPossible = store('get', POSSIBLE_KEY) === '1';
   }
@@ -2281,7 +2302,7 @@
       try { window.top.location = window.self.location; } catch (e) { /* cross-origin top: stay hidden */ }
       return;
     }
-    buildNav();
+    buildTabbar();
     registerWorker();
     buildActions();
     buildReasons();

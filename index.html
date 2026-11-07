@@ -27,53 +27,19 @@
 <body>
 <div class="app" id="app">
 
-  <!-- Navigation: a slide-in drawer on phones, a fixed sidebar from 900 px. Items come from NAV in app.js. -->
-  <div class="scrim" id="scrim" hidden></div>
-  <nav class="nav" id="nav" aria-label="Main" hidden>
-    <div class="nav-head">
-      <p class="nav-brand" id="nav-brand">Leads</p>
-      <button class="icon-btn nav-close" id="btn-nav-close" type="button" aria-label="Close menu">
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
-      </button>
-    </div>
-    <ul class="nav-list" id="nav-list"></ul>
-    <div class="nav-foot">
-      <!-- Alerts on this phone: shown only when CV_CUSTOM.features.push is on and the server says push is enabled. -->
-      <section class="alerts" id="alerts" aria-labelledby="alerts-h" hidden>
-        <h2 class="alerts-h" id="alerts-h">Alerts on this phone</h2>
-        <p class="alerts-text" id="alerts-text"></p>
-        <button type="button" class="btn primary alerts-btn" id="alerts-on" hidden>Turn on alerts</button>
-        <div class="alerts-row" id="alerts-row" hidden>
-          <button type="button" class="btn alerts-sec" id="alerts-test">Send test alert</button>
-          <button type="button" class="btn quiet" id="alerts-off">Turn off</button>
-        </div>
-        <p class="alerts-msg" id="alerts-msg" role="status" aria-live="polite" hidden></p>
-      </section>
-      <button type="button" class="nav-item" id="btn-signout">
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>Sign out</span>
-      </button>
-    </div>
-  </nav>
-
   <div class="main" id="main">
 
   <header class="topbar" id="topbar" hidden>
-    <button class="icon-btn btn-nav" id="btn-nav" type="button" aria-label="Open menu" aria-controls="nav" aria-expanded="false">
-      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
-      <span class="menu-badge" id="menu-badge" aria-hidden="true" hidden></span>
-    </button>
     <button class="icon-btn" id="btn-back" type="button" aria-label="Back" hidden>
-      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <div class="titles">
       <h1 id="title">Leads</h1>
       <p id="subtitle" class="sub" hidden></p>
     </div>
-    <span class="live" id="live" role="status" aria-live="polite" title="Live connection">
-      <span class="dot" id="live-dot"></span><span class="live-text" id="live-text">Connecting</span>
-    </span>
   </header>
+  <!-- Connection strip: only visible while the live connection is down. -->
+  <p class="conn" id="live" role="status" aria-live="polite" hidden><span class="conn-dot" aria-hidden="true"></span><span id="live-text">Reconnecting…</span></p>
 
   <!-- Sign in -->
   <main class="screen signin" id="screen-signin" hidden>
@@ -119,7 +85,13 @@
         <ul class="lead-list" id="search-results" aria-label="Search results" hidden></ul>
       </div>
       <div id="browse-box">
+      <!-- Needs you: everyone waiting on the owner, longest-waiting first. Built by renderNeeds(). -->
+      <section class="needs" id="needs" aria-labelledby="needs-h" hidden>
+        <h2 class="needs-h" id="needs-h"><span id="needs-title">Needs you</span><span class="needs-count" id="needs-count"></span></h2>
+        <ul class="needs-list" id="needs-list"></ul>
+      </section>
       <div class="filters" id="filters" role="group" aria-label="Show leads"></div>
+      <p class="filter-note" id="filter-note" hidden></p>
       <p class="status-line" id="list-loading">Loading your leads…</p>
       <ul class="lead-list" id="lead-list" hidden></ul>
       <div class="empty" id="list-empty" hidden>
@@ -159,7 +131,7 @@
         <label class="toggle cal-toggle">
           <input type="checkbox" id="cal-possible">
           <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
-          <span>Show possible events</span>
+          <span>Include leads not booked yet</span>
         </label>
         <p class="status-line" id="cal-loading">Loading your events…</p>
         <table class="cal-grid" id="cal-grid" hidden>
@@ -173,6 +145,35 @@
           <p class="cal-day-empty" id="cal-day-empty" hidden></p>
         </section>
         <p class="error pad" id="cal-error" role="alert" hidden></p>
+      </div>
+    </div>
+  </main>
+
+  <!-- More: the tools and settings that are not daily jobs. Entries come from CV_CUSTOM.tabs and the feature switches. -->
+  <main class="screen more-screen" id="screen-more" hidden>
+    <div class="scroller" id="more-scroll">
+      <div class="more-wrap">
+        <p class="more-brand" id="more-brand"></p>
+        <ul class="more-list" id="more-list"></ul>
+        <!-- Alerts on this phone: shown only when CV_CUSTOM.features.push is on and the server says push is enabled. -->
+        <section class="alerts" id="alerts" aria-labelledby="alerts-h" hidden>
+          <h2 class="alerts-h" id="alerts-h">Alerts on this phone</h2>
+          <p class="alerts-text" id="alerts-text"></p>
+          <button type="button" class="btn primary alerts-btn" id="alerts-on" hidden>Turn on alerts</button>
+          <div class="alerts-row" id="alerts-row" hidden>
+            <button type="button" class="btn alerts-sec" id="alerts-test">Send test alert</button>
+            <button type="button" class="btn quiet" id="alerts-off">Turn off</button>
+          </div>
+          <p class="alerts-msg" id="alerts-msg" role="status" aria-live="polite" hidden></p>
+        </section>
+        <ul class="more-list">
+          <li>
+            <button type="button" class="more-row" id="btn-signout">
+              <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="more-label">Sign out</span>
+            </button>
+          </li>
+        </ul>
       </div>
     </div>
   </main>
@@ -290,11 +291,11 @@
     </div>
   </main>
 
-  <!-- Lead record: details first (name, contact, status, event, quote, other events), then the conversation.
-       Phones: one scroll. Wide screens: conversation on the left, details in a right column. -->
+  <!-- Lead record. Phones: ONE page scroll: who + job + contact + status, then the conversation (its own box, opened at the newest
+       text), then event, quote, notes, history. Wide screens: conversation on the left, everything else in a right column. -->
   <main class="screen thread-screen" id="screen-thread" hidden>
     <div class="record-layout" id="thread-scroll">
-      <div class="record" id="record">
+      <div class="record record-top" id="record">
         <p class="status-line" id="record-loading">Loading this lead…</p>
 
         <header class="rec-head" id="rec-head" hidden>
@@ -303,16 +304,16 @@
             <span class="chip" id="strip-chip"></span>
             <p class="rec-next" id="rec-next" hidden></p>
           </div>
+          <p class="rec-job" id="rec-job" hidden></p>
+          <a class="rec-phone" id="rec-phone" hidden></a>
         </header>
 
         <p class="stop-banner" id="optout-banner" role="note" hidden>Do not text: this person opted out.</p>
 
-        <section class="rec-card" id="rec-contact" aria-labelledby="h-contact" hidden>
-          <h3 class="rec-h" id="h-contact">Contact</h3>
-          <dl class="facts" id="contact-facts"></dl>
+        <div class="contact-wrap" id="rec-contact" hidden>
           <div class="contact-actions" id="contact-actions"></div>
           <p class="rec-note" id="contact-note" hidden></p>
-        </section>
+        </div>
 
         <section class="rec-card strip" id="strip" aria-labelledby="h-status" hidden>
           <h3 class="rec-h" id="h-status">Status</h3>
@@ -321,20 +322,24 @@
           <div class="actions" id="actions" role="group" aria-label="Change status"></div>
           <p class="actions-note" id="actions-note" hidden></p>
           <p class="error" id="action-error" role="alert" hidden></p>
-          <ol class="history" id="history" aria-label="Status changes" hidden></ol>
-          <button type="button" class="history-more" id="history-more" aria-controls="history" aria-expanded="false" hidden></button>
         </section>
+      </div>
 
-        <section class="rec-card" id="rec-notes" aria-labelledby="h-notes" hidden>
-          <h3 class="rec-h" id="h-notes">Notes</h3>
-          <ul class="notes" id="notes-list" hidden></ul>
-          <label class="sr-only" for="note-text">Add a note</label>
-          <textarea class="field note-field" id="note-text" rows="2" maxlength="2000" placeholder="Add a note for yourself"></textarea>
-          <p class="hint note-count" id="note-count" hidden></p>
-          <p class="error" id="note-error" role="alert" hidden></p>
-          <button class="btn primary note-save" id="note-save" type="button">Save note</button>
-        </section>
+      <section class="convo" id="convo" aria-labelledby="h-convo">
+        <h3 class="convo-h" id="h-convo">Conversation</h3>
+        <!-- tabindex: this box scrolls on its own, so keyboard users must be able to focus it. -->
+        <div class="convo-scroll" id="convo-scroll" tabindex="0">
+          <p class="status-line" id="thread-loading">Loading the conversation…</p>
+          <div class="thread" id="thread" hidden></div>
+          <div class="empty" id="thread-empty" hidden>
+            <p class="empty-title">No texts yet</p>
+            <p>Nothing has been sent or received for this lead.</p>
+          </div>
+          <p class="error pad" id="thread-error" role="alert" hidden></p>
+        </div>
+      </section>
 
+      <div class="record record-rest" id="record-rest">
         <section class="rec-card" id="rec-event" aria-labelledby="h-event" hidden>
           <h3 class="rec-h" id="h-event">Event</h3>
           <dl class="facts" id="event-facts"></dl>
@@ -349,26 +354,35 @@
           <div id="quote-body"></div>
         </section>
 
+        <section class="rec-card" id="rec-notes" aria-labelledby="h-notes" hidden>
+          <h3 class="rec-h" id="h-notes">Notes</h3>
+          <ul class="notes" id="notes-list" hidden></ul>
+          <label class="sr-only" for="note-text">Add a note</label>
+          <textarea class="field note-field" id="note-text" rows="2" maxlength="2000" placeholder="Add a note for yourself"></textarea>
+          <p class="hint note-count" id="note-count" hidden></p>
+          <p class="error" id="note-error" role="alert" hidden></p>
+          <button class="btn primary note-save" id="note-save" type="button">Save note</button>
+        </section>
+
+        <section class="rec-card" id="rec-history" aria-labelledby="h-history" hidden>
+          <h3 class="rec-h" id="h-history">Status history</h3>
+          <ol class="history" id="history" aria-label="Status changes" hidden></ol>
+          <button type="button" class="history-more" id="history-more" aria-controls="history" aria-expanded="false" hidden></button>
+        </section>
+
         <section class="rec-card" id="rec-others" aria-labelledby="h-others" hidden>
           <h3 class="rec-h" id="h-others">Other events from this contact</h3>
           <ul class="others" id="others-list"></ul>
         </section>
       </div>
-
-      <!-- tabindex: on wide screens this column scrolls on its own, so keyboard users must be able to focus it. -->
-      <section class="convo" id="convo" aria-labelledby="h-convo" tabindex="0">
-        <h3 class="convo-h" id="h-convo">Conversation</h3>
-        <p class="status-line" id="thread-loading">Loading the conversation…</p>
-        <div class="thread" id="thread" hidden></div>
-        <div class="empty" id="thread-empty" hidden>
-          <p class="empty-title">No texts yet</p>
-          <p>Nothing has been sent or received for this lead.</p>
-        </div>
-        <p class="error pad" id="thread-error" role="alert" hidden></p>
-      </section>
     </div>
     <button class="pill" id="new-pill" type="button" hidden>New message</button>
   </main>
+
+  <!-- Bottom bar: the tabs come from CV_CUSTOM.tabs (see tabPlan in lib.js). Built by buildTabbar(). -->
+  <nav class="tabbar" id="tabbar" aria-label="Main" hidden>
+    <ul class="tabbar-list" id="tabbar-list"></ul>
+  </nav>
 
   </div>
 

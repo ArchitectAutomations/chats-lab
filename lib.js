@@ -191,12 +191,12 @@
     handoff_ack: 'Handoff reply',
     optout_confirm: 'Opt-out confirm',
     holding_reply: 'Holding reply',
-    followup_nudge: 'Day-5 nudge',
-    owner_alert: 'Owner alert',
-    owner_alert_held: 'Owner alert (held 9am)',
-    owner_confirm: 'Owner confirm',
-    owner_digest: 'Daily digest',
-    backfill: 'Sent earlier'
+    followup_nudge: 'Follow-up text',
+    owner_alert: 'Alert for you',
+    owner_alert_held: 'Alert held until morning',
+    owner_confirm: 'Confirmation',
+    owner_digest: 'Your 9 am text',
+    backfill: 'You'
   };
 
   function kindLabel(kind) {
@@ -266,19 +266,21 @@
 
   // List filter chips, in display order. 'Needs you' = the bot handed the lead to the owner.
   // The needs / booked / lost chips reuse the status labels, so a client's wording carries through.
+  // 'needs' is still a valid group for the logic (the Needs-you block on Home uses it) but has no chip any more.
   var FILTER_KEYS = ['all', 'needs', 'open', 'booked', 'lost'];
+  var CHIP_KEYS = ['open', 'booked', 'lost', 'all'];
+  // The four chips on Home, in display order. Open is the default.
   function filters() {
     return [
-      { key: 'all', label: 'All' },
-      { key: 'needs', label: statusInfo('handed_off').label },
       { key: 'open', label: 'Open' },
       { key: 'booked', label: statusInfo('booked').label },
-      { key: 'lost', label: statusInfo('lost').label }
+      { key: 'lost', label: statusInfo('lost').label },
+      { key: 'all', label: 'All' }
     ];
   }
 
   function isFilterKey(key) {
-    return FILTER_KEYS.indexOf(key) !== -1;
+    return CHIP_KEYS.indexOf(key) !== -1;
   }
 
   function matchesFilter(lead, key) {
@@ -314,7 +316,7 @@
     var lc = function (st) { return statusInfo(st).label.toLowerCase(); };
     var q = 'Mark ' + who + ' as ' + lc(status) + '?';
     if (status === 'contacted') return q + " They'll get one follow-up text in 5 days unless you mark them " + lc('booked') + ' or ' + lc('lost') + '.';
-    return q + " They won't get the day-5 follow-up text.";
+    return q + " They won't get the next follow-up text.";
   }
 
   // Can the page offer this change? Mirrors cv_set_lead_status (same rules as the owner's texts):
@@ -344,7 +346,7 @@
     already_booked: "This lead is already booked, so it can't go back to contacted.",
     already_lost: "This lead is already marked lost, so it can't go back to contacted.",
     closed: "This lead is closed, so its status can't be changed here.",
-    not_with_owner: "The assistant is still handling this lead. You can mark it once it's been handed to you."
+    not_with_owner: "The assistant is still handling this lead. You can mark it once they've asked for you."
   };
 
   // bad_input details from cv_set_lead_status (final price / lost reason) -> plain words.
@@ -382,7 +384,7 @@
   /* ---------- history ---------- */
 
   var HISTORY_ACTIONS = {
-    'new': 'New lead', engaged: 'Started texting', quoted: 'Quoted', handed_off: 'Handed to you',
+    'new': 'New lead', engaged: 'Started texting', quoted: 'Quoted', handed_off: 'Asked for you',
     contacted: 'Contacted', booked: 'Booked', lost: 'Lost', opted_out: 'Opted out', reopened: 'Reopened'
   };
   var HISTORY_SOURCES = {
@@ -766,33 +768,24 @@
     return b + ' of ' + plural(done, 'finished lead', 'finished leads') + ' booked (' + Math.round(b / done * 100) + '%)';
   }
 
+  // Plain sentences: no averages-vs-medians, no sample sizes.
   function firstTextLine(sp) {
     var avg = fmtDuration(sp && sp.first_text_avg_seconds);
     if (!avg) return 'No first replies measured yet.';
-    var extra = [];
-    var med = fmtDuration(sp.first_text_median_seconds);
-    if (med) extra.push('median ' + med);
-    var n = num(sp.first_text_sample);
-    if (n !== null) extra.push(plural(n, 'lead', 'leads'));
-    return 'New leads hear back in ' + avg + ' on average' + (extra.length ? ' (' + extra.join(', ') + ')' : '') + '.';
+    return 'New leads hear back in ' + avg + '.';
   }
 
   function followupLine(sp) {
     var avgMin = num(sp && sp.owner_followup_avg_minutes);
-    if (avgMin === null) return 'No hand-offs followed up yet.';
-    var extra = [];
-    var med = num(sp.owner_followup_median_minutes);
-    if (med !== null) extra.push('median ' + fmtDuration(med * 60));
-    var n = num(sp.owner_followup_sample);
-    if (n !== null) extra.push(plural(n, 'lead', 'leads'));
-    return 'You follow up in ' + fmtDuration(avgMin * 60) + ' on average after a hand-off' + (extra.length ? ' (' + extra.join(', ') + ')' : '') + '.';
+    if (avgMin === null) return "You haven't followed up with a lead yet.";
+    return 'You get back to them in ' + fmtDuration(avgMin * 60) + '.';
   }
 
   var FUNNEL = [
     { key: 'leads', label: 'Leads' },
     { key: 'quoted', label: 'Quoted' },
     { key: 'replied', label: 'Replied' },
-    { key: 'handed_off', label: 'Handed to you' },
+    { key: 'handed_off', label: 'Asked for you' },
     { key: 'contacted', label: 'Contacted' },
     { key: 'booked', label: 'Booked' }
   ];
@@ -1236,7 +1229,7 @@
   function dayLabel(dayYmd, day, now) {
     var bits = [];
     if (day && day.booked.length) bits.push(day.booked.length + ' booked');
-    if (day && day.possible.length) bits.push(day.possible.length + ' possible');
+    if (day && day.possible.length) bits.push(day.possible.length + ' not booked yet');
     return fmtEventDate(dayYmd, now) + (bits.length ? ': ' + bits.join(', ') : ': nothing');
   }
 
@@ -1414,7 +1407,114 @@
     var list = Array.isArray(rows) ? rows : [];
     if (!list.length) return '';
     var at = fmtClock(list[0].due_at) || '9:00 am';
-    return plural(list.length, 'open lead', 'open leads') + ' will be in your ' + at + ' summary text';
+    return plural(list.length, 'open lead', 'open leads') + ' will be in your ' + at + ' text';
+  }
+
+  /* ---------- home: the Needs-you block, chips and counts ---------- */
+
+  // "less than a minute", "12 min", "3 h", "3 h 20 min", "2 days"
+  function waitSpan(seconds) {
+    if (seconds < 60) return 'less than a minute';
+    var m = Math.floor(seconds / 60);
+    if (m < 60) return m + ' min';
+    var h = Math.floor(m / 60), mm = m % 60;
+    if (h < 24) return h + ' h' + (mm ? ' ' + mm + ' min' : '');
+    return plural(Math.floor(h / 24), 'day', 'days');
+  }
+
+  // "Waiting 3 h 20 min" since `iso`; '' when there is no time.
+  function waitingFor(iso, now) {
+    var d = realDate(iso);
+    if (!d) return '';
+    return 'Waiting ' + waitSpan(Math.max(0, (nowDate(now).getTime() - d.getTime()) / 1000));
+  }
+
+  // Leads waiting on the owner, longest-waiting first (unknown time last). Opted-out leads never show.
+  // Each row: { lead, since, waiting }. The time is status_at (when it was handed over), else last activity.
+  function needsYou(leads, now) {
+    var rows = (Array.isArray(leads) ? leads : []).filter(function (l) {
+      return l && String(l.status || '').toLowerCase() === 'handed_off' && !isOptedOut(l);
+    }).map(function (l) {
+      var since = realDate(l.status_at) ? l.status_at : (realDate(l.last_activity_at) ? l.last_activity_at : (realDate(l.created_at) ? l.created_at : null));
+      return { lead: l, since: since, waiting: waitingFor(since, now) };
+    });
+    rows.sort(function (a, b) {
+      var ta = timeOf(a.since), tb = timeOf(b.since);
+      if (ta === null && tb === null) return 0;
+      if (ta === null) return 1;
+      if (tb === null) return -1;
+      return ta - tb;
+    });
+    return rows;
+  }
+
+  // Home: { needs: rows for the block, rest: leads under the chips }. The block always shows everyone waiting;
+  // the Open and All lists leave those leads out so nobody is drawn twice.
+  function homeView(leads, key, now) {
+    var needs = needsYou(leads, now);
+    var inBlock = {};
+    needs.forEach(function (r) { inBlock[r.lead.lead_id] = true; });
+    var rest = filterLeads(leads, key);
+    if (key === 'open' || key === 'all') rest = rest.filter(function (l) { return !inBlock[l.lead_id]; });
+    return { needs: needs, rest: rest };
+  }
+
+  // Chip counts match the rows under each chip.
+  function homeCounts(leads, now) {
+    var c = filterCounts(leads);
+    var n = needsYou(leads, now).length;
+    return { open: Math.max(0, c.open - n), booked: c.booked, lost: c.lost, all: Math.max(0, c.all - n) };
+  }
+
+  // "Sat, Nov 14", "40 guests", "$650": the job in three bits. money:false leaves the price out.
+  // A booked lead shows its final price, anyone else the quote.
+  function jobBits(lead, opts) {
+    if (!lead) return [];
+    var bits = [fmtEventDate(lead.event_date, opts && opts.now) || 'No event date'];
+    var g = Number(lead.guests);
+    if (lead.guests !== null && lead.guests !== undefined && lead.guests !== '' && isFinite(g) && g > 0) bits.push(plural(g, 'guest', 'guests'));
+    if (!(opts && opts.money === false)) {
+      var money = statusGroup(lead.status) === 'booked' && toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : fmtMoney(lead.quote_total);
+      if (money) bits.push(money);
+    }
+    return bits;
+  }
+
+  /* ---------- bottom bar (CV_CUSTOM.tabs + feature switches) ---------- */
+
+  // Which tabs sit in the bar and which live under More. `want` = CV_CUSTOM.tabs, `on(route)` = feature switch.
+  // Leads is always on. Names the page does not know are ignored; an empty or unusable list means "everything on".
+  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Quote calculator, Lead value (+ the fixed Alerts and Sign out).
+  // slots counts the bar tabs plus the More slot; with fewer than 2 the page hides the bar.
+  var BAR_TABS = ['list', 'followups', 'calendar', 'metrics'];
+  var MORE_TABS = ['quote', 'value'];
+  function tabPlan(want, on) {
+    var isOn = typeof on === 'function' ? on : function () { return true; };
+    var known = BAR_TABS.concat(MORE_TABS);
+    function usable(r) { return known.indexOf(r) !== -1 && (r === 'list' || isOn(r)); }
+    var picked = [];
+    (Array.isArray(want) ? want : []).forEach(function (r) { if (usable(r) && picked.indexOf(r) === -1) picked.push(r); });
+    if (!picked.length) picked = known.filter(usable);
+    var bar = picked.filter(function (r) { return BAR_TABS.indexOf(r) !== -1; });
+    var more = picked.filter(function (r) { return MORE_TABS.indexOf(r) !== -1; });
+    if (!bar.length) bar = ['list'];
+    var slots = bar.length + 1;
+    return { bar: bar, more: more, slots: slots, showBar: slots >= 2 };
+  }
+
+  /* ---------- conversation: customer thread + folded automatic texts ---------- */
+
+  // Chat order (oldest first). Automatic texts to the owner (alert, digest, confirmation) leave the thread
+  // and come back as one list behind a "N automatic texts" line.
+  function splitThread(rows) {
+    var all = visibleMessages(rows);
+    var chat = [], system = [];
+    all.forEach(function (m) { (m.audience === 'owner' ? system : chat).push(m); });
+    return { chat: chat, system: system };
+  }
+
+  function systemFoldText(n, open) {
+    return n + ' automatic ' + (n === 1 ? 'text' : 'texts') + ' · ' + (open ? 'hide' : 'show');
   }
 
   /* ---------- routes + data ---------- */
@@ -1562,6 +1662,14 @@
     isUuid: isUuid,
     parseRoute: parseRoute,
     visibleMessages: visibleMessages,
-    sortLeads: sortLeads
+    sortLeads: sortLeads,
+    waitingFor: waitingFor,
+    needsYou: needsYou,
+    homeView: homeView,
+    homeCounts: homeCounts,
+    jobBits: jobBits,
+    tabPlan: tabPlan,
+    splitThread: splitThread,
+    systemFoldText: systemFoldText
   };
 });

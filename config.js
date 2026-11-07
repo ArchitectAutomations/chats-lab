@@ -17,7 +17,7 @@ window.CV_CONFIG = {
    database (cv_config value_tier_high_min / value_tier_medium_min).
    ================================================================== */
 window.CV_CUSTOM = {
-  // Name at the top of the side menu. '' = "Leads".
+  // Business name shown at the top of the More tab. '' = none.
   businessName: 'Mobile Mixology (lab)',
 
   // Colours, rule 60 / 30 / 10: primary (page, header, menu) 60%, secondary (rows, cards, tiles,
@@ -39,13 +39,14 @@ window.CV_CUSTOM = {
 
   // Features: true = on, false = off (an off feature is not shown at all, nowhere on the page).
   // Left out = on. Tabs: followups, calendar, quote, value, metrics. Parts of other screens:
-  // search (top of Leads), notes (on a lead's record), push ("Alerts on this phone" in the side menu).
+  // search (top of Leads), notes (on a lead's record), push ("Alerts on this phone" under More).
   features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true, push: true },
 
-  // Side menu: which tabs show, in this order (a tab whose feature is off is skipped).
-  // Known tabs: 'list', 'followups', 'calendar', 'quote', 'value', 'metrics'.
+  // Bottom bar and More: which tabs show, in this order (a tab whose feature is off is skipped).
+  // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar; 'quote' and 'value' sit under More
+  // (More itself is always the last slot and also holds Alerts and Sign out).
   tabs: ['list', 'followups', 'calendar', 'quote', 'value', 'metrics'],
-  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', quote: 'Quote calculator', value: 'Lead value', metrics: 'Metrics' },
+  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', quote: 'Quote calculator', value: 'Lead value' },
 
   // Status wording on chips, filter chips, the three buttons and the history lines.
   // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, booked, lost, opted_out.
@@ -64,6 +65,6 @@ window.CV_CUSTOM = {
   lostReasons: { price: 'Price', date_taken: 'Date taken', no_reply: 'No reply', went_elsewhere: 'Went elsewhere', other: 'Other' },
 
   // Metrics tab: which blocks show, in this order.
-  // Known: 'open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey', 'waiting'.
-  metrics: ['open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey', 'waiting']
+  // Known: 'open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey'.
+  metrics: ['open', 'booked', 'close_rate', 'lost_reasons', 'speed', 'journey']
 };
