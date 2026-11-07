@@ -17,8 +17,10 @@ window.CV_CONFIG = {
    database (cv_config value_tier_high_min / value_tier_medium_min).
    ================================================================== */
 window.CV_CUSTOM = {
-  // Business name shown at the top of the More tab. '' = none.
-  businessName: 'Mobile Mixology (lab)',
+  // The app's one name: sign-in screen, browser tab, home-screen icon and the top of the More tab. '' = "Leads".
+  businessName: "Mobile Mixology (lab)",
+  // Home-screen icon label, 12 characters at most. '' = the business name, shortened at a word edge.
+  shortName: "MM Leads",
 
   // Colours, rule 60 / 30 / 10: primary (page, header, menu) 60%, secondary (rows, cards, tiles,
   // sheet) 30%, accent (buttons, active tab, live dot, bars, links, focus) 10%. Hex only (#rgb / #rrggbb).

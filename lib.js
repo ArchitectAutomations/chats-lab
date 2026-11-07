@@ -974,6 +974,25 @@
     return c === null ? '' : '\u2212' + fmtMoney(Math.abs(c) / 100);
   }
 
+  // One app name for the sign-in screen, the browser tab and the home-screen icon: the client's business name
+  // (CV_CUSTOM.businessName), or "Leads" when none is set. Screen titles inside the app stay plain words.
+  var SHORT_NAME_MAX = 12;
+  function appName(custom) {
+    var n = custom && typeof custom.businessName === 'string' ? custom.businessName.trim() : '';
+    return n || 'Leads';
+  }
+  // Home-screen label, at most 12 characters: CV_CUSTOM.shortName if set, else the app name cut at a word edge
+  // (a first word longer than 12 is cut hard). A trailing "(lab)" style bracket is never left dangling.
+  function shortName(custom) {
+    var s = custom && typeof custom.shortName === 'string' ? custom.shortName.trim() : '';
+    var n = s || appName(custom);
+    if (n.length <= SHORT_NAME_MAX) return n;
+    var cut = n.slice(0, SHORT_NAME_MAX + 1);
+    var sp = cut.lastIndexOf(' ');
+    var out = sp > 0 ? cut.slice(0, sp) : n.slice(0, SHORT_NAME_MAX);
+    return out.replace(/[\s(\[\-,.&+\/:;|]+$/, '') || n.slice(0, SHORT_NAME_MAX);
+  }
+
   // Engine response -> what the page prints. No arithmetic: every number is the engine's.
   function quoteResult(r) {
     r = r && typeof r === 'object' ? r : {};
@@ -991,6 +1010,8 @@
     var reasons = (Array.isArray(r.defer_reasons) ? r.defer_reasons : []).filter(function (x) { return typeof x === 'string' && x.trim(); }).map(function (x) { return x.trim(); });
     if (defer && !reasons.length) reasons = deferReasons(r.defer_codes);
     var km = num(r.distance_km);
+    var shownDiscount = items.some(function (i) { return i.discount; });
+    var codes = Array.isArray(r.flag_codes) ? r.flag_codes : [];
     return {
       defer: defer,
       reasons: defer ? reasons : [],
@@ -1000,7 +1021,8 @@
       total: defer ? '' : fmtMoney(r.total),
       deposit: defer ? '' : fmtMoney(r.deposit),
       distance: km === null ? '' : Math.round(km).toLocaleString('en-CA') + ' km away',
-      flags: defer ? [] : (Array.isArray(r.flags) ? r.flags : []).filter(function (x) { return typeof x === 'string' && x.trim(); }),
+      // A flag that only repeats a discount line already printed above it is dropped (matched on the engine's flag code, not its text).
+      flags: defer ? [] : (Array.isArray(r.flags) ? r.flags : []).filter(function (x, i) { return typeof x === 'string' && x.trim() && !(shownDiscount && codes[i] === 'delivery_discount_applied'); }),
       needsDistance: String(r.distance_status || '') === 'route_not_found' || (Array.isArray(r.defer_codes) && r.defer_codes.indexOf('missing_distance') !== -1)
     };
   }
@@ -1047,7 +1069,7 @@
           if (QUOTE_FIELD_WORDS[k]) fields[k] = QUOTE_FIELD_WORDS[k];
         });
       }
-      return { message: Object.keys(fields).length ? 'Check the marked fields.' : "The calculator didn't accept that. Reload the page and try again.", fields: fields };
+      return { message: Object.keys(fields).length ? '' : "The calculator didn't accept that. Reload the page and try again.", fields: fields };
     }
     if (code === 'not_signed_in' || status === 401) return { message: 'Your session ran out. Sign out and sign in again.', fields: {} };
     if (code === 'not_owner' || status === 403) return { message: "Your sign-in isn't linked to this business. Sign out, then sign in with your own number.", fields: {} };
@@ -1773,6 +1795,8 @@
     pushSubKeys: pushSubKeys,
     pushPayload: pushPayload,
     pushTestMessage: pushTestMessage,
+    appName: appName,
+    shortName: shortName,
     quoteRequest: quoteRequest,
     quoteResult: quoteResult,
     quoteText: quoteText,

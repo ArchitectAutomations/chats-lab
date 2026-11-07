@@ -847,7 +847,6 @@
     var r = L.quoteRequest(qForm());
     if (!r.ok) {
       var first = qFieldErrors(r.errors);
-      setText(el.qErr, 'Check the marked fields.');
       if (first) try { first.focus(); } catch (e) { /* ignore */ }
       return;
     }
@@ -1905,12 +1904,20 @@
 
   /* ---------- auth + sign-in UI ---------- */
 
+  // One app name (L.appName): sign-in heading and browser tab. Backend-offered names only fill the tab/heading when config has none.
+  function applyAppName(name) {
+    var n = name || L.appName(custom);
+    document.title = n;
+    var b = document.getElementById('brand-name');
+    if (b) b.textContent = n;
+  }
+
   // CV_CUSTOM.businessName wins; else whatever the backend offers (the mock says "Lab Bar"); else nothing. Shown at the top of More.
   function loadBrand() {
     var own = typeof custom.businessName === 'string' ? custom.businessName.trim() : '';
     if (own) { el.moreBrand.textContent = own; return; }
     Promise.resolve(S.api.businessName ? S.api.businessName() : null).then(function (name) {
-      if (S.signedIn) el.moreBrand.textContent = (name && String(name).trim()) || '';
+      if (S.signedIn) { el.moreBrand.textContent = (name && String(name).trim()) || ''; if (name && String(name).trim()) applyAppName(String(name).trim()); }
     }).catch(function () { /* keep it empty */ });
   }
 
@@ -2332,6 +2339,7 @@
     buildActions();
     buildReasons();
     show(el.searchWrap, HAS_SEARCH);
+    applyAppName();
     restorePrefs();
     bindEvents();
     if (!MOCK && (configMissing() || !window.supabase)) {

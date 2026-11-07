@@ -705,7 +705,10 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .q-chip input:focus-visible + span { outline: 3px solid var(--focus); outline-offset: 2px; }
 .q-bar-note { margin-top: 12px; }
 .q-more { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 4px; }
-.q-more summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 650; color: var(--link); }
+.q-more summary { min-height: 44px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 650; color: var(--link); list-style: none; }
+.q-more summary::-webkit-details-marker { display: none; }
+.q-more summary::after { content: ''; width: 8px; height: 8px; margin-left: auto; margin-right: 4px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg) translateY(-2px); transition: transform .15s; }
+.q-more[open] summary::after { transform: rotate(-135deg) translateY(-2px); }
 .q-submit { gap: 10px; }
 .q-submit .spinner { border-color: var(--on-accent); border-right-color: transparent; }
 .q-submit.is-busy .spinner { display: inline-block; }
