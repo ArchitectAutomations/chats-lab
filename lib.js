@@ -130,7 +130,7 @@
      configure(window.CV_CUSTOM) applies the client's wording, money format and time zone.
      Anything left out keeps the default. Called once by app.js before the first render. */
 
-  var CUSTOM = { status: {}, tiers: {}, lost: {}, locale: 'en-CA', currency: 'CAD' };
+  var CUSTOM = { status: {}, tiers: {}, lost: {}, locale: 'en-CA', currency: 'CAD', waitWarnHours: 24 };
 
   function plainMap(o) {
     var out = {};
@@ -148,6 +148,8 @@
     CUSTOM.status = plainMap(c.statusLabels);
     CUSTOM.tiers = plainMap(c.tierLabels);
     CUSTOM.lost = plainMap(c.lostReasons);
+    var wh = Number(c.waitWarnHours);
+    CUSTOM.waitWarnHours = isFinite(wh) && wh >= 1 && wh <= 720 ? wh : 24;
     CUSTOM.locale = typeof c.locale === 'string' && c.locale ? c.locale : 'en-CA';
     CUSTOM.currency = typeof c.currency === 'string' && /^[A-Za-z]{3}$/.test(c.currency) ? c.currency.toUpperCase() : 'CAD';
     var tz = typeof c.timeZone === 'string' && c.timeZone ? c.timeZone : 'America/Toronto';
@@ -205,10 +207,10 @@
   }
 
   var STATUS = {
-    'new': ['New', 'new'],
+    'new': ['New', 'active'],
     engaged: ['Talking', 'active'],
     quoted: ['Quoted', 'active'],
-    handed_off: ['Needs you', 'new'],
+    handed_off: ['Needs you', 'needs'],
     contacted: ['Contacted', 'active'],
     booked: ['Booked', 'booked'],
     lost: ['Lost', 'lost'],
@@ -706,13 +708,9 @@
       if (extra) Object.keys(extra).forEach(function (k) { f[k] = extra[k]; });
       out.push(f);
     }
+    // Date, guests and price live in the record header; service hours and bar rental in the Quote card (UI round 2, C6).
     add('occasion', 'Occasion', String(lead.occasion || '').trim());
-    var date = fmtEventDate(lead.event_date, now);
-    var time = fmtTimeRange(lead.start_time, lead.end_time);
-    add('date', 'Date', date ? date + (time ? ', ' + time : '') : '');
-    add('service', 'Service', String(lead.service_hours_label || '').trim());
-    var g = Number(lead.guests);
-    if (lead.guests !== null && lead.guests !== undefined && isFinite(g) && g > 0) add('guests', 'Guests', String(g));
+    add('time', 'Time', fmtTimeRange(lead.start_time, lead.end_time));
     var area = String(lead.event_area || '').replace(/\s+/g, ' ').trim();
     if (area) {
       var km = Number(lead.distance_km);
@@ -724,10 +722,8 @@
         flag: hasKm && km > DISTANCE_CHECK_KM ? 'Check address: ' + kmText + ' looks wrong' : ''
       });
     }
-    if (typeof lead.bar_rental === 'boolean') add('bar', 'Bar rental', lead.bar_rental ? 'Yes' : 'No');
     if (lead.multiple_events === true) add('multi', 'More than one event', String(lead.multi_event_dates || '').trim() || 'Yes, dates not given');
     add('offer', 'Offer', promoText(lead));
-    add('form', 'Form', String(lead.form_name || '').replace(/[\s:]+$/, '').trim());
     return out;
   }
 
@@ -1429,6 +1425,25 @@
     return 'Waiting ' + waitSpan(Math.max(0, (nowDate(now).getTime() - d.getTime()) / 1000));
   }
 
+  // True once a lead has waited longer than the warning threshold (CV_CUSTOM.waitWarnHours, default 24 h).
+  // The one place the warning colour is used; the page always pairs it with a clock icon and the words.
+  function waitLate(iso, now) {
+    var d = realDate(iso);
+    if (!d) return false;
+    return nowDate(now).getTime() - d.getTime() > CUSTOM.waitWarnHours * 3600000;
+  }
+
+  // The customer's latest text for a Needs-you row: whitespace collapsed, at most 140 characters, '' when there is none.
+  // (lead_list.last_in_body; a longer value is cut at 140 with an ellipsis. The caller must use textContent only.)
+  var LAST_TEXT_MAX = 140;
+  function lastTextPreview(lead) {
+    var v = lead && lead.last_in_body;
+    if (v === null || v === undefined) return '';
+    var t = String(v).replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (t.length <= LAST_TEXT_MAX) return t;
+    return t.slice(0, LAST_TEXT_MAX - 1).replace(/\s+$/, '') + '\u2026';
+  }
+
   // Leads waiting on the owner, longest-waiting first (unknown time last). Opted-out leads never show.
   // Each row: { lead, since, waiting }. The time is status_at (when it was handed over), else last activity.
   function needsYou(leads, now) {
@@ -1436,7 +1451,7 @@
       return l && String(l.status || '').toLowerCase() === 'handed_off' && !isOptedOut(l);
     }).map(function (l) {
       var since = realDate(l.status_at) ? l.status_at : (realDate(l.last_activity_at) ? l.last_activity_at : (realDate(l.created_at) ? l.created_at : null));
-      return { lead: l, since: since, waiting: waitingFor(since, now) };
+      return { lead: l, since: since, waiting: waitingFor(since, now), late: waitLate(since, now) };
     });
     rows.sort(function (a, b) {
       var ta = timeOf(a.since), tb = timeOf(b.since);
@@ -1478,6 +1493,39 @@
       if (money) bits.push(money);
     }
     return bits;
+  }
+
+  /* ---------- one lead row for every list (UI round 2, R1) ---------- */
+
+  // name + ONE price on top; date and guests; chip and "last text 15 min ago" last.
+  // A booked lead shows its final price only (never "Quoted $..."); a lead waiting on the owner carries a wait cue.
+  // The chip never repeats the booked price: it is already the price on top.
+  function rowView(lead, now) {
+    if (!lead) return null;
+    var st = String(lead.status || '').toLowerCase();
+    var info = statusInfo(st);
+    var chipLabel = statusChip(lead).label;
+    if (statusGroup(st) === 'booked') chipLabel = info.label;
+    var money = statusGroup(st) === 'booked' && toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : fmtMoney(lead.quote_total);
+    var needs = st === 'handed_off' && !isOptedOut(lead);
+    var since = realDate(lead.status_at) ? lead.status_at : null; // never guess a wait from other times
+    var lastText = realDate(lead.last_in_at) ? 'Last text ' + fmtAgo(lead.last_in_at, now) : '';
+    return {
+      name: displayName(lead),
+      money: money,
+      job: jobBits(lead, { money: false, now: now }).join(' \u00b7 '),
+      chip: { label: chipLabel, tone: info.tone },
+      when: lastText || (realDate(lead.last_activity_at) ? fmtAgo(lead.last_activity_at, now) : ''),
+      needs: needs,
+      wait: needs && since ? { text: waitingFor(since, now), late: waitLate(since, now) } : null,
+      said: lastTextPreview(lead)
+    };
+  }
+
+  // The status buttons still ahead of this lead (the current one and anything not allowed are left out).
+  function actionsAhead(current) {
+    var cur = String(current || '').toLowerCase();
+    return actions().filter(function (a) { return canSetStatus(cur, a.status); }).map(function (a) { return a.status; });
   }
 
   /* ---------- bottom bar (CV_CUSTOM.tabs + feature switches) ---------- */
@@ -1664,6 +1712,11 @@
     visibleMessages: visibleMessages,
     sortLeads: sortLeads,
     waitingFor: waitingFor,
+    waitLate: waitLate,
+    lastTextPreview: lastTextPreview,
+    LAST_TEXT_MAX: LAST_TEXT_MAX,
+    rowView: rowView,
+    actionsAhead: actionsAhead,
     needsYou: needsYou,
     homeView: homeView,
     homeCounts: homeCounts,

@@ -316,8 +316,7 @@
         </div>
 
         <section class="rec-card strip" id="strip" aria-labelledby="h-status" hidden>
-          <h3 class="rec-h" id="h-status">Status</h3>
-          <p class="strip-time" id="strip-time" hidden></p>
+          <h3 class="rec-h" id="h-status">Change status</h3>
           <p class="strip-note" id="strip-note" hidden></p>
           <div class="actions" id="actions" role="group" aria-label="Change status"></div>
           <p class="actions-note" id="actions-note" hidden></p>
@@ -326,7 +325,11 @@
       </div>
 
       <section class="convo" id="convo" aria-labelledby="h-convo">
-        <h3 class="convo-h" id="h-convo">Conversation</h3>
+        <div class="convo-bar">
+          <h3 class="convo-h" id="h-convo">Conversation</h3>
+          <!-- Automatic texts to the owner fold into this one line; it sits next to the heading so it is always in view. -->
+          <button type="button" class="sys-fold" id="sys-fold" aria-controls="sys-list" aria-expanded="false" hidden></button>
+        </div>
         <!-- tabindex: this box scrolls on its own, so keyboard users must be able to focus it. -->
         <div class="convo-scroll" id="convo-scroll" tabindex="0">
           <p class="status-line" id="thread-loading">Loading the conversation…</p>
@@ -355,13 +358,14 @@
         </section>
 
         <section class="rec-card" id="rec-notes" aria-labelledby="h-notes" hidden>
-          <h3 class="rec-h" id="h-notes">Notes</h3>
+          <h3 class="rec-h" id="h-notes" hidden>Notes</h3>
           <ul class="notes" id="notes-list" hidden></ul>
+          <!-- One line until you type: the field opens up on tap and Save appears only while there is text. -->
           <label class="sr-only" for="note-text">Add a note</label>
-          <textarea class="field note-field" id="note-text" rows="2" maxlength="2000" placeholder="Add a note for yourself"></textarea>
+          <textarea class="field note-field" id="note-text" rows="1" maxlength="2000" placeholder="Add a note for yourself"></textarea>
           <p class="hint note-count" id="note-count" hidden></p>
           <p class="error" id="note-error" role="alert" hidden></p>
-          <button class="btn primary note-save" id="note-save" type="button">Save note</button>
+          <button class="btn primary note-save" id="note-save" type="button" hidden>Save note</button>
         </section>
 
         <section class="rec-card" id="rec-history" aria-labelledby="h-history" hidden>
@@ -392,8 +396,8 @@
       <p class="sheet-text" id="confirm-text"></p>
       <div class="sheet-field" id="price-box" hidden>
         <label class="field-label" for="price">Final price</label>
-        <input class="field money-field" id="price" type="text" inputmode="decimal" autocomplete="off" aria-describedby="price-hint">
-        <p class="hint" id="price-hint">Filled in from the quote. Change it if the job was a different price.</p>
+        <div class="money-wrap"><span class="money-sign" aria-hidden="true">$</span><input class="field money-field" id="price" type="text" inputmode="decimal" autocomplete="off" aria-describedby="price-hint"></div>
+        <p class="hint" id="price-hint">From the quote. Change it if the price differs.</p>
       </div>
       <fieldset class="sheet-field reason-box" id="reason-box" hidden>
         <legend class="field-label">Why was it lost?</legend>

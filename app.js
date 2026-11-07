@@ -99,7 +99,7 @@
     listEmpty: $('list-empty'), filterEmpty: $('filter-empty'), listErr: $('list-error'),
     valueTotal: $('value-total'), showClosed: $('show-closed'), valueLoading: $('value-loading'),
     valueSections: $('value-sections'), valueErr: $('value-error'),
-    strip: $('strip'), stripChip: $('strip-chip'), stripTime: $('strip-time'),
+    strip: $('strip'), stripChip: $('strip-chip'), sysFold: $('sys-fold'), hNotes: $('h-notes'),
     recordLoading: $('record-loading'), recHead: $('rec-head'), recName: $('rec-name'), recNext: $('rec-next'), recJob: $('rec-job'), recPhone: $('rec-phone'), recHistory: $('rec-history'),
     optoutBanner: $('optout-banner'), recContact: $('rec-contact'),
     contactActions: $('contact-actions'), contactNote: $('contact-note'),
@@ -211,6 +211,29 @@
     return svg;
   }
 
+  var ICON_CLOCK = 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 7.5V12l3 2';
+  var ICON_PHONE = 'M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z';
+  var ICON_CHECK = 'M5 12.5l4.5 4.5L19 7.5';
+
+  // A status chip: three looks by meaning (tone-needs filled, tone-active outline, booked / lost / optout quiet sand).
+  // Booked carries a check so it never relies on colour. Fills `node` (replacing its content).
+  function fillChip(node, chip) {
+    node.className = 'chip tone-' + chip.tone;
+    node.replaceChildren();
+    if (chip.tone === 'booked') { var c = icon(ICON_CHECK, 14); c.setAttribute('class', 'chip-icon'); node.appendChild(c); }
+    node.appendChild(document.createTextNode(chip.label));
+    return node;
+  }
+  function chipNode(chip) { return fillChip(make('span'), chip); }
+
+  // The wait line of a Needs-you lead: clock + words. Past the threshold it turns red and says "overdue" (never colour alone).
+  function waitNode(w) {
+    var n = make('span', 'row-wait' + (w.late ? ' is-late' : ''));
+    n.appendChild(icon(ICON_CLOCK, 16));
+    n.appendChild(make('span', '', w.text + (w.late ? ' \u00b7 overdue' : '')));
+    return n;
+  }
+
   // Title-Cased for display only; the stored name is never changed.
   function leadName(lead) { return L.displayName(lead); }
 
@@ -226,7 +249,7 @@
   ].join(',');
   // Added for final price, lost reason and notes; dropped again if the view does not have them yet.
   var DETAIL_EXTRA = ',booked_amount,lost_reason,lost_note,notes';
-  var SEARCH_COLUMNS = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at';
+  var SEARCH_COLUMNS = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
 
   function makeRealApi() {
@@ -578,6 +601,7 @@
   }
 
   // The Needs-you block: the one place on Home for "who is waiting on me", longest wait first.
+  // Same row as every list, plus their last text and a Call icon (a separate tap zone; iPhone asks before dialling).
   function renderNeeds(rows) {
     show(el.needs, rows.length > 0);
     if (!rows.length) { el.needsList.replaceChildren(); return; }
@@ -586,22 +610,16 @@
     var frag = document.createDocumentFragment();
     rows.forEach(function (r) {
       var lead = r.lead;
-      var li = make('li');
-      var a = make('a', 'need-row');
-      a.href = '#/lead/' + encodeURIComponent(lead.lead_id);
-      var top = make('span', 'need-top');
-      top.appendChild(make('span', 'need-name', leadName(lead)));
-      var money = L.fmtMoney(lead.quote_total);
-      if (money) top.appendChild(make('span', 'need-money', money));
-      a.appendChild(top);
-      a.appendChild(make('span', 'need-job', L.jobBits(lead, { money: false }).join(' \u00b7 ')));
-      if (r.waiting) {
-        var w = make('span', 'need-wait');
-        w.appendChild(icon('M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 7.5V12l3 2', 16));
-        w.appendChild(make('span', '', r.waiting));
-        a.appendChild(w);
+      var tel = L.telHref(lead.phone); // lead_list.phone, strict E.164 only
+      var li = make('li', 'need-card');
+      li.appendChild(leadRow(lead, { needs: true, call: !!tel }).firstChild);
+      if (tel) {
+        var call = make('a', 'row-call');
+        call.href = tel;
+        call.setAttribute('aria-label', 'Call ' + leadName(lead));
+        call.appendChild(icon(ICON_PHONE, 22));
+        li.appendChild(call);
       }
-      li.appendChild(a);
       frag.appendChild(li);
     });
     el.needsList.replaceChildren(frag);
@@ -631,20 +649,40 @@
     el.leadList.replaceChildren(frag);
   }
 
-  // One list row (also used for search results).
-  function leadRow(lead) {
+  // THE lead row (Home, search, Calendar day, Lead value, Follow-ups): name and one price on top, date and guests,
+  // then status chip and "last text 15 min ago". opts.needs = Needs-you card (no chip, last text + wait line);
+  // opts.lines = extra plain lines under the job line (Follow-ups); opts.quiet = no status chip / time (sent history).
+  // Returns an <li>; its first child is the link.
+  function leadRow(lead, opts) {
+    opts = opts || {};
+    var v = L.rowView(lead);
     var li = make('li');
-    var a = make('a', 'lead-row');
+    var a = make('a', 'lead-row' + (opts.needs ? ' is-needs' : '') + (opts.call ? ' has-call' : '') + (opts.cls ? ' ' + opts.cls : ''));
     a.href = '#/lead/' + encodeURIComponent(lead.lead_id);
-    var st = L.statusChip(lead);
-    a.appendChild(make('span', 'lead-name', leadName(lead)));
-    a.appendChild(make('span', 'lead-when', L.fmtAgo(lead.last_activity_at)));
-    var meta = make('span', 'lead-meta');
-    meta.appendChild(make('span', '', lead.event_date ? 'Event ' + L.fmtEventDate(lead.event_date) : 'No event date'));
-    var money = L.quoteMoney(lead);
-    if (money) meta.appendChild(make('span', 'lead-money', money));
-    a.appendChild(meta);
-    a.appendChild(make('span', 'chip tone-' + st.tone, st.label));
+    var top = make('span', 'row-top');
+    top.appendChild(make('span', 'lead-name', v.name));
+    if (v.money) top.appendChild(make('span', 'lead-money', v.money));
+    a.appendChild(top);
+    a.appendChild(make('span', 'row-job', v.job));
+    if (opts.needs && v.said) a.appendChild(make('span', 'row-said', v.said)); // text only, never markup
+    (opts.lines || []).forEach(function (ln) {
+      if (!ln) return;
+      var p = make('span', 'row-line' + (ln.cls ? ' ' + ln.cls : ''), ln.text);
+      if (ln.due) p.setAttribute('data-due', ln.due);
+      a.appendChild(p);
+    });
+    if (!opts.quiet) {
+      var foot = make('span', 'row-foot');
+      if (opts.needs) {
+        if (v.wait) foot.appendChild(waitNode(v.wait));
+      } else {
+        foot.appendChild(chipNode(v.chip));
+        // A lead waiting on you (seen in search or the calendar) shows the same wait cue as Home.
+        if (v.needs && v.wait) foot.appendChild(waitNode(v.wait));
+        else if (v.when) foot.appendChild(make('span', 'lead-when', v.when));
+      }
+      a.appendChild(foot);
+    }
     li.appendChild(a);
     return li;
   }
@@ -715,28 +753,6 @@
 
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
-  function valueCard(lead, closed) {
-    var li = make('li');
-    var a = make('a', 'card' + (closed ? ' is-closed' : ''));
-    a.href = '#/lead/' + encodeURIComponent(lead.lead_id);
-    var top = make('span', 'card-top');
-    top.appendChild(make('span', 'card-name', leadName(lead)));
-    var money = L.quoteMoney(lead); // "Quoted $1,180" once a final price is on the chip
-    if (money) top.appendChild(make('span', 'card-money' + (money === L.fmtMoney(lead.quote_total) ? '' : ' is-quoted'), money));
-    a.appendChild(top);
-    var bits = [];
-    bits.push(lead.event_date ? L.fmtEventDate(lead.event_date) : 'No event date');
-    if (lead.guests !== null && lead.guests !== undefined && lead.guests !== '') bits.push(plural(Number(lead.guests), 'guest', 'guests'));
-    if (lead.event_city) bits.push(String(lead.event_city));
-    var bottom = make('span', 'card-bottom');
-    bottom.appendChild(make('span', 'card-meta', bits.join(', ')));
-    var st = L.statusChip(lead);
-    bottom.appendChild(make('span', 'chip tone-' + st.tone, st.label));
-    a.appendChild(bottom);
-    li.appendChild(a);
-    return li;
-  }
-
   function renderValue() {
     if (!S.listLoaded) {
       show(el.valueLoading, !S.listError);
@@ -780,7 +796,7 @@
       head.appendChild(sum);
       sec.appendChild(head);
       var ul = make('ul', 'cards');
-      s.leads.forEach(function (lead) { ul.appendChild(valueCard(lead, L.isClosed(lead.status))); });
+      s.leads.forEach(function (lead) { ul.appendChild(leadRow(lead)); });
       sec.appendChild(ul);
       frag.appendChild(sec);
     });
@@ -1051,7 +1067,7 @@
     var list = day ? day.booked.concat(day.possible) : [];
     el.calDayTitle.textContent = L.fmtEventDate(sel);
     var frag = document.createDocumentFragment();
-    list.forEach(function (lead) { frag.appendChild(valueCard(lead, false)); });
+    list.forEach(function (lead) { frag.appendChild(leadRow(lead)); });
     el.calDayList.replaceChildren(frag);
     show(el.calDayList, list.length > 0);
     setText(el.calDayEmpty, list.length ? '' : (S.showPossible ? 'No events on this day.' : 'Nothing booked on this day.'));
@@ -1103,24 +1119,11 @@
     return sec;
   }
 
-  // One tappable row: name (+ quote) on top, then the plain lines given.
+  // One tappable row: the shared lead row (details from the lead list when it has them) plus the plain lines given.
   function fuRow(r, lines, opts) {
-    var li = make('li');
-    var a = make('a', 'fu-row' + (opts && opts.cls ? ' ' + opts.cls : ''));
-    a.href = '#/lead/' + encodeURIComponent(r.lead_id);
-    var top = make('span', 'fu-top');
-    top.appendChild(make('span', 'fu-name', leadName(r)));
-    var money = L.fmtMoney(r.quote_total);
-    if (money) top.appendChild(make('span', 'fu-money', money));
-    a.appendChild(top);
-    lines.forEach(function (ln) {
-      if (!ln) return;
-      var p = make('span', 'fu-line' + (ln.cls ? ' ' + ln.cls : ''), ln.text);
-      if (ln.due) p.setAttribute('data-due', ln.due);
-      a.appendChild(p);
-    });
-    li.appendChild(a);
-    return li;
+    var lead = null;
+    for (var i = 0; i < S.leads.length; i++) if (S.leads[i] && S.leads[i].lead_id === r.lead_id) { lead = S.leads[i]; break; }
+    return leadRow(lead || r, { lines: lines, cls: opts && opts.cls, quiet: !lead || !!(opts && opts.quiet) });
   }
 
   function renderFollowUps() {
@@ -1176,7 +1179,7 @@
     var sent = fuBlock('Sent recently', g.sent.length ? '' : 'No follow-up texts sent in the last 14 days.');
     if (g.sent.length) {
       var ust = make('ul', 'fu-list');
-      g.sent.forEach(function (r) { ust.appendChild(fuRow(r, [{ text: L.sentLine(r), cls: 'fu-meta' }], { cls: 'is-sent' })); });
+      g.sent.forEach(function (r) { ust.appendChild(fuRow(r, [{ text: L.sentLine(r), cls: 'fu-meta' }], { cls: 'is-sent', quiet: true })); });
       sent.appendChild(ust);
     }
     frag.appendChild(sent);
@@ -1393,10 +1396,13 @@
   function renderActions() {
     var lead = S.thread.lead;
     var current = String((lead && lead.status) || '').toLowerCase();
+    // Only the buttons still ahead are shown (C4): the current status is on the chip above, not repeated here.
+    var ahead = L.actionsAhead(current);
     L.actions().forEach(function (a) {
       var b = S.actionButtons[a.status];
       var isCurrent = current === a.status;
       var busy = S.pending === a.status;
+      b.hidden = !!lead && ahead.indexOf(a.status) === -1 && !busy;
       b.disabled = !lead || !L.canSetStatus(current, a.status) || !!S.pending;
       b.classList.toggle('is-current', isCurrent);
       b.classList.toggle('is-busy', busy);
@@ -1404,6 +1410,9 @@
       b.title = isCurrent ? 'Already ' + a.label.toLowerCase() : '';
     });
     setText(el.actionsNote, L.actionsNote(current));
+    var count = ahead.length;
+    el.actions.hidden = !!lead && count === 0 && !S.pending;
+    el.actions.style.gridTemplateColumns = 'repeat(' + Math.max(1, Math.min(3, count || 3)) + ', 1fr)';
   }
 
   function renderHistory() {
@@ -1523,7 +1532,7 @@
         renderActions();
         // The tapped button may now be disabled: keep keyboard focus inside the strip.
         if (document.activeElement === document.body || (document.activeElement && document.activeElement.disabled)) {
-          var next = el.actions.querySelector('button:not([disabled])');
+          var next = el.actions.querySelector('button:not([disabled]):not([hidden])');
           if (next) { try { next.focus(); } catch (x) { /* ignore */ } }
         }
       }
@@ -1554,13 +1563,18 @@
     });
     el.notesList.replaceChildren(frag);
     show(el.notesList, notes.length > 0);
+    show(el.hNotes, notes.length > 0);
     // The notes block needs the backend: no `notes` field on the lead (older view) = no block.
     show(el.recNotes, HAS_NOTES && Array.isArray(lead.notes) && !!S.api.addNote);
   }
 
+  // Save appears only while there is text to save.
+  function syncNoteSave() { el.noteSave.hidden = !el.noteText.value.trim(); }
+
   function noteCount() {
     var left = L.NOTE_MAX - el.noteText.value.length;
     setText(el.noteCount, left <= 200 ? L.plural(left, 'character', 'characters') + ' left' : '');
+    syncNoteSave();
   }
 
   function saveNote() {
@@ -1721,8 +1735,7 @@
       a.appendChild(top);
       var bottom = make('span', 'other-bottom');
       bottom.appendChild(make('span', 'other-date', o.event_date ? L.fmtEventDate(o.event_date) : 'No event date'));
-      var st = L.statusChip(o);
-      bottom.appendChild(make('span', 'chip tone-' + st.tone, st.label));
+      bottom.appendChild(chipNode(L.statusChip(o)));
       a.appendChild(bottom);
       li.appendChild(a);
       frag.appendChild(li);
@@ -1735,7 +1748,8 @@
   function renderNext() {
     var lead = S.thread.lead;
     if (!lead) return;
-    var t = L.nextAction(lead, undefined, L.pendingNudge(S.followUps, S.thread.id));
+    // A booked lead's date and price are already in the job line below: no second sentence (C4).
+    var t = L.statusGroup(lead.status) === 'booked' ? '' : L.nextAction(lead, undefined, L.pendingNudge(S.followUps, S.thread.id));
     if (el.recNext.textContent !== t || el.recNext.hidden !== !t) setText(el.recNext, t);
   }
 
@@ -1751,22 +1765,21 @@
       return;
     }
     show(el.recordLoading, false);
-    var st = L.statusChip(lead);
+    var st = L.rowView(lead).chip; // "Booked" (the price is in the job line), "Lost · Price"
     el.recName.textContent = leadName(lead);
-    el.stripChip.className = 'chip tone-' + st.tone;
-    el.stripChip.textContent = st.label;
+    fillChip(el.stripChip, st);
     renderNext();
     setText(el.recJob, L.jobBits(lead).join(' \u00b7 '));
     show(el.recHead, true);
     show(el.optoutBanner, L.isOptedOut(lead));
     renderContact(lead);
     el.strip.className = 'rec-card strip tone-' + st.tone;
-    setText(el.stripTime, lead.status_at ? 'Current status since ' + L.fmtStamp(lead.status_at) : '');
     var lostNote = String(lead.status || '').toLowerCase() === 'lost' ? String(lead.lost_note || '').trim() : '';
     setText(el.stripNote, lostNote ? 'Why: ' + lostNote : '');
     renderActions();
     renderHistory();
-    show(el.strip, true);
+    // The card is only there while there is something to do or say: buttons ahead, a lost note, or a locked-status note.
+    show(el.strip, L.actionsAhead(lead.status).length > 0 || !!lostNote || !!L.actionsNote(String(lead.status || '').toLowerCase()));
     renderNotes(lead);
     renderEvent(lead);
     renderQuote(lead);
@@ -1788,30 +1801,37 @@
     return row;
   }
 
-  // The automatic texts to the owner (alert, 9 am text, confirmation): one line at the top, "N automatic texts · show".
-  function sysFold(system) {
-    var wrap = make('div', 'sys');
-    var btn = make('button', 'sys-fold', L.systemFoldText(system.length, S.thread.sysOpen));
-    btn.type = 'button';
-    btn.setAttribute('aria-expanded', String(S.thread.sysOpen));
-    btn.addEventListener('click', function () {
-      S.thread.sysOpen = !S.thread.sysOpen;
-      S.thread.sig = '';
-      renderThread();
-    });
-    wrap.appendChild(btn);
-    if (S.thread.sysOpen) {
-      var list = make('div', 'sys-list');
-      system.forEach(function (m) { list.appendChild(bubble(m)); });
-      wrap.appendChild(list);
-    }
-    return wrap;
+  // The automatic texts to the owner (alert, 9 am text, confirmation): ONE line beside the Conversation heading
+  // ("N automatic texts · show"), so it is in view without scrolling the box. Open, the texts list at the top of the box.
+  function renderFold(system) {
+    var n = system.length;
+    show(el.sysFold, n > 0);
+    if (!n) return;
+    el.sysFold.textContent = L.systemFoldText(n, S.thread.sysOpen);
+    el.sysFold.setAttribute('aria-expanded', String(S.thread.sysOpen));
+  }
+
+  function sysList(system) {
+    var list = make('div', 'sys-list');
+    list.id = 'sys-list';
+    system.forEach(function (m) { list.appendChild(bubble(m)); });
+    return list;
+  }
+
+  function toggleFold() {
+    S.thread.sysOpen = !S.thread.sysOpen;
+    S.thread.sig = '';
+    renderThread();
+    // Open: show the automatic texts at the top. The second set runs after any scrollToBottom frame renderThread queued (review r2 M1).
+    var s = convoScroller();
+    if (S.thread.sysOpen) { s.scrollTop = 0; requestAnimationFrame(function () { s.scrollTop = 0; }); } else scrollToBottom();
   }
 
   function renderThread() {
     renderRecord();
     var parts = L.splitThread(S.thread.rows);
     var rows = parts.chat;
+    renderFold(parts.system);
     show(el.threadLoading, false);
     if (!S.thread.lead && rows.length === 0 && parts.system.length === 0) {
       show(el.threadBox, false);
@@ -1830,7 +1850,7 @@
     var prevTop = scroller.scrollTop;
     var grew = rows.length > S.thread.count;
     var frag = document.createDocumentFragment();
-    if (parts.system.length) frag.appendChild(sysFold(parts.system));
+    if (parts.system.length && S.thread.sysOpen) frag.appendChild(sysList(parts.system));
     var prev = null;
     rows.forEach(function (m) {
       if (!prev || !L.sameDay(prev.at, m.at)) frag.appendChild(make('div', 'day', L.fmtDay(m.at)));
@@ -1864,7 +1884,7 @@
       setText(el.threadErr, '');
       setText(el.actionErr, '');
       setText(el.noteErr, '');
-      el.noteText.value = '';
+      el.noteText.value = ''; syncNoteSave(); show(el.sysFold, false);
       noteCount();
       show(el.threadLoading, true);
       renderRecord();
@@ -1947,7 +1967,7 @@
     S.quote = { busy: false, seq: S.quote.seq + 1, view: null, req: null };
     el.qForm.reset(); qBusy(false); qFieldErrors({}); setText(el.qErr, ''); show(el.qKmBox, false); renderQuoteResult();
     S.cal = null; S.showPossible = false;
-    el.calBody.replaceChildren(); el.calDayList.replaceChildren(); el.notesList.replaceChildren(); el.noteText.value = '';
+    el.calBody.replaceChildren(); el.calDayList.replaceChildren(); el.notesList.replaceChildren(); el.noteText.value = ''; syncNoteSave();
     el.fuBody.replaceChildren();
     renderBadge(); renderNeeds([]);
     el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.valueSections.replaceChildren(); el.metricsBody.replaceChildren();
@@ -2217,6 +2237,7 @@
     // Notes
     el.noteSave.addEventListener('click', saveNote);
     el.noteText.addEventListener('input', function () { noteCount(); setText(el.noteErr, ''); });
+    el.sysFold.addEventListener('click', toggleFold);
 
     // Calendar
     el.calPrev.addEventListener('click', function () { moveMonth(-1); });
