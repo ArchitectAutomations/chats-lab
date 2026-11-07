@@ -795,3 +795,55 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .m-tile, .waiting-row { box-shadow: var(--shadow-card); }
 .more-brand { margin: var(--sp-1) var(--sp-1) var(--sp-3); font-size: var(--fs-sm); color: var(--muted-on-primary); }
 .more-brand:empty { display: none; }
+
+/* ---------- add a lead by hand + repeat customers (session 3, round 1) ---------- */
+/* "+ Add lead" in the Leads header: the one purple action on the screen (accent only, 60/30/10). */
+.btn-add {
+  flex: none; min-height: 44px; margin-right: var(--sp-2); padding: 0 16px;
+  background: var(--action); color: var(--on-accent); border: 2px solid transparent; border-radius: var(--r-pill);
+  font-size: var(--fs-md); font-weight: 750; white-space: nowrap;
+}
+.btn-add:active { background: var(--action-press); }
+.btn-add:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* "Added by you": sand-tone tag, never purple (purple is for actions). */
+.row-tag {
+  align-self: flex-start; display: inline-flex; margin-top: var(--sp-1); padding: 0 8px; border-radius: var(--r-pill);
+  background: var(--secondary-deep); color: var(--on-secondary); font-size: var(--fs-sm); font-weight: 600; line-height: 1.5;
+}
+.lead-row .row-tag { display: inline-flex; width: fit-content; }
+
+/* Record header: where the lead came from, and the no-automatic-texts line (muted, on green). */
+.rec-source { margin: var(--sp-1) 0 0; font-size: var(--fs-md); color: var(--on-primary); }
+.rec-noauto { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); color: var(--muted-on-primary); }
+.rec-price { margin: 0 0 var(--sp-2); padding: 0 var(--sp-1); }
+.rec-price .fact-link { color: var(--link); }
+
+/* Add-lead sheet. A tall form: it scrolls inside itself and never runs under the bottom bar (a modal dialog covers it). */
+.sheet.sheet-add { max-height: 94vh; max-height: 94dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.sheet-add .sheet-body { padding-top: 20px; padding-bottom: 0; }
+.sheet-add .sheet-field:first-of-type { margin-top: 12px; }
+.sheet-add .sheet-text { margin: 0; }
+.sheet-add .field-label { margin-bottom: 6px; }
+.sheet-add .sheet-actions { position: sticky; bottom: 0; margin: 12px calc(-1 * (var(--gutter) + 4px)) 0; padding: 0 calc(var(--gutter) + 4px) calc(12px + env(safe-area-inset-bottom)); background: var(--secondary); }
+.add-check { display: flex; align-items: center; gap: 12px; min-height: 48px; margin: 16px 0 0; font-size: var(--fs-lg); font-weight: 600; }
+.add-check input { width: 24px; height: 24px; flex: none; accent-color: var(--accent-strong); }
+.add-dup { margin: 10px 0 0; padding: 10px 12px; border: 1.5px solid var(--muted-on-secondary); border-radius: var(--r-md); font-size: var(--fs-sm); }
+.add-dup p { margin: 6px 0 0; }
+.add-dup-h { margin: 0 !important; font-weight: 700; }
+.add-dup-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.add-dup-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; }
+.add-dup-text { min-width: 0; overflow-wrap: anywhere; }
+.add-dup-open { flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; font-weight: 700; color: var(--link); text-underline-offset: 2px; }
+.add-dup-same, .add-dup-opt { font-weight: 600; }
+
+/* Confirmation toast (outside every screen, so it survives the jump to the new lead). */
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 30; margin: 0;
+  bottom: calc(76px + env(safe-area-inset-bottom)); max-width: calc(100% - 32px);
+  padding: 10px 18px; border-radius: var(--r-pill); background: var(--secondary); color: var(--on-secondary);
+  font-size: var(--fs-md); font-weight: 650; box-shadow: 0 4px 16px rgba(0,0,0,0.35); text-align: center;
+}
+@media (min-width: 600px) {
+  .sheet.sheet-add { max-height: 90vh; max-height: 90dvh; }
+}

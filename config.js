@@ -41,10 +41,11 @@ window.CV_CUSTOM = {
 
   // Features: true = on, false = off (an off feature is not shown at all, nowhere on the page).
   // Left out = on. Tabs: followups, calendar, quote, metrics. 'value' = the Lead value section of Metrics. Parts of other screens:
-  // search (top of Leads), notes (on a lead's record), push ("Alerts on this phone" under More).
+  // search (top of Leads), notes (on a lead's record), push ("Alerts on this phone" under More),
+  // addLead (the "+ Add lead" button on Leads; the database has its own switch, cv_config add_lead_enabled).
   // Hours a "Needs you" lead may wait before its wait turns red with "· overdue" (1–720; default 24, Kevin 11-06).
   waitWarnHours: 24,
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true, push: true },
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true, push: true, addLead: true },
 
   // Bottom bar and More: which tabs show, in this order (a tab whose feature is off is skipped).
   // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar; 'quote' sits under More
@@ -68,7 +69,11 @@ window.CV_CUSTOM = {
   // Keys are fixed (they are what the database stores): price, date_taken, no_reply, went_elsewhere, other.
   lostReasons: { price: 'Price', date_taken: 'Date taken', no_reply: 'No reply', went_elsewhere: 'Went elsewhere', other: 'Other' },
 
+  // Where a lead you add by hand came from (the four chips on "+ Add lead", and the source line on the record).
+  // Keys are fixed (they are what the database stores): instagram, phone_call, referral, other.
+  sourceLabels: { instagram: 'Instagram', phone_call: 'Phone call', referral: 'Referral', other: 'Other' },
+
   // Metrics tab: which blocks show, in this order.
-  // Known: 'booked', 'open', 'value', 'close_rate', 'lost_reasons', 'speed'. 'value' (Lead value) also needs features.value.
-  metrics: ['booked', 'open', 'value', 'close_rate', 'lost_reasons', 'speed']
+  // Known: 'booked', 'sources', 'open', 'value', 'close_rate', 'lost_reasons', 'speed'. 'value' (Lead value) also needs features.value.
+  metrics: ['booked', 'sources', 'open', 'value', 'close_rate', 'lost_reasons', 'speed']
 };

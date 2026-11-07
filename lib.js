@@ -136,7 +136,7 @@
      configure(window.CV_CUSTOM) applies the client's wording, money format and time zone.
      Anything left out keeps the default. Called once by app.js before the first render. */
 
-  var CUSTOM = { status: {}, tiers: {}, lost: {}, locale: 'en-CA', currency: 'CAD', waitWarnHours: 24 };
+  var CUSTOM = { status: {}, tiers: {}, lost: {}, sources: {}, locale: 'en-CA', currency: 'CAD', waitWarnHours: 24 };
 
   function plainMap(o) {
     var out = {};
@@ -154,6 +154,7 @@
     CUSTOM.status = plainMap(c.statusLabels);
     CUSTOM.tiers = plainMap(c.tierLabels);
     CUSTOM.lost = plainMap(c.lostReasons);
+    CUSTOM.sources = plainMap(c.sourceLabels);
     var wh = Number(c.waitWarnHours);
     CUSTOM.waitWarnHours = isFinite(wh) && wh >= 1 && wh <= 720 ? wh : 24;
     CUSTOM.locale = typeof c.locale === 'string' && c.locale ? c.locale : 'en-CA';
@@ -317,13 +318,23 @@
     });
   }
 
+  // A lead who never agreed to automatic texts (added by hand): auto_texts false, or a manual source
+  // (lead_list has no auto_texts column). The server never texts these leads on its own.
+  function noConsent(lead) {
+    if (!lead) return false;
+    if (lead.auto_texts === false) return true;
+    return lead.source === 'manual' && lead.auto_texts !== true;
+  }
+
   // Plain-words question for the confirm sheet.
-  function confirmText(name, status) {
+  function confirmText(name, status, lead) {
     var who = String(name || '').trim() || 'this lead';
     if (ACTION_STATUSES.indexOf(status) === -1) return '';
     var lc = function (st) { return statusInfo(st).label.toLowerCase(); };
     var q = 'Mark ' + who + ' as ' + lc(status) + '?';
+    if (status === 'contacted' && noConsent(lead)) return q + ' No automatic texts go to leads you added.';
     if (status === 'contacted') return q + " They'll get one follow-up text in 5 days unless you mark them " + lc('booked') + ' or ' + lc('lost') + '.';
+    if (noConsent(lead)) return q;
     return q + " They won't get the next follow-up text.";
   }
 
@@ -621,6 +632,7 @@
   function nextAction(lead, now, nudge) {
     if (!lead || isOptedOut(lead)) return '';
     var st = String(lead.status || '').toLowerCase();
+    if (noConsent(lead)) nudge = null;
     if (nudge && !isClosed(st) && realDate(nudge.due_at) && !realDate(nudge.sent_at)) {
       return 'Follow-up text goes out ' + fmtDueAt(nudge.due_at, now) + ' — ' + fmtCountdown(nudge.due_at, now);
     }
@@ -640,6 +652,7 @@
       return 'Asked for you' + (since ? ' ' + fmtSince(since, now) : '') + ', not ' + lc('contacted') + ' yet';
     }
     if (st === 'contacted') {
+      if (noConsent(lead)) return 'Follow up yourself \u2014 no automatic texts. ' + markWhen;
       if (lead.nudge_sent_at) return 'Follow-up text sent ' + fmtShortDate(lead.nudge_sent_at, now) + '. ' + markWhen;
       var c = toDate(lead.contacted_at || lead.status_at);
       if (!c) return statusInfo('contacted').label + '. ' + markWhen;
@@ -818,9 +831,213 @@
   /* ---------- feature switches (CV_CUSTOM.features) ---------- */
 
   // Every feature is on unless the client's settings say exactly false. Off = not shown at all.
-  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push'];
+  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push', 'addLead'];
   function featureOn(features, key) {
     return !(features && typeof features === 'object' && features[key] === false);
+  }
+
+  /* ---------- add a lead by hand + repeat customers (session 3, round 1) ---------- */
+
+  // Where a hand-added lead came from. Keys are what the database stores; labels come from CV_CUSTOM.sourceLabels.
+  var ADD_SOURCES = [
+    { key: 'instagram', label: 'Instagram' },
+    { key: 'phone_call', label: 'Phone call' },
+    { key: 'referral', label: 'Referral' },
+    { key: 'other', label: 'Other' }
+  ];
+  function addLeadSources() {
+    return ADD_SOURCES.map(function (r) { return { key: r.key, label: CUSTOM.sources[r.key] || r.label }; });
+  }
+  function manualSourceLabel(key) {
+    var k = String(key || '').toLowerCase();
+    if (!k) return '';
+    var r = addLeadSources().filter(function (x) { return x.key === k; })[0];
+    return r ? r.label : humanize(k);
+  }
+
+  // The same rules as cv_add_lead in the database (sql/011): the server is the authority, this only saves a round trip.
+  // Shared test vectors: tools/tests/phone_vectors.json. +1 numbers must be NXX-NXX-XXXX (area code and exchange
+  // start 2-9); a literal "(0)" trunk marker is dropped first.
+  function normalizeLeadPhone(input) {
+    if (typeof input !== 'string') return null;
+    var s = input.replace(/\(0\)/, '').trim();
+    if (!s) return null;
+    var digits = s.replace(/\D/g, '');
+    var nat = null, out = null;
+    if (s.charAt(0) === '+') {
+      if (digits.length >= 8 && digits.length <= 15 && digits.charAt(0) !== '0') out = '+' + digits;
+      if (out && digits.charAt(0) === '1') nat = digits.slice(1);
+    } else if (digits.length === 10) { out = '+1' + digits; nat = digits; }
+    else if (digits.length === 11 && digits.charAt(0) === '1') { out = '+' + digits; nat = digits.slice(1); }
+    if (!out) return null;
+    if (nat !== null && !/^[2-9][0-9]{2}[2-9][0-9]{6}$/.test(nat)) return null;
+    return out;
+  }
+
+  // Text typed into the form: control and invisible direction characters out, spaces collapsed, trimmed, blank = null.
+  function cleanText(v) {
+    if (v === null || v === undefined) return null;
+    var s = String(v).replace(/[\t\r\n]/g, ' ').replace(/[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, '').replace(/\s+/g, ' ').trim();
+    return s ? s : null;
+  }
+
+  var ADD_LEAD_ERRORS = {
+    name_required: 'Add a name.',
+    name_too_long: 'Keep the name under 120 characters.',
+    bad_phone: 'Enter a phone number with area code, like (416) 555-0123.',
+    bad_source: 'Pick where they came from.',
+    bad_email: "That email doesn't look right.",
+    bad_date: 'Pick a date between 2020 and five years from now.',
+    bad_guests: 'Guests must be a whole number from 1 to 5000.',
+    area_too_long: 'Keep the area under 120 characters.',
+    occasion_too_long: 'Keep the occasion under 80 characters.'
+  };
+  var ADD_LEAD_FIELD = {
+    name_required: 'name', name_too_long: 'name', bad_phone: 'phone', bad_source: 'source', bad_email: 'email',
+    bad_date: 'event_date', bad_guests: 'guests', area_too_long: 'area', occasion_too_long: 'occasion'
+  };
+  // Order the checks run (and the first bad field gets the focus): the form's order, then the rest.
+  var ADD_LEAD_ORDER = ['name', 'phone', 'source', 'event_date', 'guests', 'area', 'occasion', 'email'];
+
+  // form = { name, phone, source, event_date, guests, area, occasion, email, contacted } (strings from the inputs).
+  // -> { ok, errors: { field: code }, values: { name, phone (E.164), source, event_date, guests, area, occasion, email, contacted } }
+  function validateAddLead(form, now) {
+    var f = form || {};
+    var errors = {};
+    var v = {
+      name: cleanText(f.name), phone: null, source: String(f.source || '').toLowerCase(),
+      event_date: cleanText(f.event_date), guests: null, area: cleanText(f.area), occasion: cleanText(f.occasion),
+      email: cleanText(f.email), contacted: f.contacted === true
+    };
+    if (!v.name) errors.name = 'name_required';
+    else if (v.name.length > 120) errors.name = 'name_too_long';
+    v.phone = normalizeLeadPhone(String(f.phone == null ? '' : f.phone));
+    if (!v.phone) errors.phone = 'bad_phone';
+    if (!ADD_SOURCES.some(function (r) { return r.key === v.source; })) errors.source = 'bad_source';
+    if (v.email && (v.email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email))) errors.email = 'bad_email';
+    if (v.event_date) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.event_date);
+      var okDate = false;
+      if (m) {
+        var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+        var real = new Date(Date.UTC(y, mo - 1, d));
+        var t = today(now);
+        okDate = real.getUTCFullYear() === y && real.getUTCMonth() === mo - 1 && real.getUTCDate() === d &&
+          v.event_date >= '2020-01-01' && v.event_date <= ymd(t.y + 5, t.m, t.d);
+      }
+      if (!okDate) errors.event_date = 'bad_date';
+    }
+    var g = cleanText(f.guests);
+    if (g !== null) {
+      if (/^\d{1,4}$/.test(g) && Number(g) >= 1 && Number(g) <= 5000) v.guests = Number(g);
+      else errors.guests = 'bad_guests';
+    }
+    if (v.area && v.area.length > 120) errors.area = 'area_too_long';
+    if (v.occasion && v.occasion.length > 80) errors.occasion = 'occasion_too_long';
+    return { ok: Object.keys(errors).length === 0, errors: errors, values: v };
+  }
+  function addLeadFirstError(errors) {
+    for (var i = 0; i < ADD_LEAD_ORDER.length; i++) if (errors && errors[ADD_LEAD_ORDER[i]]) return ADD_LEAD_ORDER[i];
+    return '';
+  }
+  function addLeadErrorText(code) { return ADD_LEAD_ERRORS[code] || "Check this and try again."; }
+
+  // Validated values -> RPC arguments. Only filled fields are sent.
+  function addLeadArgs(values) {
+    var a = { p_name: values.name, p_phone: values.phone, p_source: values.source };
+    if (values.email) a.p_email = values.email;
+    if (values.event_date) a.p_event_date = values.event_date;
+    if (values.guests !== null && values.guests !== undefined) a.p_guests = values.guests;
+    if (values.area) a.p_area = values.area;
+    if (values.occasion) a.p_occasion = values.occasion;
+    if (values.contacted) a.p_contacted = true;
+    return a;
+  }
+
+  // A cv_add_lead failure -> { kind, field, text }. kind: field | feature_off | not_owner | auth | network | other.
+  function addLeadError(err) {
+    var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).trim().toLowerCase();
+    var det = String((err && err.details) || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
+    var m = /\b(not_owner|not_allowed|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(raw);
+    if (m) {
+      var why = (m[2] ? String(m[2]).trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_') : '') || det;
+      if (m[1] === 'not_owner') return { kind: 'not_owner', field: '', text: "Your sign-in isn't linked to this business. Sign out, then sign in with your own number." };
+      if (m[1] === 'not_allowed') {
+        if (why === 'feature_off') return { kind: 'feature_off', field: '', text: 'Adding leads is switched off.' };
+        return { kind: 'other', field: '', text: "You can't add a lead right now." };
+      }
+      if (ADD_LEAD_FIELD[why]) return { kind: 'field', field: ADD_LEAD_FIELD[why], text: ADD_LEAD_ERRORS[why] };
+      return { kind: 'other', field: '', text: 'Check the details and try again.' };
+    }
+    var status = err && err.status;
+    if (status === 401 || (err && err.code === 'PGRST301') || /jwt/.test(raw)) return { kind: 'auth', field: '', text: 'Your session ran out. Sign out and sign in again.' };
+    if (/failed to fetch|network|load failed/.test(raw)) return { kind: 'network', field: '', text: "Can't reach the server. Check your connection and try again." };
+    return { kind: 'other', field: '', text: "Couldn't add that lead. Try again in a moment." };
+  }
+
+  // The same person across number formats: the digits, with a 10-digit number read as +1 (as other_events does).
+  function phoneKey(p) {
+    var d = String(p == null ? '' : p).replace(/\D/g, '');
+    if (d.length === 10) d = '1' + d;
+    return d;
+  }
+  function dateKey(d) { var m = /^(\d{4}-\d{2}-\d{2})/.exec(String(d || '')); return m ? m[1] : ''; }
+
+  // Leads already on file for the typed phone number, for the duplicate box under Phone.
+  // optedPhones (optional): phone numbers known to have opted out. -> { key, matches, shown (max 3), more, sameLead (same date, or both without a date), optedOut }
+  function dupInfo(leads, rawPhone, eventDate, optedPhones) {
+    var norm = normalizeLeadPhone(String(rawPhone == null ? '' : rawPhone));
+    var out = { phone: norm, matches: [], shown: [], more: 0, sameLead: null, optedOut: false };
+    if (!norm) return out;
+    var key = phoneKey(norm);
+    var want = dateKey(eventDate);
+    out.matches = (Array.isArray(leads) ? leads : []).filter(function (l) { return l && isUuid(l.lead_id) && phoneKey(l.phone) === key; });
+    out.shown = out.matches.slice(0, 3);
+    out.more = Math.max(0, out.matches.length - 3);
+    out.sameLead = out.matches.filter(function (l) { return dateKey(l.event_date) === want; })[0] || null;
+    // lead_list has no opted_out column, so also check the numbers lead_detail says opted out (optedPhones), booked, lost or manual rows included.
+    out.optedOut = out.matches.some(function (l) { return isOptedOut(l); }) ||
+      (Array.isArray(optedPhones) ? optedPhones : []).some(function (p) { return phoneKey(p) === key; });
+    return out;
+  }
+  // "Already on file: Pat · Sat, Nov 14 · Asked for you" pieces for one match.
+  function dupLine(lead) {
+    return [displayName(lead), fmtEventDate(lead.event_date) || 'no date', statusInfo(lead.status).label].join(' · ');
+  }
+  var DUP_TEXT = {
+    same: 'Same date as a lead on file: saving opens that lead (blank details are filled in, nothing is overwritten).',
+    other: 'A different date from the leads on file: saving adds a new event for the same person.',
+    optedOut: 'This number opted out of texts.'
+  };
+
+  // Where a lead came from, for the record header: "Added by you · Instagram", "From your booking form", "Texted you first".
+  function isManual(lead) { return !!lead && lead.source === 'manual'; }
+  function sourceLine(lead) {
+    if (!lead) return '';
+    if (lead.source === 'manual') {
+      var l = manualSourceLabel(lead.manual_source);
+      return l ? 'Added by you · ' + l : 'Added by you';
+    }
+    if (lead.source === 'tally_form') return 'From your booking form';
+    if (lead.source === 'sms_inbound') return 'Texted you first';
+    return '';
+  }
+  var NO_AUTO_TEXT = 'No automatic texts: you contact them yourself.';
+  function noAutoLine(lead) { return lead && lead.auto_texts === false ? NO_AUTO_TEXT : ''; }
+
+  // cv_metrics().sources -> the buckets that have leads, in the server's order, with plain labels.
+  var SOURCE_BUCKETS = { form: 'Your booking form', text: 'Texted you first', other: 'Other' };
+  function sourceRows(sources) {
+    return (Array.isArray(sources) ? sources : []).filter(function (b) { return b && num(b.leads) > 0; }).map(function (b) {
+      var k = String(b.key || '');
+      var label = SOURCE_BUCKETS[k];
+      if (!label && k.indexOf('manual:') === 0) label = 'Added by you · ' + manualSourceLabel(k.slice(7));
+      var booked = num(b.booked) || 0;
+      return {
+        key: k, label: label || humanize(k), leads: num(b.leads) || 0, month: num(b.leads_this_month) || 0,
+        booked: booked, bookedMoney: booked > 0 ? fmtMoney(num(b.booked_total) || 0) : ''
+      };
+    });
   }
 
   /* ---------- push alerts (home-screen app) ---------- */
@@ -1789,6 +2006,25 @@
     digestLine: digestLine,
     FEATURES: FEATURES,
     featureOn: featureOn,
+    ADD_SOURCES: ADD_SOURCES,
+    addLeadSources: addLeadSources,
+    manualSourceLabel: manualSourceLabel,
+    normalizeLeadPhone: normalizeLeadPhone,
+    cleanText: cleanText,
+    validateAddLead: validateAddLead,
+    addLeadFirstError: addLeadFirstError,
+    addLeadErrorText: addLeadErrorText,
+    addLeadArgs: addLeadArgs,
+    addLeadError: addLeadError,
+    phoneKey: phoneKey,
+    dupInfo: dupInfo,
+    dupLine: dupLine,
+    DUP_TEXT: DUP_TEXT,
+    isManual: isManual,
+    sourceLine: sourceLine,
+    noAutoLine: noAutoLine,
+    NO_AUTO_TEXT: NO_AUTO_TEXT,
+    sourceRows: sourceRows,
     pushState: pushState,
     PUSH_TEXT: PUSH_TEXT,
     b64urlToBytes: b64urlToBytes,

@@ -37,6 +37,8 @@
       <h1 id="title">Leads</h1>
       <p id="subtitle" class="sub" hidden></p>
     </div>
+    <!-- "+ Add lead": only on Leads, only while CV_CUSTOM.features.addLead is on. -->
+    <button class="btn-add" id="btn-add-lead" type="button" aria-haspopup="dialog" hidden>+ Add lead</button>
   </header>
   <!-- Connection strip: only visible while the live connection is down. -->
   <p class="conn" id="live" role="status" aria-live="polite" hidden><span class="conn-dot" aria-hidden="true"></span><span id="live-text">Reconnecting…</span></p>
@@ -308,6 +310,8 @@
             <p class="rec-next" id="rec-next" hidden></p>
           </div>
           <p class="rec-job" id="rec-job" hidden></p>
+          <p class="rec-source" id="rec-source" hidden></p>
+          <p class="rec-noauto" id="rec-noauto" hidden></p>
           <a class="rec-phone" id="rec-phone" hidden></a>
         </header>
 
@@ -355,6 +359,8 @@
           </div>
         </section>
 
+        <p class="rec-price" id="rec-price" hidden><a class="fact-link" id="price-link" href="#/quote">Price it in the quote calculator</a></p>
+
         <section class="rec-card" id="rec-quote" aria-labelledby="h-quote" hidden>
           <h3 class="rec-h" id="h-quote">Quote</h3>
           <div id="quote-body"></div>
@@ -378,7 +384,7 @@
         </section>
 
         <section class="rec-card" id="rec-others" aria-labelledby="h-others" hidden>
-          <h3 class="rec-h" id="h-others">Other events from this contact</h3>
+          <h3 class="rec-h" id="h-others">Other events from this person</h3>
           <ul class="others" id="others-list"></ul>
         </section>
       </div>
@@ -392,6 +398,8 @@
   </nav>
 
   </div>
+
+  <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
 
   <!-- Confirm sheet for Contacted / Booked / Lost. A native modal dialog: focus stays inside, Esc cancels. -->
   <dialog class="sheet" id="confirm" aria-labelledby="confirm-text">
@@ -416,6 +424,72 @@
         <button class="btn quiet" id="confirm-no" type="button">Cancel</button>
       </div>
     </div>
+  </dialog>
+
+  <!-- Add a lead by hand. A native modal dialog like the sheet above: it sits over the bottom bar, scrolls inside itself on a small phone. -->
+  <dialog class="sheet sheet-add" id="add-lead" aria-labelledby="add-title">
+    <form class="sheet-body" id="add-form" novalidate>
+      <p class="sheet-text" id="add-title">Add a lead</p>
+      <p class="hint" id="add-hint">No automatic texts go to leads you add. You contact them yourself.</p>
+
+      <div class="sheet-field">
+        <label class="field-label" for="add-name">Name</label>
+        <input class="field" id="add-name" type="text" autocomplete="off" maxlength="120" aria-describedby="add-err-name">
+        <p class="error" id="add-err-name" role="alert" hidden></p>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="add-phone">Phone</label>
+        <input class="field" id="add-phone" type="tel" inputmode="tel" autocomplete="off" aria-describedby="add-err-phone add-dup">
+        <p class="error" id="add-err-phone" role="alert" hidden></p>
+        <div class="add-dup" id="add-dup" role="status" aria-live="polite" hidden>
+          <p class="add-dup-h" id="add-dup-h">Already on file</p>
+          <ul class="add-dup-list" id="add-dup-list"></ul>
+          <p class="add-dup-more" id="add-dup-more" hidden></p>
+          <p class="add-dup-same" id="add-dup-same" hidden></p>
+          <p class="add-dup-opt" id="add-dup-opt" hidden></p>
+        </div>
+      </div>
+      <fieldset class="sheet-field reason-box" aria-describedby="add-err-source">
+        <legend class="field-label">Where they came from</legend>
+        <div class="reason-chips" id="add-source-chips"></div>
+        <p class="error" id="add-err-source" role="alert" hidden></p>
+      </fieldset>
+      <div class="sheet-field">
+        <label class="field-label" for="add-date">Event date</label>
+        <input class="field" id="add-date" type="date" aria-describedby="add-err-event_date">
+        <p class="error" id="add-err-event_date" role="alert" hidden></p>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="add-guests">Guests</label>
+        <input class="field" id="add-guests" type="text" inputmode="numeric" autocomplete="off" maxlength="4" aria-describedby="add-err-guests">
+        <p class="error" id="add-err-guests" role="alert" hidden></p>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="add-area">Event area</label>
+        <input class="field" id="add-area" type="text" autocomplete="off" maxlength="120" aria-describedby="add-err-area">
+        <p class="error" id="add-err-area" role="alert" hidden></p>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="add-occasion">Occasion</label>
+        <input class="field" id="add-occasion" type="text" autocomplete="off" maxlength="80" aria-describedby="add-err-occasion">
+        <p class="error" id="add-err-occasion" role="alert" hidden></p>
+      </div>
+      <label class="add-check" for="add-contacted">
+        <input type="checkbox" id="add-contacted">
+        <span>Already talked to them</span>
+      </label>
+      <div class="sheet-field">
+        <label class="field-label" for="add-email">Email</label>
+        <input class="field" id="add-email" type="email" inputmode="email" autocomplete="off" autocapitalize="off" maxlength="254" aria-describedby="add-err-email">
+        <p class="error" id="add-err-email" role="alert" hidden></p>
+      </div>
+
+      <p class="error" id="add-error" role="alert" hidden></p>
+      <div class="sheet-actions">
+        <button class="btn primary" id="add-submit" type="submit">Add lead</button>
+        <button class="btn quiet" id="add-cancel" type="button">Cancel</button>
+      </div>
+    </form>
   </dialog>
 
 </div>

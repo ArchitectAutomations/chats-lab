@@ -65,6 +65,7 @@
   var HAS_SEARCH = feature('search');
   var HAS_NOTES = feature('notes');
   var HAS_PUSH = feature('push');
+  var HAS_ADD = feature('addLead');
 
   function $(id) { return document.getElementById(id); }
   var el = {
@@ -96,6 +97,12 @@
     btnVerify: $('btn-verify'), btnResend: $('btn-resend'), btnChange: $('btn-change'), configErr: $('config-error'),
     listScroll: $('list-scroll'), filters: $('filters'), listLoading: $('list-loading'), leadList: $('lead-list'),
     listEmpty: $('list-empty'), filterEmpty: $('filter-empty'), listErr: $('list-error'),
+    btnAdd: $('btn-add-lead'), toast: $('toast'),
+    addDlg: $('add-lead'), addForm: $('add-form'), addName: $('add-name'), addPhone: $('add-phone'), addDate: $('add-date'),
+    addGuests: $('add-guests'), addArea: $('add-area'), addOccasion: $('add-occasion'), addContacted: $('add-contacted'),
+    addEmail: $('add-email'), addSourceChips: $('add-source-chips'), addErr: $('add-error'), addSubmit: $('add-submit'), addCancel: $('add-cancel'),
+    addDup: $('add-dup'), addDupList: $('add-dup-list'), addDupMore: $('add-dup-more'), addDupSame: $('add-dup-same'), addDupOpt: $('add-dup-opt'),
+    recSource: $('rec-source'), recNoauto: $('rec-noauto'), recPrice: $('rec-price'), priceLink: $('price-link'),
     strip: $('strip'), stripChip: $('strip-chip'), sysFold: $('sys-fold'), hNotes: $('h-notes'),
     recordLoading: $('record-loading'), recHead: $('rec-head'), recName: $('rec-name'), recNext: $('rec-next'), recJob: $('rec-job'), recPhone: $('rec-phone'), recHistory: $('rec-history'),
     optoutBanner: $('optout-banner'), recContact: $('rec-contact'),
@@ -148,6 +155,9 @@
     pending: null,       // status being saved from the page
     confirming: null,    // status waiting in the confirm sheet
     historyOpen: false,
+    addBusy: false,
+    toastTimer: null,
+    quotePrefill: null,  // { guests, area } from a lead's record -> the quote calculator, used once
     actionButtons: {}
   };
 
@@ -245,7 +255,10 @@
   ].join(',');
   // Added for final price, lost reason and notes; dropped again if the view does not have them yet.
   var DETAIL_EXTRA = ',booked_amount,lost_reason,lost_note,notes';
-  var SEARCH_COLUMNS = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
+  // Added for hand-added leads (sql/011); dropped again if the view does not have them yet.
+  var DETAIL_SOURCE = ',source,manual_source,auto_texts';
+  var SEARCH_BASE = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
+  var SEARCH_COLUMNS = SEARCH_BASE + ',source,manual_source'; // sql/011 columns on lead_detail; the search falls back without them
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
 
   function makeRealApi() {
@@ -277,11 +290,14 @@
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
-          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA).eq('lead_id', id).maybeSingle().then(function (r) {
-            if (!r.error) return r.data;
-            return client.from('lead_detail').select(DETAIL_COLUMNS).eq('lead_id', id).maybeSingle().then(function (r2) {
-              if (!r2.error) return r2.data;
-              return client.from('lead_list').select('*').eq('lead_id', id).maybeSingle().then(ok);
+          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE).eq('lead_id', id).maybeSingle().then(function (r0) {
+            if (!r0.error) return r0.data;
+            return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA).eq('lead_id', id).maybeSingle().then(function (r) {
+              if (!r.error) return r.data;
+              return client.from('lead_detail').select(DETAIL_COLUMNS).eq('lead_id', id).maybeSingle().then(function (r2) {
+                if (!r2.error) return r2.data;
+                return client.from('lead_list').select('*').eq('lead_id', id).maybeSingle().then(ok);
+              });
             });
           }),
           client.from('conversation').select('*').eq('lead_id', id)
@@ -305,8 +321,12 @@
         return client.from('lead_detail').select(SEARCH_COLUMNS + ',booked_amount,lost_reason').or(f)
           .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(function (r) {
             if (!r.error) return r.data;
-            return client.from('lead_detail').select(SEARCH_COLUMNS).or(f)
-              .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(ok);
+            return client.from('lead_detail').select(SEARCH_BASE + ',booked_amount,lost_reason').or(f)
+              .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(function (r2) {
+                if (!r2.error) return r2.data;
+                return client.from('lead_detail').select(SEARCH_BASE).or(f)
+                  .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(ok);
+              });
           });
       },
       // Read-only price check. Non-2xx answers are thrown as { status, error, details } from the JSON body.
@@ -322,6 +342,12 @@
           throw { status: 0, error: String(r.error.name || 'network'), details: String(r.error.message || '') };
         });
       },
+      // Owner-only RPC (sql/011): -> [{ lead_id, created }]. args from L.addLeadArgs.
+      optedOutPhones: function () {
+        return client.from('lead_detail').select('phone').eq('opted_out', true).limit(1000)
+          .then(function (r) { return r.error ? [] : (r.data || []).map(function (x) { return x.phone; }); });
+      },
+      addLead: function (args) { return client.rpc('cv_add_lead', args).then(ok); },
       addNote: function (id, body) { return client.rpc('cv_add_note', { p_lead_id: id, p_body: body }).then(ok); },
       deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
@@ -449,6 +475,8 @@
       setText(el.subtitle, '');
     }
     if (el.confirm.open) el.confirm.close();
+    if (el.addDlg.open) closeAdd();
+    show(el.btnAdd, signedIn && name === 'list' && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');
     markTabs();
     if (!signedIn) setLive('off');
     renderConn();
@@ -659,6 +687,7 @@
     if (v.money) top.appendChild(make('span', 'lead-money', v.money));
     a.appendChild(top);
     a.appendChild(make('span', 'row-job', v.job));
+    if (L.isManual(lead)) a.appendChild(make('span', 'row-tag', 'Added by you'));
     if (opts.needs && v.said) a.appendChild(make('span', 'row-said', v.said)); // text only, never markup
     (opts.lines || []).forEach(function (ln) {
       if (!ln) return;
@@ -680,6 +709,137 @@
     }
     li.appendChild(a);
     return li;
+  }
+
+  /* ---------- add a lead by hand (Leads, "+ Add lead") ----------
+     A modal sheet like the status sheet. The server (cv_add_lead) is the authority; L.validateAddLead mirrors its checks.
+     Same phone + same date opens the lead on file; same phone + another date is a new event for the same person. */
+
+  var ADD_FIELD_EL = { name: 'addName', phone: 'addPhone', event_date: 'addDate', guests: 'addGuests', area: 'addArea', occasion: 'addOccasion', email: 'addEmail' };
+
+  function buildAddSources() {
+    var frag = document.createDocumentFragment();
+    L.addLeadSources().forEach(function (r) {
+      var lab = make('label', 'reason-chip');
+      var input = make('input');
+      input.type = 'radio'; input.name = 'add-source'; input.value = r.key;
+      input.addEventListener('change', function () { setAddError('source', ''); });
+      lab.appendChild(input);
+      lab.appendChild(make('span', '', r.label));
+      frag.appendChild(lab);
+    });
+    el.addSourceChips.replaceChildren(frag);
+  }
+
+  function addFieldNode(f) { return f === 'source' ? el.addSourceChips.querySelector('input') : el[ADD_FIELD_EL[f]]; }
+
+  function setAddError(field, text) {
+    var p = $('add-err-' + field);
+    if (p) setText(p, text);
+    var input = ADD_FIELD_EL[field] ? el[ADD_FIELD_EL[field]] : null;
+    if (input) { if (text) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid'); }
+  }
+  function clearAddErrors() {
+    ['name', 'phone', 'source', 'event_date', 'guests', 'area', 'occasion', 'email'].forEach(function (f) { setAddError(f, ''); });
+    setText(el.addErr, '');
+  }
+
+  function pickedAddSource() {
+    var c = el.addSourceChips.querySelector('input:checked');
+    return c ? c.value : '';
+  }
+
+  function readAddForm() {
+    return {
+      name: el.addName.value, phone: el.addPhone.value, source: pickedAddSource(), event_date: el.addDate.value,
+      guests: el.addGuests.value, area: el.addArea.value, occasion: el.addOccasion.value, email: el.addEmail.value,
+      contacted: el.addContacted.checked
+    };
+  }
+
+  // "Already on file" box under Phone. Uses the lead list already loaded (no extra call).
+  function renderAddDup() {
+    var d = L.dupInfo(S.listLoaded ? S.leads : [], el.addPhone.value, el.addDate.value, S.optedPhones);
+    show(el.addDup, d.matches.length > 0 || d.optedOut);
+    if (!d.matches.length) { setText(el.addDupSame, ''); setText(el.addDupMore, ''); setText(el.addDupOpt, d.optedOut ? L.DUP_TEXT.optedOut : ''); el.addDupList.replaceChildren(); return; }
+    var frag = document.createDocumentFragment();
+    d.shown.forEach(function (l) {
+      var li = make('li', 'add-dup-row');
+      li.appendChild(make('span', 'add-dup-text', L.dupLine(l)));
+      var a = make('a', 'add-dup-open', 'Open');
+      a.href = '#/lead/' + encodeURIComponent(l.lead_id);
+      a.setAttribute('aria-label', 'Open ' + leadName(l));
+      li.appendChild(a);
+      frag.appendChild(li);
+    });
+    el.addDupList.replaceChildren(frag);
+    setText(el.addDupMore, d.more ? '+' + d.more + ' more' : '');
+    setText(el.addDupSame, d.sameLead ? L.DUP_TEXT.same : L.DUP_TEXT.other);
+    setText(el.addDupOpt, d.optedOut ? L.DUP_TEXT.optedOut : '');
+  }
+
+  function openAdd() {
+    if (!HAS_ADD || !S.signedIn || S.addBusy) return;
+    el.addForm.reset();
+    clearAddErrors();
+    renderAddDup();
+    // Numbers that opted out (lead_list cannot say): one lookup per open, the box updates when it lands.
+    if (S.api && typeof S.api.optedOutPhones === 'function') {
+      Promise.resolve(S.api.optedOutPhones()).then(function (rows) { S.optedPhones = Array.isArray(rows) ? rows : []; renderAddDup(); }, function () { /* the box still works from the list */ });
+    }
+    if (typeof el.addDlg.showModal === 'function') el.addDlg.showModal();
+    else el.addDlg.setAttribute('open', '');
+    try { el.addName.focus(); } catch (e) { /* ignore */ }
+  }
+
+  function closeAdd() {
+    if (el.addDlg.open) {
+      if (typeof el.addDlg.close === 'function') el.addDlg.close();
+      else el.addDlg.removeAttribute('open');
+    }
+  }
+
+  function showToast(text) {
+    clearTimeout(S.toastTimer);
+    setText(el.toast, text);
+    S.toastTimer = setTimeout(function () { setText(el.toast, ''); }, 4000);
+  }
+
+  function setAddBusy(on) {
+    S.addBusy = on;
+    el.addSubmit.disabled = on;
+    el.addSubmit.classList.toggle('is-busy', on);
+    el.addCancel.disabled = on;
+  }
+
+  function submitAdd() {
+    if (S.addBusy) return;
+    clearAddErrors();
+    var res = L.validateAddLead(readAddForm());
+    if (!res.ok) {
+      Object.keys(res.errors).forEach(function (f) { setAddError(f, L.addLeadErrorText(res.errors[f])); });
+      var first = addFieldNode(L.addLeadFirstError(res.errors));
+      if (first) try { first.focus(); } catch (e) { /* ignore */ }
+      return;
+    }
+    setAddBusy(true);
+    Promise.resolve().then(function () { return S.api.addLead(L.addLeadArgs(res.values)); }).then(function (out) {
+      var row = Array.isArray(out) ? out[0] : out;
+      if (!row || !L.isUuid(row.lead_id)) throw new Error('no lead id');
+      setAddBusy(false);
+      closeAdd();
+      showToast(row.created === false ? 'Already on file: opened it' : 'Lead added');
+      refreshList();
+      location.hash = '#/lead/' + row.lead_id;
+    }).catch(function (e) {
+      setAddBusy(false);
+      var er = L.addLeadError(e);
+      if (er.kind === 'field') {
+        setAddError(er.field, er.text);
+        var n = addFieldNode(er.field);
+        if (n) try { n.focus(); } catch (x) { /* ignore */ }
+      } else setText(el.addErr, er.text);
+    });
   }
 
   /* ---------- search (Leads tab) ---------- */
@@ -895,6 +1055,12 @@
   function showQuote() {
     S.thread.id = null;
     setScreen('quote');
+    var pre = S.quotePrefill;
+    S.quotePrefill = null;
+    if (pre) {
+      el.qGuests.value = pre.guests ? String(pre.guests) : '';
+      el.qCity.value = pre.area || '';
+    }
     qTypeChanged();
     renderQuoteResult();
   }
@@ -1294,6 +1460,25 @@
     b.appendChild(ul);
     return b;
   };
+  // Where leads come from (cv_metrics().sources, 7 fixed buckets): only buckets with leads. No block at all on an older server.
+  METRIC_BLOCKS.sources = function (m) {
+    if (!Array.isArray(m.sources)) return null;
+    var b = block('Where leads come from');
+    var rows = L.sourceRows(m.sources);
+    if (!rows.length) { b.appendChild(make('p', 'm-line m-empty', 'No leads yet.')); return b; }
+    var ul = make('ul', 'vt-list');
+    rows.forEach(function (r) {
+      var li = make('li', 'vt-row');
+      li.appendChild(make('span', 'vt-name', r.label));
+      var right = make('span', 'vt-right');
+      right.appendChild(make('span', 'vt-count', L.plural(r.leads, 'lead', 'leads') + ' \u00b7 ' + r.month + ' this month'));
+      if (r.booked) right.appendChild(make('span', 'vt-count', r.booked + ' booked' + (r.bookedMoney ? ' (' + r.bookedMoney + ')' : '')));
+      li.appendChild(right);
+      ul.appendChild(li);
+    });
+    b.appendChild(ul);
+    return b;
+  };
   // Why leads were lost (cv_metrics().lost_reasons), biggest first, simple bars.
   METRIC_BLOCKS.lost_reasons = function (m) {
     var b = block('Why leads were lost');
@@ -1319,7 +1504,7 @@
     b.appendChild(ol);
     return b;
   };
-  var METRIC_DEFAULT = ['booked', 'open', 'value', 'close_rate', 'lost_reasons', 'speed'];
+  var METRIC_DEFAULT = ['booked', 'sources', 'open', 'value', 'close_rate', 'lost_reasons', 'speed'];
 
   // CV_CUSTOM.metrics order; unknown names ignored; all blocks when the setting is missing or empty.
   function metricOrder() {
@@ -1345,7 +1530,7 @@
     show(el.metricsLoading, false);
     setText(el.metricsErr, '');
     var frag = document.createDocumentFragment();
-    metricOrder().forEach(function (key) { frag.appendChild(METRIC_BLOCKS[key](m)); });
+    metricOrder().forEach(function (key) { var blk = METRIC_BLOCKS[key](m); if (blk) frag.appendChild(blk); });
 
     el.metricsBody.replaceChildren(frag);
     show(el.metricsBody, true);
@@ -1464,7 +1649,7 @@
       el.reasonNote.value = '';
       show(el.reasonOther, false);
     }
-    openSheet({ kind: 'status', status: action.status }, L.confirmText(leadName(lead), action.status), action.confirm,
+    openSheet({ kind: 'status', status: action.status }, L.confirmText(leadName(lead), action.status, lead), action.confirm,
       'sheet-' + action.status, booked ? el.price : null);
   }
 
@@ -1741,7 +1926,7 @@
     var lead = S.thread.lead;
     el.title.textContent = S.tab.label; // the lead's name is the big heading below; the bar says where Back goes
     setText(el.subtitle, '');
-    var sections = [el.recHead, el.recContact, el.strip, el.recNotes, el.recEvent, el.recQuote, el.recOthers, el.recHistory];
+    var sections = [el.recHead, el.recContact, el.strip, el.recNotes, el.recEvent, el.recPrice, el.recQuote, el.recOthers, el.recHistory];
     if (!lead) {
       sections.forEach(function (n) { show(n, false); });
       show(el.optoutBanner, false);
@@ -1754,6 +1939,8 @@
     fillChip(el.stripChip, st);
     renderNext();
     setText(el.recJob, L.jobBits(lead).join(' \u00b7 '));
+    setText(el.recSource, L.sourceLine(lead));
+    setText(el.recNoauto, L.noAutoLine(lead));
     show(el.recHead, true);
     show(el.optoutBanner, L.isOptedOut(lead));
     renderContact(lead);
@@ -1768,6 +1955,8 @@
     renderNotes(lead);
     renderEvent(lead);
     renderQuote(lead);
+    // A lead with no price yet can be priced in the calculator (nothing is saved to the lead in this round).
+    show(el.recPrice, TAB_ROUTES.indexOf('quote') !== -1 && (lead.quote_total === null || lead.quote_total === undefined || lead.quote_total === ''));
     renderOthers(lead);
   }
 
@@ -2237,6 +2426,24 @@
     el.price.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); confirmYes(); } });
     el.price.addEventListener('input', function () { el.price.removeAttribute('aria-invalid'); setText(el.confirmErr, ''); });
 
+    // Add a lead (Leads)
+    el.btnAdd.addEventListener('click', openAdd);
+    el.addForm.addEventListener('submit', function (e) { e.preventDefault(); submitAdd(); });
+    el.addCancel.addEventListener('click', closeAdd);
+    el.addDlg.addEventListener('click', function (e) { if (e.target === el.addDlg && !S.addBusy) closeAdd(); });
+    el.addDlg.addEventListener('cancel', function (e) { if (S.addBusy) e.preventDefault(); });
+    el.addPhone.addEventListener('blur', renderAddDup);
+    el.addPhone.addEventListener('input', function () { setAddError('phone', ''); });
+    el.addDate.addEventListener('change', function () { renderAddDup(); setAddError('event_date', ''); });
+    ['addName', 'addGuests', 'addArea', 'addOccasion', 'addEmail'].forEach(function (k) {
+      var f = k === 'addName' ? 'name' : k === 'addGuests' ? 'guests' : k === 'addArea' ? 'area' : k === 'addOccasion' ? 'occasion' : 'email';
+      el[k].addEventListener('input', function () { setAddError(f, ''); });
+    });
+    el.priceLink.addEventListener('click', function () {
+      var lead = S.thread.lead;
+      S.quotePrefill = lead ? { guests: lead.guests, area: String(lead.event_area || '') } : null;
+    });
+
     // Search (Leads)
     el.search.addEventListener('input', onSearchInput);
     el.search.addEventListener('keydown', function (e) { if (e.key === 'Escape' && el.search.value) { e.preventDefault(); clearSearch(); } });
@@ -2338,6 +2545,7 @@
     registerWorker();
     buildActions();
     buildReasons();
+    buildAddSources();
     show(el.searchWrap, HAS_SEARCH);
     applyAppName();
     restorePrefs();
