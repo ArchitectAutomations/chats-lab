@@ -28,7 +28,7 @@
   // Every backend call goes through one wrapper that records FAILURES only: the call's name, a status and a short code word.
   var API_NAMES = {
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
-    setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics',
+    setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test',
     supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', ask: 'cv-ask', askConfig: 'cv_ask_config', sendCode: 'auth', verify: 'auth'
   };
@@ -184,8 +184,9 @@
     live: 'off',
     liveTimer: null,
     stopLive: null,
-    seq: { list: 0, thread: 0, metrics: 0, followups: 0 },
+    seq: { list: 0, thread: 0, metrics: 0, forecast: 0, followups: 0 },
     metrics: null,
+    forecast: null, // cv_forecast() JSON; null = not loaded or failed (the block stays hidden)
     metricsError: '',
     followUps: null,     // follow_ups rows once loaded
     followUpsError: '',
@@ -424,6 +425,7 @@
       addNote: function (id, body) { return client.rpc('cv_add_note', { p_lead_id: id, p_body: body }).then(ok); },
       deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
+      forecast: function () { return client.rpc('cv_forecast').then(ok); },
       // Push alerts (owner-only RPCs). Every call is soft-failed by the caller.
       pushConfig: function () { return client.rpc('cv_push_config').then(ok); },
       pushSubscribe: function (k, ua) {
@@ -1978,6 +1980,7 @@
 
   function refreshMetrics() {
     if (!S.api.metrics) return Promise.resolve();
+    refreshForecast();
     var n = ++S.seq.metrics;
     return Promise.resolve(S.api.metrics()).then(function (m) {
       if (n !== S.seq.metrics || !S.signedIn) return;
@@ -1991,6 +1994,21 @@
         if (S.screen === 'metrics') renderMetrics();
       }
       retryLater();
+    });
+  }
+
+  // Looking ahead: its own RPC, soft-failed. Any error leaves the block hidden; nothing else on Metrics depends on it.
+  function refreshForecast() {
+    if (!S.api.forecast || !feature('forecast')) return Promise.resolve();
+    var n = ++S.seq.forecast;
+    return Promise.resolve(S.api.forecast()).then(function (f) {
+      if (n !== S.seq.forecast || !S.signedIn) return;
+      S.forecast = f || null;
+      if (S.screen === 'metrics') renderMetrics();
+    }).catch(function () {
+      if (n !== S.seq.forecast) return;
+      S.forecast = null;
+      if (S.screen === 'metrics') renderMetrics();
     });
   }
 
@@ -2131,7 +2149,47 @@
     b.appendChild(ol);
     return b;
   };
-  var METRIC_DEFAULT = ['booked', 'sources', 'open', 'value', 'close_rate', 'lost_reasons', 'speed'];
+  // Looking ahead (feature 'forecast'): booked money by event month and open quotes (both certain); the likely range only when ready.
+  METRIC_BLOCKS.forecast = function () {
+    var v = L.forecastView(S.forecast);
+    if (!v) return null; // off, errored or not loaded yet: no block at all
+    var b = block('Looking ahead');
+    b.appendChild(make('p', 'm-sub fc-head', 'Already booked, by event month'));
+    var ul = make('ul', 'vt-list fc-list');
+    v.rows.forEach(function (r) {
+      var li = make('li', 'vt-row' + (r.bookedCount ? '' : ' is-zero'));
+      li.appendChild(make('span', 'vt-name', r.label));
+      var right = make('span', 'vt-right');
+      if (r.bookedCount) right.appendChild(make('span', 'vt-money', r.bookedMoney));
+      right.appendChild(make('span', 'vt-count', r.bookedCount ? L.plural(r.bookedCount, 'job', 'jobs') : 'Nothing booked'));
+      li.appendChild(right);
+      ul.appendChild(li);
+    });
+    var lt = make('li', 'vt-row' + (v.later.bookedCount ? '' : ' is-zero'));
+    lt.appendChild(make('span', 'vt-name', 'Later'));
+    var lr = make('span', 'vt-right');
+    if (v.later.bookedCount) lr.appendChild(make('span', 'vt-money', v.later.bookedMoney));
+    lr.appendChild(make('span', 'vt-count', v.later.bookedCount ? L.plural(v.later.bookedCount, 'job', 'jobs') : 'Nothing booked'));
+    lt.appendChild(lr);
+    ul.appendChild(lt);
+    b.appendChild(ul);
+    b.appendChild(make('p', 'm-sub fc-head', 'Open quotes for future dates (not weighted)'));
+    b.appendChild(make('p', 'm-big fc-open', v.open.count ? v.open.money : '\u2014'));
+    b.appendChild(make('p', 'm-sub', v.open.count ? 'across ' + L.plural(v.open.count, 'open quote', 'open quotes') + ', counted in full' : 'No open quotes for future dates.'));
+    if (v.noOpenQuotes) {
+      // ready, but nothing open to weigh: certain rows only
+    } else if (v.ready) {
+      b.appendChild(make('p', 'm-sub fc-head', 'Likely still to come'));
+      b.appendChild(make('p', 'm-big fc-range', v.range));
+      b.appendChild(make('p', 'm-sub', 'Likely, not promised.'));
+    } else {
+      var note = make('div', 'fc-note');
+      v.notReadyLines.forEach(function (t, i) { note.appendChild(make('p', 'm-line' + (i === 0 ? ' fc-strong' : ''), t)); });
+      b.appendChild(note);
+    }
+    return b;
+  };
+  var METRIC_DEFAULT = ['booked', 'sources', 'open', 'value', 'forecast', 'close_rate', 'lost_reasons', 'speed'];
 
   // CV_CUSTOM.metrics order; unknown names ignored; all blocks when the setting is missing or empty.
   function metricOrder() {
@@ -2141,6 +2199,7 @@
     if (!out.length) out = METRIC_DEFAULT.slice();
     // Lead value is a section of Metrics: it follows the 'value' switch, right after Money on the table.
     out = out.filter(function (k) { return k !== 'value'; });
+    out = out.filter(function (k) { return k !== 'forecast' || feature('forecast'); });
     if (feature('value')) { var oi = out.indexOf('open'); out.splice(oi === -1 ? out.length : oi + 1, 0, 'value'); }
     return out;
   }
@@ -2775,7 +2834,7 @@
     S.leads = []; S.listLoaded = false; S.listError = '';
     S.thread = emptyThread();
     S.filter = 'open'; S.pending = null; S.tab = NAV[0];
-    S.seq.metrics++; S.metrics = null; S.metricsError = '';
+    S.seq.metrics++; S.seq.forecast++; S.forecast = null; S.metrics = null; S.metricsError = '';
     S.seq.followups++; S.followUps = null; S.followUpsError = '';
     clearSearch();
     S.quote = { busy: false, seq: S.quote.seq + 1, view: null, req: null };

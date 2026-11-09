@@ -763,6 +763,63 @@
 
   function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
+  /* ---------- Looking ahead (cv_forecast, sql/015) ---------- */
+
+  var FC_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  // 'YYYY-MM' -> 'Nov 2026'; anything else -> ''.
+  function forecastMonthLabel(ym) {
+    var m = /^(\d{4})-(\d{2})$/.exec(String(ym || ''));
+    if (!m) return '';
+    var i = Number(m[2]) - 1;
+    return i >= 0 && i < 12 ? FC_MONTHS[i] + ' ' + m[1] : '';
+  }
+  function fcPair(o) {
+    var c = num(o && o.count) || 0;
+    var t = num(o && o.total);
+    return { count: c, total: t === null ? 0 : t };
+  }
+  // Booked money text: "price not set" when jobs are booked but carry no amount (never "$0").
+  function fcBooked(p) { return p.count > 0 && !(p.total > 0) ? 'price not set' : fmtMoney(p.total); }
+  // The cv_forecast() JSON -> what the block shows, or null when the block must stay hidden (no data, or switched off).
+  // Certain numbers always come through; the range only when tracking.ready is true AND every range number is usable.
+  // When not ready no percentage and no range is ever put in the model.
+  function forecastView(f) {
+    if (!f || typeof f !== 'object' || f.enabled === false || !Array.isArray(f.months)) return null;
+    var tr = f.tracking || {};
+    var rows = f.months.map(function (mo) {
+      var b = fcPair(mo && mo.booked), o = fcPair(mo && mo.open);
+      return { label: forecastMonthLabel(mo && mo.month), bookedMoney: fcBooked(b), bookedCount: b.count,
+        openMoney: fmtMoney(o.total), openCount: o.count };
+    });
+    var lb = fcPair(f.later && f.later.booked), lo = fcPair(f.later && f.later.open);
+    var openCount = lo.count, openTotal = lo.total;
+    f.months.forEach(function (mo) { var o = fcPair(mo && mo.open); openCount += o.count; openTotal += o.total; });
+    var totals = f.totals || {};
+    var low = num(totals.low), high = num(totals.high);
+    var ready = tr.ready === true && openCount > 0 && low !== null && high !== null && high >= low;
+    var pe = fcPair(f.past_event);
+    var cohort = num(tr.cohort) || 0, recorded = num(tr.recorded) || 0;
+    var v = {
+      rows: rows,
+      later: { bookedMoney: fcBooked(lb), bookedCount: lb.count, openMoney: fmtMoney(lo.total), openCount: lo.count },
+      open: { money: fmtMoney(openTotal), count: openCount },
+      ready: ready,
+      range: ready ? fmtMoney(Math.round(low)) + ' to ' + fmtMoney(Math.round(high)) : '', // whole dollars; the contract stays in cents
+      noOpenQuotes: tr.ready === true && openCount === 0,
+      notReadyLines: []
+    };
+    if (!ready && !v.noOpenQuotes) {
+      v.notReadyLines.push('Not enough history yet to estimate what will book.');
+      v.notReadyLines.push('Outcome recorded for ' + recorded + ' of ' + cohort + ' past events.');
+      var mk = num(f.past_event && f.past_event.markable), mkt = num(f.past_event && f.past_event.markable_total);
+      if (mk !== null && mk > 0) {
+        v.notReadyLines.push(plural(mk, 'open lead has', 'open leads have') + ' an event date that has passed (' + fmtMoney(mkt === null ? 0 : mkt) +
+          '). Marking them Booked or Lost makes this forecast possible.');
+      }
+    }
+    return v;
+  }
+
   // Seconds -> "9 sec", "12 min", "3 h 10 min", "2 days", "2 days 3 h". '' for no value.
   function fmtDuration(seconds) {
     var s = num(seconds);
@@ -832,7 +889,7 @@
   /* ---------- feature switches (CV_CUSTOM.features) ---------- */
 
   // Every feature is on unless the client's settings say exactly false. Off = not shown at all.
-  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'push', 'addLead', 'support', 'export', 'ask'];
+  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'forecast', 'push', 'addLead', 'support', 'export', 'ask'];
   function featureOn(features, key) {
     return !(features && typeof features === 'object' && features[key] === false);
   }
@@ -2666,6 +2723,8 @@
     followupLine: followupLine,
     funnelRows: funnelRows,
     moneyCount: moneyCount,
+    forecastView: forecastView,
+    forecastMonthLabel: forecastMonthLabel,
     plural: plural,
     TIERS: TIERS,
     tierOf: tierOf,

@@ -97,7 +97,7 @@
 }
 
 /* Sand surfaces: text turns green, muted and dividers follow. */
-.lead-row, .ag-row, .m-tile, .rec-card, .sheet, .field, .row.in .bubble, .waiting-row, .more-row, .alerts {
+.lead-row, .ag-row, .m-tile, .fc-note, .rec-card, .sheet, .field, .row.in .bubble, .waiting-row, .more-row, .alerts {
   --ink: var(--on-secondary);
   --muted: var(--muted-on-secondary);
   --line: var(--secondary-deep);
@@ -513,6 +513,14 @@ a { color: var(--link); }
 .m-tile.is-rate { display: inline-block; min-width: 60%; padding: 12px 16px; }
 .m-tile.is-rate .m-tile-money { font-size: var(--fs-2xl); letter-spacing: -0.02em; }
 /* Lead value: one line per tier, no lists. */
+.fc-head { margin: 14px 0 6px; font-weight: 650; }
+.fc-head:first-of-type { margin-top: 0; }
+.m-big.fc-open, .m-big.fc-range { font-size: var(--fs-2xl); overflow-wrap: anywhere; }
+.fc-note { margin-top: 14px; padding: 10px 12px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); }
+.fc-note .m-line { color: var(--on-secondary); }
+.fc-note .m-line { margin: 0 0 6px; font-size: var(--fs-md); }
+.fc-note .m-line:last-child { margin-bottom: 0; }
+.fc-strong { font-weight: 700; }
 .vt-list { list-style: none; margin: 0; padding: 0; }
 .vt-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-3) 0; border-top: 1px solid var(--line); }
 .vt-row:first-child { border-top: 0; padding-top: 0; }

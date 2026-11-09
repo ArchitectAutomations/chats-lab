@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261107-0502-6b67a7d8";
+window.CV_BUILD = "20261109-0014-5bd5a861d";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -42,7 +42,7 @@ window.CV_CUSTOM = {
   timeZone: 'America/Toronto',
 
   // Features: true = on, false = off (an off feature is not shown at all, nowhere on the page).
-  // Left out = on. Tabs: followups, calendar, ask, quote, support, export, metrics. 'value' = the Lead value section of Metrics. Parts of other screens:
+  // Left out = on. Tabs: followups, calendar, ask, quote, support, export, metrics. 'value' = the Lead value section of Metrics, 'forecast' = the Looking ahead section of Metrics (the database has its own switch, cv_config forecast_enabled). Parts of other screens:
   // search (top of Leads), notes (on a lead's record), push ("Alerts on this phone" under More),
   // addLead (the "+ Add lead" button on Leads; the database has its own switch, cv_config add_lead_enabled).
   // ask (More > Ask your CRM: questions about your leads answered by AI, read only; the database has its own switch, cv_config ask_enabled).
@@ -50,7 +50,7 @@ window.CV_CUSTOM = {
   // export (More > Download spreadsheet: all your leads as a file for Numbers, Excel or Google Sheets; the database has its own switch, cv_config export_enabled).
   // Hours a "Needs you" lead may wait before its wait turns red with "· overdue" (1–720; default 24, Kevin 11-06).
   waitWarnHours: 24,
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true },
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true },
 
   // Ask your CRM: the starter questions shown under the empty chat (at most 4, each 80 characters at most).
   askStarters: ['How much did I book this month?', 'Who needs me right now?', "What's booked this weekend?", 'Where are my leads coming from?'],
@@ -82,6 +82,6 @@ window.CV_CUSTOM = {
   sourceLabels: { instagram: 'Instagram', phone_call: 'Phone call', referral: 'Referral', other: 'Other' },
 
   // Metrics tab: which blocks show, in this order.
-  // Known: 'booked', 'sources', 'open', 'value', 'close_rate', 'lost_reasons', 'speed'. 'value' (Lead value) also needs features.value.
-  metrics: ['booked', 'sources', 'open', 'value', 'close_rate', 'lost_reasons', 'speed']
+  // Known: 'booked', 'sources', 'open', 'value', 'forecast', 'close_rate', 'lost_reasons', 'speed'. 'value' (Lead value) also needs features.value.
+  metrics: ['booked', 'sources', 'open', 'value', 'forecast', 'close_rate', 'lost_reasons', 'speed']
 };
