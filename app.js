@@ -28,7 +28,7 @@
   // Every backend call goes through one wrapper that records FAILURES only: the call's name, a status and a short code word.
   var API_NAMES = {
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
-    setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast',
+    setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test',
     supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', ask: 'cv-ask', askConfig: 'cv_ask_config', sendCode: 'auth', verify: 'auth'
   };
@@ -184,12 +184,17 @@
     live: 'off',
     liveTimer: null,
     stopLive: null,
-    seq: { list: 0, thread: 0, metrics: 0, forecast: 0, followups: 0 },
+    seq: { list: 0, thread: 0, metrics: 0, forecast: 0, followups: 0, pastEvents: 0 },
     metrics: null,
     forecast: null, // cv_forecast() JSON; null = not loaded or failed (the block stays hidden)
     metricsError: '',
     followUps: null,     // follow_ups rows once loaded
     followUpsError: '',
+    pastEvents: null,    // cv_past_events() JSON; null = not loaded or failed (the section stays hidden)
+    pastBusy: '',        // lead id being saved from the Did-these-happen list
+    pastErr: '',
+    pastLatest: null,    // newest in-flight cv_past_events fetch (older ones wait for it)
+    pastScroll: false,   // 'Review them' link: scroll to the section once it is drawn
     search: { q: '', rows: null, error: '', seq: 0, timer: null },  // memory only: never URL / storage
     cal: null,           // { y, m, sel } month on screen and picked day
     showPossible: false,
@@ -426,6 +431,7 @@
       deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
       forecast: function () { return client.rpc('cv_forecast').then(ok); },
+      pastEvents: function () { return client.rpc('cv_past_events', { p_limit: 50 }).then(ok); },
       // Push alerts (owner-only RPCs). Every call is soft-failed by the caller.
       pushConfig: function () { return client.rpc('cv_push_config').then(ok); },
       pushSubscribe: function (k, ua) {
@@ -543,6 +549,7 @@
     show(el.list, name === 'list');
     show(el.metrics, name === 'metrics');
     show(el.followups, name === 'followups');
+    if (name !== 'followups') { S.pastScroll = false; S.pastErr = ''; }
     show(el.calendar, name === 'calendar');
     show(el.quote, name === 'quote');
     show(el.more, name === 'more');
@@ -1852,6 +1859,7 @@
 
   function refreshFollowUps() {
     if (!HAS_FOLLOWUPS || !S.api.fetchFollowUps) return Promise.resolve();
+    refreshPastEvents();
     var n = ++S.seq.followups;
     return Promise.resolve(S.api.fetchFollowUps()).then(function (rows) {
       if (n !== S.seq.followups || !S.signedIn) return;
@@ -1867,6 +1875,116 @@
         if (S.screen === 'followups') renderFollowUps();
       }
       retryLater();
+    });
+  }
+
+  // Did these happen?: its own RPC, soft-failed. Any error hides only this section.
+  function pastOn() { return HAS_FOLLOWUPS && feature('pastEvents') && !!S.api.pastEvents; }
+  function refreshPastEvents() {
+    if (!pastOn()) return Promise.resolve();
+    var n = ++S.seq.pastEvents;
+    var p = Promise.resolve(S.api.pastEvents()).then(function (r) {
+      if (n !== S.seq.pastEvents || !S.signedIn) return;
+      S.pastEvents = r || null;
+    }, function () {
+      if (n !== S.seq.pastEvents) return;
+      S.pastEvents = null;
+    }).then(function () {
+      // Superseded by a newer fetch: wait for the newest one, so a caller (savePast) never settles on an old list.
+      // Every fetch swallows its own error, so the newest always resolves; a fetch never waits on itself.
+      if (n !== S.seq.pastEvents) return S.pastLatest && S.pastLatest !== p ? S.pastLatest : undefined;
+      if (S.screen === 'followups') renderFollowUps();
+      else if (S.screen === 'metrics') renderMetrics();
+    });
+    S.pastLatest = p;
+    return p;
+  }
+
+  function pastRow(it) {
+    var busy = S.pastBusy === it.leadId;
+    var li = make('li', 'pe-row' + (busy ? ' is-busy' : ''));
+    var a = make('a', 'pe-who');
+    a.href = '#/lead/' + encodeURIComponent(it.leadId);
+    a.appendChild(make('span', 'pe-name', it.name));
+    a.appendChild(make('span', 'pe-meta', it.meta));
+    li.appendChild(a);
+    var btns = make('div', 'pe-btns');
+    [['booked', 'Booked'], ['lost', "Didn't book"]].forEach(function (d) {
+      var b = make('button', 'pe-btn pe-' + d[0], d[1]);
+      b.type = 'button';
+      b.disabled = !!S.pastBusy;
+      b.setAttribute('data-pe', it.leadId + ':' + d[0]);
+      b.setAttribute('aria-label', d[1] + ': ' + it.name);
+      b.addEventListener('click', function () {
+        var act = L.actions().filter(function (x) { return x.status === d[0]; })[0];
+        if (act) openConfirm(act, it);
+      });
+      btns.appendChild(b);
+    });
+    li.appendChild(btns);
+    return li;
+  }
+
+  // Top of Follow-ups: events that have passed with no outcome yet. Booked / Didn't book reuse the status sheet.
+  function pastSection() {
+    if (!pastOn()) return null;
+    var v = L.pastEventsView(S.pastEvents);
+    if (!v) return null;
+    var sec = make('section', 'fu-block pe-block');
+    sec.id = 'fu-past';
+    sec.setAttribute('aria-labelledby', 'fu-past-h');
+    var h = make('h2', 'fu-title', 'Did these happen?');
+    h.id = 'fu-past-h'; h.tabIndex = -1; h.setAttribute('data-pe', 'head');
+    h.appendChild(make('span', 'pe-count', String(v.total)));
+    sec.appendChild(h);
+    sec.appendChild(make('p', 'fu-rule pe-rule', 'These events have passed. Mark what happened.'));
+    if (S.pastErr) { var er = make('p', 'error pe-err', S.pastErr); er.setAttribute('role', 'alert'); sec.appendChild(er); }
+    var ul = make('ul', 'fu-list pe-list');
+    v.items.forEach(function (it) { ul.appendChild(pastRow(it)); });
+    sec.appendChild(ul);
+    if (v.more > 0) sec.appendChild(make('p', 'fu-empty pe-more', v.moreText));
+    return sec;
+  }
+
+  // A redraw replaces every node: put keyboard focus back on the same button / heading (the row may be gone: heading).
+  function restorePastFocus(key) {
+    if (!key) return;
+    var t = null, nodes = el.fuBody.querySelectorAll('[data-pe]');
+    for (var i = 0; i < nodes.length; i++) if (nodes[i].getAttribute('data-pe') === key && !nodes[i].disabled) { t = nodes[i]; break; }
+    if (!t) t = el.fuBody.querySelector('[data-pe="head"]');
+    if (t) try { t.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+  }
+
+  function scrollToPast() {
+    if (!S.pastScroll) return;
+    var sec = el.fuBody.querySelector('.pe-block');
+    if (!sec) return;
+    S.pastScroll = false;
+    try { sec.scrollIntoView({ block: 'start' }); sec.querySelector('.fu-title').focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+  }
+
+  function savePast(it, status, extra) {
+    if (S.pastBusy || S.pending) return;
+    S.pastBusy = it.leadId; S.pastErr = '';
+    renderFollowUps();
+    // pastBusy stays set until the refetch has settled: every button stays disabled (also on redraws from realtime),
+    // so a saved row can never be tapped again and flip its outcome.
+    function settle() {
+      S.pastBusy = '';
+      if (S.screen === 'followups') {
+        renderFollowUps();
+        var a = document.activeElement;
+        if (!a || a === document.body || a.disabled) {
+          var nx = el.fuBody.querySelector('.pe-btn:not([disabled])') || el.fuBody.querySelector('[data-pe="head"]');
+          if (nx) try { nx.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+        }
+      }
+    }
+    Promise.resolve().then(function () { return S.api.setStatus(it.leadId, status, extra || {}); }).then(function () {
+      return Promise.all([refreshPastEvents(), refreshList(), refreshForecast()]).then(settle, settle);
+    }, function (e) {
+      S.pastErr = 'Could not save ' + it.name + '. ' + L.friendlyStatusError(e);
+      return refreshPastEvents().then(settle, settle);
     });
   }
 
@@ -1895,16 +2013,22 @@
   }
 
   function renderFollowUps() {
+    var ae = document.activeElement, keep = ae && ae.getAttribute && el.fuBody.contains(ae) ? ae.getAttribute('data-pe') : null;
+    var past = pastSection();
     if (!S.followUps) {
+      // A follow-ups load in progress or failed never hides the Did-these-happen list (its own RPC).
       show(el.fuLoading, !S.followUpsError);
       setText(el.fuErr, S.followUpsError);
-      el.fuBody.replaceChildren();
+      if (past) el.fuBody.replaceChildren(past); else el.fuBody.replaceChildren();
+      restorePastFocus(keep);
+      scrollToPast();
       return;
     }
     show(el.fuLoading, false);
     setText(el.fuErr, '');
     var g = L.groupFollowUps(S.followUps, S.leads);
     var frag = document.createDocumentFragment();
+    if (past) frag.appendChild(past);
 
     // 1. Scheduled follow-up texts, soonest first, with a live countdown. (Who is waiting on the owner lives on Home.)
     // Grouped Today / This week / Later; the "how to stop it" rule is said once, under the heading.
@@ -1956,6 +2080,8 @@
     frag.appendChild(sent);
 
     el.fuBody.replaceChildren(frag);
+    restorePastFocus(keep);
+    scrollToPast();
   }
 
   // Countdowns change text only, so focus and scroll stay put.
@@ -1981,6 +2107,7 @@
   function refreshMetrics() {
     if (!S.api.metrics) return Promise.resolve();
     refreshForecast();
+    refreshPastEvents();
     var n = ++S.seq.metrics;
     return Promise.resolve(S.api.metrics()).then(function (m) {
       if (n !== S.seq.metrics || !S.signedIn) return;
@@ -2184,7 +2311,17 @@
       b.appendChild(make('p', 'm-sub', 'Likely, not promised.'));
     } else {
       var note = make('div', 'fc-note');
-      v.notReadyLines.forEach(function (t, i) { note.appendChild(make('p', 'm-line' + (i === 0 ? ' fc-strong' : ''), t)); });
+      v.notReadyLines.forEach(function (t, i) {
+        var p = make('p', 'm-line' + (i === 0 ? ' fc-strong' : ''), t);
+        if (i === 2 && v.pastCount > 0 && pastOn() && L.pastEventsView(S.pastEvents)) {
+          p.appendChild(document.createTextNode(' '));
+          var lk = make('button', 'fc-link', 'Review them');
+          lk.type = 'button';
+          lk.addEventListener('click', function () { S.pastScroll = true; location.hash = '#/followups'; });
+          p.appendChild(lk);
+        }
+        note.appendChild(p);
+      });
       b.appendChild(note);
     }
     return b;
@@ -2321,8 +2458,9 @@
     try { (focus || el.confirmNo).focus(); } catch (e) { /* ignore */ }
   }
 
-  function openConfirm(action) {
-    var lead = S.thread.lead;
+  // ctx = a row from the Did-these-happen list (the sheet then works on that lead, not the open thread).
+  function openConfirm(action, ctx) {
+    var lead = ctx ? ctx.lead : S.thread.lead;
     if (!lead || S.pending) return;
     var booked = action.status === 'booked', lost = action.status === 'lost';
     // Booked: final price, filled in from the quote. Lost: a reason is required.
@@ -2335,7 +2473,7 @@
       el.reasonNote.value = '';
       show(el.reasonOther, false);
     }
-    openSheet({ kind: 'status', status: action.status }, L.confirmText(leadName(lead), action.status, lead), action.confirm,
+    openSheet({ kind: 'status', status: action.status, ctx: ctx || null }, L.confirmText(leadName(lead), action.status, lead, !!ctx), action.confirm,
       'sheet-' + action.status, booked ? el.price : null);
   }
 
@@ -2349,7 +2487,7 @@
     var c = S.confirming;
     if (!c) return;
     if (c.kind === 'note') { closeConfirm(); deleteNote(c.id); return; }
-    var lead = S.thread.lead;
+    var lead = c.ctx ? c.ctx.lead : S.thread.lead;
     var x = L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value }, lead && lead.quote_total);
     if (!x.ok) {
       setText(el.confirmErr, x.error);
@@ -2358,7 +2496,8 @@
       return;
     }
     closeConfirm();
-    saveStatus(c.status, x.args);
+    if (c.ctx) savePast(c.ctx, c.status, x.args);
+    else saveStatus(c.status, x.args);
   }
 
   function closeConfirm() {
@@ -2834,7 +2973,7 @@
     S.leads = []; S.listLoaded = false; S.listError = '';
     S.thread = emptyThread();
     S.filter = 'open'; S.pending = null; S.tab = NAV[0];
-    S.seq.metrics++; S.seq.forecast++; S.forecast = null; S.metrics = null; S.metricsError = '';
+    S.seq.metrics++; S.seq.forecast++; S.seq.pastEvents++; S.pastEvents = null; S.pastBusy = ''; S.pastErr = ''; S.pastScroll = false; S.forecast = null; S.metrics = null; S.metricsError = '';
     S.seq.followups++; S.followUps = null; S.followUpsError = '';
     clearSearch();
     S.quote = { busy: false, seq: S.quote.seq + 1, view: null, req: null };

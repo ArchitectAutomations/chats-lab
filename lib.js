@@ -328,11 +328,12 @@
   }
 
   // Plain-words question for the confirm sheet.
-  function confirmText(name, status, lead) {
+  function confirmText(name, status, lead, plain) {
     var who = String(name || '').trim() || 'this lead';
     if (ACTION_STATUSES.indexOf(status) === -1) return '';
     var lc = function (st) { return statusInfo(st).label.toLowerCase(); };
     var q = 'Mark ' + who + ' as ' + lc(status) + '?';
+    if (plain) return q; // no promise about texts: used where the page cannot tell which leads get follow-ups
     if (status === 'contacted' && noConsent(lead)) return q + ' No automatic texts go to leads you added.';
     if (status === 'contacted') return q + " They'll get one follow-up text in 5 days unless you mark them " + lc('booked') + ' or ' + lc('lost') + '.';
     if (noConsent(lead)) return q;
@@ -811,13 +812,42 @@
     if (!ready && !v.noOpenQuotes) {
       v.notReadyLines.push('Not enough history yet to estimate what will book.');
       v.notReadyLines.push('Outcome recorded for ' + recorded + ' of ' + cohort + ' past events.');
-      var mk = num(f.past_event && f.past_event.markable), mkt = num(f.past_event && f.past_event.markable_total);
-      if (mk !== null && mk > 0) {
-        v.notReadyLines.push(plural(mk, 'open lead has', 'open leads have') + ' an event date that has passed (' + fmtMoney(mkt === null ? 0 : mkt) +
-          '). Marking them Booked or Lost makes this forecast possible.');
+      // The sentence agrees with the Did-these-happen list: N = cohort - recorded (same leads cv_past_events returns).
+      var n = Math.max(0, cohort - recorded), mt = num(f.past_event && f.past_event.markable_total);
+      if (n > 0) {
+        v.notReadyLines.push(plural(n, 'open lead has', 'open leads have') + ' an event date that has passed' +
+          (mt !== null && mt > 0 ? ' (' + fmtMoney(mt) + ' in quotes)' : '') + '. Marking them Booked or Lost makes this forecast possible.');
       }
     }
+    v.pastCount = Math.max(0, cohort - recorded);
     return v;
+  }
+
+  /* ---------- Did these happen? (cv_past_events, sql/016) ---------- */
+
+  var PE_SHOW = 50;
+  // The cv_past_events() JSON -> what the section shows, or null when it must stay hidden (no data, switched off, nothing to review).
+  // Names are plain text; the database sends no phone, email, address or messages, and none is read here.
+  function pastEventsView(res) {
+    if (!res || typeof res !== 'object' || res.enabled === false || !Array.isArray(res.items)) return null;
+    var items = [];
+    res.items.slice(0, PE_SHOW).forEach(function (it) {
+      if (!it || !isUuid(it.lead_id)) return;
+      var q = num(it.quote_total), d = num(it.days_past);
+      var date = fmtEventDate(it.event_date);
+      var ago = d !== null && d >= 1 ? plural(Math.floor(d), 'day', 'days') + ' ago' : '';
+      var quote = q !== null && q > 0 ? fmtMoney(q) : 'No quote';
+      items.push({
+        leadId: it.lead_id, name: displayName(it), quote: quote,
+        meta: [date, ago, quote].filter(Boolean).join(' · '),
+        lead: { lead_id: it.lead_id, display_name: it.display_name, quote_total: q, status: it.status }
+      });
+    });
+    if (!items.length) return null;
+    var total = num(res.total);
+    if (total === null || total < items.length) total = items.length;
+    return { total: total, items: items, more: total - items.length,
+      moreText: (total - items.length) + ' more. They appear here as you mark these.' };
   }
 
   // Seconds -> "9 sec", "12 min", "3 h 10 min", "2 days", "2 days 3 h". '' for no value.
@@ -889,7 +919,7 @@
   /* ---------- feature switches (CV_CUSTOM.features) ---------- */
 
   // Every feature is on unless the client's settings say exactly false. Off = not shown at all.
-  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'forecast', 'push', 'addLead', 'support', 'export', 'ask'];
+  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'forecast', 'pastEvents', 'push', 'addLead', 'support', 'export', 'ask'];
   function featureOn(features, key) {
     return !(features && typeof features === 'object' && features[key] === false);
   }
@@ -2724,6 +2754,7 @@
     funnelRows: funnelRows,
     moneyCount: moneyCount,
     forecastView: forecastView,
+    pastEventsView: pastEventsView,
     forecastMonthLabel: forecastMonthLabel,
     plural: plural,
     TIERS: TIERS,

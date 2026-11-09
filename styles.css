@@ -573,6 +573,27 @@ a { color: var(--link); }
 .fu-group-h { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0 0 var(--sp-2); font-size: var(--fs-md); font-weight: 700; color: var(--on-primary); }
 .fu-group-n { font-size: var(--fs-sm); font-weight: 600; color: var(--muted-on-primary); font-variant-numeric: tabular-nums; }
 
+/* Did these happen? (top of Follow-ups) */
+.pe-count { margin-left: var(--sp-2); font-size: var(--fs-sm); font-weight: 600; color: var(--muted-on-primary); font-variant-numeric: tabular-nums; }
+.pe-rule { margin: -4px 0 var(--sp-2); }
+.pe-err { margin: 0 0 var(--sp-2); }
+.pe-row { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); }
+.pe-row.is-busy { opacity: 0.6; }
+.pe-who { display: grid; gap: 2px; min-width: 0; color: inherit; text-decoration: none; }
+.pe-name { font-weight: 650; font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.pe-meta { font-size: var(--fs-sm); color: var(--muted-on-secondary); }
+.pe-btns { display: flex; gap: 8px; }
+.pe-btn {
+  flex: 1 1 0; min-height: 44px; padding: 0 12px; border-radius: var(--r-pill); font: inherit; font-weight: 650; cursor: pointer;
+  border: 1.5px solid var(--on-secondary); background: transparent; color: var(--on-secondary);
+}
+.pe-btn.pe-booked { background: var(--action); border-color: var(--action); color: var(--on-accent); }
+.pe-btn:active:not([disabled]) { background: var(--secondary-deep); color: var(--on-secondary); }
+.pe-btn[disabled] { cursor: default; opacity: 0.6; }
+.pe-btn:focus-visible, .fc-link:focus-visible, .pe-who:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.pe-more { padding-top: var(--sp-2); }
+.fc-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 650; color: var(--link); text-decoration: underline; cursor: pointer; min-height: 24px; }
+
 /* ---------- search (Leads, on green) ---------- */
 .search { max-width: var(--content); margin: 0 auto; padding: 12px calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left)); }
 .search-field {
