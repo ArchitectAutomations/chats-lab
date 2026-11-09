@@ -30,7 +30,7 @@
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
     setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test',
-    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', ask: 'cv-ask', askConfig: 'cv_ask_config', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
+    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
   };
   function trackApi(api) {
     Object.keys(API_NAMES).forEach(function (k) {
@@ -53,6 +53,8 @@
   var qs = new URLSearchParams(location.search);
   var MOCK = isLocal && qs.get('mock') === '1';
   // Mock mode sets a business name so the real brand path (More heading) runs in mock too, and a missing element would throw visibly.
+  // Mock only: ?team=on forces the Team feature on (it is off in config.js until Kevin rules), for screenshots and tests.
+  if (MOCK && qs.get('team') === 'on') custom.features = Object.assign({}, custom.features, { team: true });
   if (MOCK && !(typeof custom.businessName === 'string' && custom.businessName.trim())) custom.businessName = 'Mock Bartending Co';
   var TARGET_KEY = 'cv_target_lead';
   var FILTER_KEY = 'cv_filter';
@@ -82,6 +84,7 @@
     { route: 'quote', href: '#/quote', label: 'Quote calculator', show: showQuote, icon: 'M7 3.5h10v17H7zM9.5 7h5M9.5 11h1M13.5 11h1M9.5 14.5h1M13.5 14.5h1M9.5 18h5' },
     { route: 'support', href: '#/support', label: 'Help & support', show: showSupport, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM9.6 9.6a2.4 2.4 0 1 1 3.5 2.1c-.7.4-1.1.9-1.1 1.7M12 16.6v.2' },
     { route: 'export', href: '#/export', label: 'Download spreadsheet', show: showExport, icon: 'M12 4v11M7 10l5 5 5-5M5 20h14' },
+    { route: 'team', href: '#/team', label: 'Team', show: showTeam, icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3.5 19c.5-3 2.6-4.5 5.5-4.5s5 1.5 5.5 4.5M16 11a2.5 2.5 0 1 0 0-5M17.5 14.7c1.8.4 2.8 1.7 3 4.3' },
     { route: 'more', href: '#/more', label: 'More', show: showMore, icon: 'M5 12h2M11 12h2M17 12h2' }
   ];
 
@@ -145,6 +148,10 @@
     askSend: $('ask-send'), askCount: $('ask-count'), askFooter: $('ask-footer'),
     exportScreen: $('screen-export'), exGroup: $('ex-group'), exDates: $('ex-dates'), exFrom: $('ex-from'), exTo: $('ex-to'), exMake: $('ex-make'),
     exStatus: $('ex-status'), exSave: $('ex-save'), exHint: $('ex-hint'), exError: $('ex-error'),
+    teamScreen: $('screen-team'), tmOff: $('tm-off'), tmForm: $('tm-form'), tmName: $('tm-name'), tmPhone: $('tm-phone'), tmErrName: $('tm-err-name'), tmErrPhone: $('tm-err-phone'),
+    tmFull: $('tm-full'), tmError: $('tm-error'), tmAdd: $('tm-add'), tmDone: $('tm-done'), tmLink: $('tm-link'), tmCopy: $('tm-copy'), tmCopyMsg: $('tm-copy-msg'),
+    tmListLoading: $('tm-list-loading'), tmList: $('tm-list'), tmListEmpty: $('tm-list-empty'), tmListError: $('tm-list-error'), tmReload: $('tm-reload'), tmRowMsg: $('tm-row-msg'),
+    teamConfirm: $('team-confirm'), teamConfirmText: $('team-confirm-text'), teamConfirmYes: $('team-confirm-yes'), teamConfirmNo: $('team-confirm-no'),
     support: $('screen-support'), spOff: $('sp-off'), spContact: $('sp-contact'), spCall: $('sp-call'), spCallLabel: $('sp-call-label'),
     spText: $('sp-text'), spTextLabel: $('sp-text-label'), spForm: $('sp-form'), spKinds: $('sp-kinds'), spMessage: $('sp-message'),
     spCount: $('sp-count'), spLead: $('sp-lead'), spLeadText: $('sp-lead-text'), spLeadRemove: $('sp-lead-remove'), spInclude: $('sp-include'),
@@ -227,6 +234,7 @@
     toastTimer: null,
     quotePrefill: null,  // { guests, area } from a lead's record -> the quote calculator, used once
     nav: { cur: '', from: '', lead: null },  // screen before More / Help, and the lead record Help was reached from (same session)
+    team: { view: null, listErr: '', listSeq: 0, addBusy: false, busy: {}, confirmPhone: '', confirmName: '', loading: false },  // Team: memory only
     support: { cfg: null, cfgState: 'idle', key: null, busy: false, removeLead: false, rows: null, listErr: false, listSeq: 0, cfgSeq: 0 },
     ask: { cfg: null, cfgState: 'idle', cfgSeq: 0, cfgPromise: null, items: [], questions: [], busy: false, seq: 0, waitTimer: null },  // Ask your CRM: memory only, never stored
     exp: { busy: false, seq: 0, prepared: null },  // spreadsheet download: the file made by tap 1, kept in memory for tap 2
@@ -434,6 +442,20 @@
         });
       },
       askConfig: function () { return client.rpc('cv_ask_config').then(ok); },
+      // Team (Edge Function cv-team, owner only): list / add / remove / retry_cleanup. Errors are thrown as { status, error, details }.
+      team: function (body) {
+        return client.functions.invoke('cv-team', { body: body }).then(function (r) {
+          if (!r.error) return r.data;
+          var ctx = r.error.context;
+          if (ctx && typeof ctx.json === 'function') {
+            return ctx.json().catch(function () { return {}; }).then(function (b) {
+              // A gateway 401 is { code, message }, not our { error }: a 401 always means signed out.
+              throw { status: ctx.status, error: ctx.status === 401 ? 'not_signed_in' : (b && b.error) || '', details: b && b.details };
+            });
+          }
+          throw { status: 0, error: String(r.error.name || 'network'), details: String(r.error.message || '') };
+        });
+      },
       // Owner-only RPC (sql/011): -> [{ lead_id, created }]. args from L.addLeadArgs.
       optedOutPhones: function () {
         return client.from('lead_detail').select('phone').eq('opted_out', true).limit(1000)
@@ -599,20 +621,22 @@
     show(el.quote, name === 'quote');
     show(el.more, name === 'more');
     show(el.support, name === 'support');
+    show(el.teamScreen, name === 'team');
     show(el.askScreen, name === 'ask');
     show(el.exportScreen, name === 'export');
     show(el.thread, name === 'thread');
     show(el.topbar, signedIn);
     show(el.tabbar, signedIn && PLAN.showBar);
     // Back arrow on a lead record and on the tools under More; every other screen is a tab with a plain title.
-    var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export' || name === 'ask';
+    var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team';
     show(el.back, sub);
-    if (name === 'quote' || name === 'support' || name === 'export' || name === 'ask') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
+    if (name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
     if (name !== 'thread') {
       el.title.textContent = S.tab.label;
       setText(el.subtitle, '');
     }
     if (el.confirm.open) el.confirm.close();
+    if (el.teamConfirm.open) closeTeamConfirm();
     if (el.addDlg.open) closeAdd();
     show(el.btnAdd, signedIn && name === 'list' && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');
     markTabs();
@@ -1539,6 +1563,188 @@
     if (askRowNode) askRowNode.hidden = true;
   }
 
+  /* ---------- Team (More, owner only) ----------
+     Add a person, see who has access and when they last signed in, remove them. Everything goes through the cv-team Edge Function.
+     Rules: one call at a time per button; a slow or failed call never shows success; what the person sees is only ever text set with
+     textContent. A late answer (after the 20-second wait) is ignored, and the list is read again so the screen shows the truth. */
+
+  var TEAM_WAIT_MS = 20000;
+
+  function teamAvailable() { return feature('team') && !isStaff() && !!S.api && typeof S.api.team === 'function'; }
+
+  // One cv-team call with a time limit. A timeout rejects as { error: 'timeout' }; the real answer, if it comes later, is dropped.
+  function teamCall(body) {
+    var timer;
+    var wait = new Promise(function (res, rej) { timer = setTimeout(function () { rej({ status: 0, error: 'timeout', details: null }); }, TEAM_WAIT_MS); });
+    var call = Promise.resolve().then(function () { return S.api.team(body); });
+    return Promise.race([call, wait]).then(function (r) { clearTimeout(timer); return r; }, function (e) { clearTimeout(timer); throw e; });
+  }
+
+  function teamShareLink() { return location.origin + location.pathname; }
+
+  function teamAnyBusy() { var T = S.team; return T.addBusy || Object.keys(T.busy).length > 0; }
+
+  function renderTeam() {
+    var T = S.team, v = T.view;
+    el.tmLink.textContent = teamShareLink();
+    setText(el.tmOff, v && !v.enabled ? 'Team access is switched off for now. People you add can’t sign in yet.' : '');
+    setText(el.tmFull, v && v.full ? 'Your team is full: ' + v.active + ' of ' + v.max + '. Remove someone to add another person.' : '');
+    el.tmAdd.disabled = T.addBusy;
+    el.tmAdd.classList.toggle('busy', T.addBusy);
+    el.tmName.disabled = T.addBusy; el.tmPhone.disabled = T.addBusy;
+    setText(el.tmListError, T.listErr);
+    show(el.tmReload, !!T.listErr);
+    show(el.tmListLoading, T.loading && !v);
+    show(el.tmListEmpty, !!v && v.members.length === 0 && !T.loading);
+    show(el.tmList, !!v && v.members.length > 0);
+    var frag = document.createDocumentFragment();
+    (v ? v.members : []).forEach(function (m) {
+      var busy = !!T.busy[m.phone];
+      var li = make('li', 'sp-row');
+      var top = make('div', 'sp-row-top');
+      top.appendChild(make('span', 'sp-kind tm-name', m.name));
+      top.appendChild(make('span', 'sp-chip ' + (m.pending ? 'is-pending' : 'is-fixed'), m.pending ? 'Cleanup pending' : 'Active'));
+      li.appendChild(top);
+      li.appendChild(make('p', 'sp-msg', m.phoneText));
+      li.appendChild(make('p', 'sp-meta', m.lastLine));
+      var actions = make('div', 'tm-actions');
+      var b = make('button', 'tm-btn', busy ? 'Working…' : m.pending ? 'Retry' : 'Remove');
+      b.type = 'button'; b.disabled = busy;
+      b.setAttribute('aria-label', (m.pending ? 'Retry cleanup for ' : 'Remove ') + m.name);
+      b.addEventListener('click', function () { if (m.pending) retryTeam(m.phone, m.name); else openTeamConfirm(m.phone, m.name); });
+      actions.appendChild(b);
+      li.appendChild(actions);
+      frag.appendChild(li);
+    });
+    el.tmList.replaceChildren(frag);
+  }
+
+  function refreshTeam() {
+    var T = S.team;
+    if (!S.signedIn || !teamAvailable()) return Promise.resolve();
+    var n = ++T.listSeq;
+    T.loading = true; T.listErr = '';
+    renderTeam();
+    return teamCall({ action: 'list' }).then(function (res) {
+      if (n !== T.listSeq) return;
+      var v = L.teamView(res);
+      if (!v) { T.listErr = L.teamErrorText({ error: 'network' }, 'list').text; return; }
+      T.view = v; T.listErr = '';
+    }).catch(function (err) {
+      if (n !== T.listSeq) return;
+      T.listErr = L.teamErrorText(err, 'list').text;   // old rows stay on screen
+    }).then(function () { if (n === T.listSeq) { T.loading = false; if (S.screen === 'team') renderTeam(); } });
+  }
+
+  function showTeam() {
+    S.thread.id = null;
+    setScreen('team');
+    if (!teamAvailable()) { location.replace('#/more'); return; }
+    renderTeam();
+    refreshTeam();
+  }
+
+  function clearTeamErrors() {
+    setText(el.tmErrName, ''); setText(el.tmErrPhone, ''); setText(el.tmError, '');
+    el.tmName.removeAttribute('aria-invalid'); el.tmPhone.removeAttribute('aria-invalid');
+  }
+
+  function submitTeamAdd() {
+    var T = S.team;
+    if (T.addBusy || !teamAvailable()) return;
+    clearTeamErrors(); setText(el.tmDone, ''); setText(el.tmRowMsg, '');
+    var r = L.teamAddArgs(el.tmName.value, el.tmPhone.value);
+    if (!r.ok) {
+      var f = r.field === 'name' ? el.tmName : el.tmPhone;
+      setText(r.field === 'name' ? el.tmErrName : el.tmErrPhone, r.text);
+      f.setAttribute('aria-invalid', 'true'); f.focus();
+      return;
+    }
+    T.addBusy = true; T.listSeq++;   // a list read still on its way must not overwrite what this call is about to change
+    renderTeam();
+    teamCall(r.body).then(function (res) {
+      var line = L.teamAddOutcome(res, r.name);
+      if (!line) throw { status: 0, error: 'network', details: null };   // an answer that is not a clear success is never shown as one
+      el.tmName.value = ''; el.tmPhone.value = '';
+      setText(el.tmDone, line);
+      if (res.member && T.view) {   // show them at once; the list read below confirms it
+        var m = res.member;
+        T.view.members = T.view.members.filter(function (x) { return x.phone !== m.phone; });
+        var vv = L.teamView({ enabled: T.view.enabled, max: T.view.max, active: T.view.active + 1, members: [{ phone: m.phone, display_name: m.display_name, state: 'active', last_sign_in_at: null }] });
+        if (vv && vv.members[0]) { T.view.members.unshift(vv.members[0]); T.view.active += 1; T.view.full = T.view.max > 0 && T.view.active >= T.view.max; }
+      }
+    }).catch(function (err) {
+      var t = L.teamErrorText(err, 'add');
+      if (t.field === 'name') { setText(el.tmErrName, t.text); el.tmName.setAttribute('aria-invalid', 'true'); }
+      else if (t.field === 'phone') { setText(el.tmErrPhone, t.text); el.tmPhone.setAttribute('aria-invalid', 'true'); }
+      else setText(el.tmError, t.text);
+    }).then(function () {
+      T.addBusy = false; renderTeam();
+      if (S.screen === 'team') refreshTeam();
+    });
+  }
+
+  function openTeamConfirm(phone, name) {
+    var T = S.team;
+    if (T.busy[phone]) return;
+    T.confirmPhone = phone; T.confirmName = name;
+    el.teamConfirmText.textContent = L.teamRemoveText(name);
+    el.teamConfirmYes.disabled = false;
+    if (typeof el.teamConfirm.showModal === 'function') el.teamConfirm.showModal();
+    else el.teamConfirm.setAttribute('open', '');
+    try { el.teamConfirmNo.focus(); } catch (e) { /* ignore */ }
+  }
+  function closeTeamConfirm() {
+    if (el.teamConfirm.open) {
+      if (typeof el.teamConfirm.close === 'function') el.teamConfirm.close();
+      else el.teamConfirm.removeAttribute('open');
+    }
+  }
+
+  // remove and retry_cleanup share one path: the busy flag is set before the call and cleared only when it settles.
+  function runTeamRemoval(action, phone, name) {
+    var T = S.team;
+    if (T.busy[phone] || !teamAvailable()) return;
+    setText(el.tmRowMsg, ''); setText(el.tmListError, ''); setText(el.tmDone, '');
+    T.busy[phone] = true; T.listSeq++;
+    renderTeam();
+    teamCall(L.teamPhoneBody(action, phone)).then(function (res) {
+      var o = L.teamRemoveOutcome(res, name);
+      if (!o.ok) throw { status: 0, error: 'network', details: null };
+      if (T.view) {
+        if (o.removed) T.view.members = T.view.members.filter(function (x) { return x.phone !== phone; });
+        else T.view.members.forEach(function (x) { if (x.phone === phone) { x.pending = true; x.state = 'cleanup_pending'; x.lastLine = 'Access is closed. Sign-in cleanup is pending.'; } });
+        T.view.active = T.view.members.filter(function (x) { return !x.pending; }).length;
+        T.view.full = T.view.max > 0 && T.view.active >= T.view.max;
+      }
+      setText(el.tmRowMsg, o.text);
+    }).catch(function (err) {
+      setText(el.tmListError, L.teamErrorText(err, action).text);
+    }).then(function () {
+      delete T.busy[phone]; renderTeam();
+      if (S.screen === 'team') refreshTeam();
+    });
+  }
+  function retryTeam(phone, name) { runTeamRemoval('retry_cleanup', phone, name); }
+
+  function copyTeamLink() {
+    var link = teamShareLink();
+    var done = function (ok) { setText(el.tmCopyMsg, ok ? 'Link copied.' : 'Couldn’t copy. Press and hold the link above to copy it.'); };
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(link).then(function () { done(true); }, function () { done(false); });
+    } else done(false);
+  }
+
+  function resetTeam() {
+    var T = S.team;
+    S.team = { view: null, listErr: '', listSeq: T.listSeq + 1, addBusy: false, busy: {}, confirmPhone: '', confirmName: '', loading: false };
+    closeTeamConfirm();
+    el.tmName.value = ''; el.tmPhone.value = '';
+    clearTeamErrors(); setText(el.tmDone, ''); setText(el.tmRowMsg, ''); setText(el.tmListError, ''); setText(el.tmCopyMsg, '');
+    el.tmList.replaceChildren();
+    renderTeam();
+  }
+
   /* ---------- Help & support (More) ---------- */
 
   var SUPPORT_REFRESH_MS = 60000;
@@ -1755,9 +1961,9 @@
 
   // Remember the screen before More / Help (and the lead record it came from) so a request can say where it was sent from.
   function trackNav(name) {
-    var group = name === 'more' || name === 'support' || name === 'quote' || name === 'export' || name === 'ask';
+    var group = name === 'more' || name === 'support' || name === 'quote' || name === 'export' || name === 'ask' || name === 'team';
     var prev = S.nav.cur;
-    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote' || prev === 'export' || prev === 'ask';
+    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote' || prev === 'export' || prev === 'ask' || prev === 'team';
     if (group && !prevGroup) {
       S.nav.from = prev;
       S.nav.lead = prev === 'lead' && S.thread.id ? { id: S.thread.id, lead: S.thread.lead } : null;
@@ -3140,6 +3346,7 @@
     resetSupport();
     resetExport();
     resetAsk();
+    resetTeam();
     stopLive();
     clearTimeout(S.refreshTimer);
     S.seq.list++; S.seq.thread++;
@@ -3465,6 +3672,19 @@
     el.exFrom.addEventListener('change', exportChoiceChanged);
     el.exTo.addEventListener('change', exportChoiceChanged);
 
+    // Team
+    el.tmForm.addEventListener('submit', function (e) { e.preventDefault(); submitTeamAdd(); });
+    el.tmName.addEventListener('input', function () { setText(el.tmErrName, ''); el.tmName.removeAttribute('aria-invalid'); });
+    el.tmPhone.addEventListener('input', function () { setText(el.tmErrPhone, ''); el.tmPhone.removeAttribute('aria-invalid'); });
+    el.tmCopy.addEventListener('click', copyTeamLink);
+    el.tmReload.addEventListener('click', function () { refreshTeam(); });
+    el.teamConfirmNo.addEventListener('click', closeTeamConfirm);
+    el.teamConfirmYes.addEventListener('click', function () {
+      var phone = S.team.confirmPhone, name = S.team.confirmName;
+      el.teamConfirmYes.disabled = true;   // one tap only
+      closeTeamConfirm();
+      if (phone) runTeamRemoval('remove', phone, name);
+    });
     // Help & support
     el.spForm.addEventListener('submit', function (e) { e.preventDefault(); submitSupport(); });
     el.spMessage.addEventListener('input', function () { renderSupportCount(); el.spMessage.removeAttribute('aria-invalid'); setText(el.spError, ''); });

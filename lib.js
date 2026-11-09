@@ -1965,7 +1965,7 @@
   // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Ask your CRM, Quote calculator, Help & support, Download spreadsheet (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
   // slots counts the bar tabs plus the More slot; with fewer than 2 the page hides the bar.
   var BAR_TABS = ['list', 'followups', 'calendar', 'metrics'];
-  var MORE_TABS = ['ask', 'quote', 'support', 'export'];
+  var MORE_TABS = ['ask', 'quote', 'support', 'export', 'team'];
   function tabPlan(want, on) {
     var isOn = typeof on === 'function' ? on : function () { return true; };
     var known = BAR_TABS.concat(MORE_TABS);
@@ -2739,9 +2739,108 @@
   // Things a staff member never gets, whatever the config says (the server is the real gate; this keeps the page honest).
   var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team'];
 
+  /* ---------- Team (More, owner only): the cv-team Edge Function (team/edge/cv-team) ---------- */
+
+  // Unlike every other feature, Team is OFF unless CV_CUSTOM.features.team is exactly true (Kevin rules before switch-on).
+  function teamFeatureOn(features) { return !!(features && typeof features === 'object' && features.team === true); }
+  var TEAM_NAME_MAX = 60;
+
+  // Form values -> the exact cv-team add body, or { ok:false, field:'name'|'phone', text }.
+  function teamAddArgs(name, phone) {
+    var n = String(name === undefined || name === null ? '' : name).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!n) return { ok: false, field: 'name', text: 'Type their name.' };
+    if (n.length > TEAM_NAME_MAX) return { ok: false, field: 'name', text: 'Keep the name under 60 characters.' };
+    var p = normalizePhone(phone);
+    if (!p || !/^\+1[2-9]\d{2}[2-9]\d{6}$/.test(p)) return { ok: false, field: 'phone', text: 'Type a 10-digit phone number, like (416) 555-0123.' };
+    return { ok: true, body: { action: 'add', phone: p, display_name: n }, phone: p, name: n };
+  }
+
+  // Body for remove / retry_cleanup. The phone must be the +E.164 the list gave back.
+  function teamPhoneBody(action, phone) {
+    return { action: action, phone: String(phone || '') };
+  }
+
+  // A failed cv-team call -> { code, text, field, reload }. `what` = 'add' | 'remove' | 'retry_cleanup' | 'list'.
+  // The error arrives as { status, error, details } (the invoke wrapper in app.js); anything unknown reads as a connection problem.
+  function teamErrorText(err, what) {
+    var e = err && typeof err === 'object' ? err : {};
+    var code = String(e.error || e.message || '').trim().toLowerCase();
+    var det = e.details;
+    var verb = what === 'add' ? 'add them' : what === 'list' ? 'load your team' : 'remove them';
+    switch (code) {
+      case 'not_signed_in': return { code: code, text: 'You’re signed out. Sign in again.', reload: false };
+      case 'not_owner': return { code: code, text: 'Only the owner can manage the team.', reload: false };
+      case 'bad_phone': return { code: code, field: 'phone', text: 'That isn’t a usable phone number. Type 10 digits, like (416) 555-0123.', reload: false };
+      case 'bad_name': return { code: code, field: 'name', text: 'The name can’t be blank or longer than 60 characters.', reload: false };
+      case 'is_owner': return { code: code, field: 'phone', text: 'That number is an owner’s. Owners already have full access, so it can’t be added to the team.', reload: false };
+      case 'already_member': return { code: code, field: 'phone', text: 'That number is already on your team.', reload: true };
+      case 'team_full': {
+        var mx = det && typeof det === 'object' && Number(det.max) > 0 ? Math.floor(Number(det.max)) : 0;
+        return { code: code, text: mx ? 'Your team is full: ' + mx + ' people at most. Remove someone first.' : 'Your team is full. Remove someone first.', reload: true };
+      }
+      case 'cleanup_pending': return { code: code, field: 'phone', text: 'This person’s old sign-in is still being removed. Tap Retry on their row first, then add them again.', reload: true };
+      case 'not_found': return { code: code, text: 'That number isn’t on your team any more.', reload: true };
+      case 'not_removed': return { code: code, text: 'That person is still on your team. Use Remove first.', reload: true };
+      case 'auth_failed': return { code: code, text: 'Couldn’t set up their sign-in, so nobody was added. Try again in a minute.', reload: true };
+      case 'engine_error': return { code: code, text: what === 'list' ? 'The database didn’t answer. Try again in a minute.' : 'The database didn’t answer, so nothing was changed. Try again in a minute.', reload: what !== 'list' };
+      case 'add_incomplete':
+        return { code: code, text: 'Couldn’t set up their sign-in, and the clean-up didn’t finish. They’re in your list but can’t sign in: tap Remove on them to clear it.', reload: true };
+      case 'not_configured': return { code: code, text: 'The Team screen isn’t set up properly yet. Tell Kevin.', reload: false };
+      case 'bad_origin': case 'method_not_allowed': return { code: code, text: 'Couldn’t ' + verb + ' from this page. Tell Kevin.', reload: false };
+      case 'bad_input': return { code: code, text: 'Couldn’t ' + verb + ': something in the request was wrong. Check the name and number.', reload: false };
+      case 'timeout': return { code: code, text: what === 'list' ? 'Your team didn’t load in time. Try again.' : 'No answer yet, so we can’t tell if it worked. Check the list below before you try again.', reload: what !== 'list' };
+      default: return { code: 'network', text: what === 'list' ? 'Couldn’t load your team. Check your connection and try again.' : 'Couldn’t ' + verb + '. Check your connection, look at the list below, then try again.', reload: what !== 'list' };
+    }
+  }
+
+  // The confirm sheet for Remove: what happens, plainly.
+  function teamRemoveText(name) {
+    var n = String(name || '').trim() || 'This person';
+    return 'Remove ' + n + '? They lose access right away and can’t open your leads or notes. Their sign-in is deleted, so to bring them back you add them again. Notes they wrote stay on the leads.';
+  }
+
+  // The answer of remove / retry_cleanup -> { removed, text } (a state other than removed or cleanup_pending is NOT success).
+  function teamRemoveOutcome(res, name) {
+    var n = String(name || '').trim() || 'This person';
+    var st = res && typeof res === 'object' && res.ok === true ? res.state : '';
+    if (st === 'removed') return { ok: true, removed: true, text: n + ' is removed.' };
+    if (st === 'cleanup_pending') return { ok: true, removed: false, text: n + ' can no longer get in. Their sign-in couldn’t be deleted yet: tap Retry on their row.' };
+    return { ok: false, removed: false, text: '' };
+  }
+
+  // The answer of add -> the line to show, or '' when it was not a real success.
+  function teamAddOutcome(res, name) {
+    if (!res || typeof res !== 'object' || res.ok !== true || !res.member || res.member.state !== 'active') return '';
+    var n = String(name || '').trim() || 'They';
+    return n + ' is added. No text was sent: send them the link below and tell them to sign in with this number.';
+  }
+
+  // cv-team list answer -> what the screen shows, or null when the answer is not the contract shape.
+  function teamView(res, now) {
+    if (!res || typeof res !== 'object' || !Array.isArray(res.members)) return null;
+    var max = Math.floor(Number(res.max)), active = Math.floor(Number(res.active));
+    var members = [];
+    for (var i = 0; i < res.members.length; i++) {
+      var m = res.members[i];
+      if (!m || typeof m !== 'object') return null;
+      var phone = strictE164(m.phone);
+      if (!phone || (m.state !== 'active' && m.state !== 'cleanup_pending')) return null;
+      var name = String(m.display_name || '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim() || fmtPhoneNational(phone);
+      var pending = m.state === 'cleanup_pending';
+      var last = m.last_sign_in_at ? fmtSince(m.last_sign_in_at, now) : '';
+      var lastLine = pending ? 'Access is closed. Sign-in cleanup is pending.'
+        : last ? 'Last signed in ' + last : 'Hasn’t signed in yet';
+      members.push({ phone: phone, phoneText: fmtPhoneNational(phone), name: name, state: m.state, pending: pending, lastLine: lastLine });
+    }
+    var activeN = members.filter(function (x) { return !x.pending; }).length;
+    return { enabled: res.enabled === true, max: max > 0 ? max : 0, active: active >= 0 ? active : activeN, members: members,
+      full: max > 0 && (active >= 0 ? active : activeN) >= max };
+  }
+
   // Is a page feature on for this role? Owner: the config switch alone, exactly as before. Staff: also each cv_my_role switch.
   function roleFeatureOn(role, perms, features, key) {
     if (!featureOn(features, key)) return false;
+    if (key === 'team') return role !== 'staff' && teamFeatureOn(features);   // Team is OFF unless config says exactly true; owner only
     if (role !== 'staff') return true;
     var p = perms || {};
     if (STAFF_BLOCKED.indexOf(key) !== -1) return false;
@@ -2822,6 +2921,14 @@
     roleView: roleView,
     roleError: roleError,
     roleFeatureOn: roleFeatureOn,
+    teamFeatureOn: teamFeatureOn,
+    teamAddArgs: teamAddArgs,
+    teamPhoneBody: teamPhoneBody,
+    teamErrorText: teamErrorText,
+    teamRemoveText: teamRemoveText,
+    teamRemoveOutcome: teamRemoveOutcome,
+    teamAddOutcome: teamAddOutcome,
+    teamView: teamView,
     staffActionsAhead: staffActionsAhead,
     staffActionsNote: staffActionsNote,
     STAFF_NO_LEADS: STAFF_NO_LEADS,

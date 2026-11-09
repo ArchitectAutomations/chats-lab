@@ -416,6 +416,54 @@
     </div>
   </main>
 
+  <!-- Team (More, owner only): add a person, see who has access and when they last signed in, remove them.
+       Shown only when CV_CUSTOM.features.team is exactly true. Talks to the cv-team Edge Function. -->
+  <main class="screen team-screen" id="screen-team" hidden>
+    <div class="scroller" id="tm-scroll">
+      <div class="sp-wrap">
+        <p class="q-lede" id="tm-lede">People you add can read your leads and notes. Your team can read notes.</p>
+        <p class="sp-nosend" id="tm-off" role="status" hidden>Team access is switched off for now. People you add can’t sign in yet.</p>
+
+        <form class="sp-form tm-form" id="tm-form" novalidate>
+          <h2 class="sp-h" id="tm-form-h">Add a person</h2>
+          <div class="q-field">
+            <label class="field-label" for="tm-name">Name</label>
+            <input class="field" id="tm-name" type="text" autocomplete="off" maxlength="60" aria-describedby="tm-err-name">
+            <p class="error" id="tm-err-name" role="alert" hidden></p>
+          </div>
+          <div class="q-field">
+            <label class="field-label" for="tm-phone">Phone</label>
+            <input class="field" id="tm-phone" type="tel" inputmode="tel" autocomplete="off" aria-describedby="tm-err-phone">
+            <p class="error" id="tm-err-phone" role="alert" hidden></p>
+          </div>
+          <p class="hint" id="tm-hint">No text is sent. They sign in on this page with this number.</p>
+          <p class="sp-nosend" id="tm-full" role="status" hidden></p>
+          <p class="error" id="tm-error" role="alert" hidden></p>
+          <button class="btn primary q-submit" id="tm-add" type="submit"><span class="spinner" aria-hidden="true"></span><span id="tm-add-label">Add to team</span></button>
+          <p class="sp-done" id="tm-done" role="status" aria-live="polite" tabindex="-1" hidden></p>
+        </form>
+
+        <section class="tm-share" aria-labelledby="tm-share-h">
+          <h2 class="sp-h" id="tm-share-h">Link to share</h2>
+          <p class="hint tm-link-help">Send this link to your team yourself. They sign in with their phone number.</p>
+          <p class="tm-link" id="tm-link"></p>
+          <button class="btn quiet tm-copy" id="tm-copy" type="button">Copy link</button>
+          <p class="status-line sp-status" id="tm-copy-msg" role="status" hidden></p>
+        </section>
+
+        <section class="sp-requests" aria-labelledby="tm-list-h">
+          <h2 class="sp-h" id="tm-list-h">Your team</h2>
+          <p class="status-line sp-status" id="tm-list-loading">Loading…</p>
+          <ul class="sp-list" id="tm-list"></ul>
+          <p class="status-line sp-status" id="tm-list-empty" hidden>Nobody yet.</p>
+          <p class="error" id="tm-list-error" role="alert" hidden></p>
+          <button class="btn quiet tm-reload" id="tm-reload" type="button" hidden>Try again</button>
+          <p class="sp-done" id="tm-row-msg" role="status" aria-live="polite" tabindex="-1" hidden></p>
+        </section>
+      </div>
+    </div>
+  </main>
+
   <!-- Metrics -->
   <main class="screen metrics-screen" id="screen-metrics" hidden>
     <div class="scroller" id="metrics-scroll">
@@ -554,6 +602,17 @@
       <div class="sheet-actions">
         <button class="btn primary" id="confirm-yes" type="button"></button>
         <button class="btn quiet" id="confirm-no" type="button">Cancel</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Remove a team member: says plainly what happens. A native modal dialog like the others. -->
+  <dialog class="sheet" id="team-confirm" aria-labelledby="team-confirm-text">
+    <div class="sheet-body">
+      <p class="sheet-text" id="team-confirm-text"></p>
+      <div class="sheet-actions">
+        <button class="btn primary" id="team-confirm-yes" type="button">Remove</button>
+        <button class="btn quiet" id="team-confirm-no" type="button">Keep on team</button>
       </div>
     </div>
   </dialog>
