@@ -331,29 +331,55 @@
     return lead.source === 'manual' && lead.auto_texts !== true;
   }
 
-  // Plain-words question for the confirm sheet.
-  function confirmText(name, status, lead, plain) {
+  // WF3 needs the event date to be on or after the day it runs, and marked now it runs at the first 10 am at least 5 days away.
+  // WF3 counts 120 real hours (not calendar days), so the clock change in Toronto can move its run day; count the same way.
+  function followupMissesEvent(eventDate, now) {
+    var ev = /^\d{4}-\d{2}-\d{2}/.exec(String(eventDate || ''));
+    if (!ev) return false;
+    var p = partsOf(new Date(nowDate(now).getTime() + FOLLOWUP_DAYS * 86400000));
+    var beforeTen = p.period === 'am' && (Number(p.hour) % 12) < 10;
+    var run = new Date(Date.UTC(p.y, p.m - 1, p.d + (beforeTen ? 0 : 1)));
+    return ev[0] < run.toISOString().slice(0, 10);
+  }
+
+  // Plain-words question for the confirm sheet. `now` is for tests.
+  function confirmText(name, status, lead, plain, now) {
     var who = String(name || '').trim() || 'this lead';
     if (ACTION_STATUSES.indexOf(status) === -1) return '';
     var lc = function (st) { return statusInfo(st).label.toLowerCase(); };
     var q = 'Mark ' + who + ' as ' + lc(status) + '?';
     if (plain) return q; // no promise about texts: used where the page cannot tell which leads get follow-ups
+    // 021: moving a booked or lost lead back uses up the day-5 text and removes what was recorded (sql/021), so the sheet says both. Before the no-consent line: an added lead has a price to lose too.
+    if (status === 'contacted' && lead && (lead.status === 'booked' || lead.status === 'lost')) {
+      return q + ' The ' + lc(lead.status) + (lead.status === 'booked' ? ' price' : ' reason') + ' will be cleared. No follow-up text will go out.';
+    }
     if (status === 'contacted' && noConsent(lead)) return q + ' No automatic texts go to leads you added.';
-    if (status === 'contacted') return q + " They'll get one follow-up text in 5 days unless you mark them " + lc('booked') + ' or ' + lc('lost') + '.';
+    if (status === 'contacted') {
+      if (lead && (lead.opted_out === true || followupMissesEvent(lead.event_date, now))) return q + ' No follow-up text will go out.';
+      // Contacted or texted before: its one follow-up may be used up, and the page cannot see that. Promise nothing.
+      if (lead && (lead.contacted_at || lead.nudge_sent_at)) return q;
+      return q + " They'll get one follow-up text in 5 days unless you mark them " + lc('booked') + ' or ' + lc('lost') + '.';
+    }
     if (noConsent(lead)) return q;
     return q + " They won't get the next follow-up text.";
   }
 
-  // Can the page offer this change? Mirrors cv_set_lead_status (same rules as the owner's texts):
-  // the current status again is a no-op; won / dormant / opted-out leads are locked; a booked or lost
-  // lead cannot go back to contacted. Anything else is left to the server to decide.
+  // Can the page offer this change? Mirrors cv_set_lead_status (sql/021): the current status again is a no-op;
+  // won / dormant / opted-out leads are locked; everything else is open to the owner, including going back from
+  // booked or lost to contacted. Staff have their own stricter rules (staffActionsAhead, cv_set_lead_status).
   var LOCKED = { won: 1, dormant: 1, opted_out: 1 };
   function canSetStatus(current, target) {
     var c = String(current || '').toLowerCase();
     if (!target || c === target) return false;
     if (LOCKED[c]) return false;
-    if (target === 'contacted' && (c === 'booked' || c === 'lost')) return false;
     return true;
+  }
+
+  // The status that decides the owner's buttons. The server locks a lead whose number opted out (the flag) whatever its
+  // status says, except one the owner added by hand (011). Staff keep reading the plain status (staffActionsAhead).
+  function actionsKey(lead) {
+    var c = String((lead && lead.status) || '').toLowerCase();
+    return lead && lead.opted_out === true && lead.source !== 'manual' ? 'opted_out' : c;
   }
 
   // One plain line under the buttons when the page can't change this lead at all.
@@ -669,13 +695,8 @@
     if (st === 'contacted') {
       if (noConsent(lead)) return 'Follow up yourself \u2014 no automatic texts. ' + markWhen;
       if (lead.nudge_sent_at) return 'Follow-up text sent ' + fmtShortDate(lead.nudge_sent_at, now) + '. ' + markWhen;
-      var c = toDate(lead.contacted_at || lead.status_at);
-      if (!c) return statusInfo('contacted').label + '. ' + markWhen;
-      var due = new Date(c.getTime() + FOLLOWUP_DAYS * 86400000);
-      if (due.getTime() > nowDate(now).getTime()) {
-        return 'Follow-up text goes out ' + fmtShortDate(due, now) + ' unless you mark ' + lc('booked') + ' or ' + lc('lost');
-      }
-      return 'Follow-up text is due now unless you mark ' + lc('booked') + ' or ' + lc('lost');
+      // No pending row in follow_ups (WF3's own rules, handled above): no text is coming, or the page does not know yet. Never promise one.
+      return statusInfo('contacted').label + '. ' + markWhen;
     }
     if (st === 'quoted') {
       var q = realTime(lead.status_at) || realTime(lead.last_outbound_at);
@@ -688,6 +709,15 @@
     }
     if (st === 'new') return 'New lead' + (lead.created_at ? ' ' + fmtSince(lead.created_at, now) : '');
     return '';
+  }
+
+  // Back / Forward landed somewhere: what the full conversation view must do. 'hide' = close it (a normal Back).
+  // 'step' = this is the leftover history entry of a view that is already closed: go back one more so Back is never a dead step.
+  // It cannot loop: 'step' only ever moves backward, every marked entry sits above the plain entry it was pushed from,
+  // and at the start of the history back() does nothing and fires no popstate.
+  function fullPopAction(viewOpen, state) {
+    if (viewOpen) return 'hide';
+    return state && state.cvFull ? 'step' : '';
   }
 
   function humanize(v) {
@@ -2904,6 +2934,7 @@
     fmtTime: fmtTime,
     fmtTimeRange: fmtTimeRange,
     nextAction: nextAction,
+    fullPopAction: fullPopAction,
     deferReasons: deferReasons,
     quoteView: quoteView,
     promoText: promoText,
@@ -2916,6 +2947,7 @@
     actions: actions,
     confirmText: confirmText,
     canSetStatus: canSetStatus,
+    actionsKey: actionsKey,
     actionsNote: actionsNote,
     friendlyStatusError: friendlyStatusError,
     roleView: roleView,

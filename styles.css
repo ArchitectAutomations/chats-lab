@@ -283,7 +283,8 @@ a { color: var(--link); }
 .rec-status .chip { flex: none; }
 .rec-next { margin: 0; font-size: var(--fs-md); line-height: 1.4; color: var(--on-primary); flex: 1 1 12em; }
 .rec-job { margin: var(--sp-3) 0 0; font-size: var(--fs-lg); font-weight: 650; line-height: 1.35; color: var(--on-primary); font-variant-numeric: tabular-nums; }
-.rec-phone { display: inline-flex; align-items: center; min-height: 44px; margin-top: var(--sp-1); font-size: var(--fs-lg); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--link); text-underline-offset: 3px; }
+.rec-phone { display: inline-flex; align-items: center; min-height: 44px; margin-top: var(--sp-1); padding: 0 var(--sp-3); border-radius: var(--r-md); background: var(--primary-raised); color: var(--secondary); font-size: var(--fs-lg); font-weight: 600; font-variant-numeric: tabular-nums; text-decoration: none; }
+.rec-phone:active { background: var(--primary); }
 
 /* Do-not-text banner: the one place red is used, because it must not be missed (white on #9A2A14 = 7.73:1). */
 .stop-banner {
@@ -314,9 +315,9 @@ a { color: var(--link); }
   font-size: var(--fs-md); font-weight: 700; text-decoration: none;
 }
 .contact-btn:active { background: var(--primary); }
-/* Call = the one action button in accent purple (Kevin 11-06). accent-strong keeps white text above 4.5:1. */
-.contact-btn.contact-call { background: var(--action); color: var(--on-accent); }
-.contact-btn.contact-call:active { background: var(--action-press); }
+/* On a lead, Call / Text / Email are all the same raised green (Kevin 11-09, reversing 11-06). The purple Call stays only on Help & support. */
+.sp-contact .contact-btn.contact-call { background: var(--action); color: var(--on-accent); }
+.sp-contact .contact-btn.contact-call:active { background: var(--action-press); }
 .contact-btn svg { flex: none; }
 
 
@@ -352,6 +353,9 @@ a { color: var(--link); }
 
 .convo { max-width: var(--content); margin: 0 auto; width: 100%; padding: var(--sp-1) 0 var(--sp-3); }
 .convo-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin: var(--sp-2) calc(12px + env(safe-area-inset-right)) var(--sp-2) calc(12px + env(safe-area-inset-left)); padding: 0 var(--sp-1); min-height: 44px; }
+.convo-tools { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; justify-content: flex-end; }
+.convo-open { display: inline-flex; align-items: center; min-height: 44px; margin: 0; padding: 0 var(--sp-3); background: transparent; border: 1.5px solid var(--muted-on-primary); border-radius: var(--r-pill); color: var(--on-primary); font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+.convo-open:active { background: var(--primary-raised); }
 .convo-h { margin: 0; font-size: var(--fs-sm); font-weight: 700; color: var(--muted-on-primary); }
 /* Phones: the conversation is its own scrolling box inside the page, opened at the newest text (chat order). */
 .convo-scroll { max-height: min(58vh, 520px); overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: auto; margin: 0 calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left)); background: var(--primary-deep); border: 1px solid var(--line-on-primary); border-radius: var(--r-lg); }
@@ -955,14 +959,12 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 }
 .ask-starter:active { background: var(--primary-raised); }
 .ask-starter:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-.ask-composer { flex: none; background: var(--primary); border-top: 1px solid var(--line-on-primary); padding: var(--sp-2) calc(var(--gutter) + env(safe-area-inset-right)) 0 calc(var(--gutter) + env(safe-area-inset-left)); }
+.ask-composer { flex: none; background: var(--primary); border-top: 1px solid var(--line-on-primary); padding: var(--sp-2) calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-2) calc(var(--gutter) + env(safe-area-inset-left)); }
 .ask-composer-row { display: flex; align-items: flex-end; gap: var(--sp-2); max-width: var(--content); margin: 0 auto; }
 .ask-input { flex: 1; min-width: 0; min-height: 48px; max-height: 120px; resize: none; padding: 11px 14px; font-size: var(--fs-md); line-height: 1.35; }
 .ask-send { flex: none; width: auto; min-width: 76px; min-height: 48px; margin: 0; padding: 0 20px; }
 .ask-count { margin: 4px 0 0; text-align: right; font-variant-numeric: tabular-nums; }
 .ask-count.is-full { color: var(--on-primary); font-weight: 650; }
-.ask-footer { flex: none; max-width: var(--content); width: 100%; margin: 0 auto; padding: var(--sp-1) calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-2) calc(var(--gutter) + env(safe-area-inset-left)); background: var(--primary); }
-.ask-footer p { margin: 2px 0 0; font-size: var(--fs-xs); line-height: 1.35; color: var(--muted-on-primary); }
 @media (prefers-reduced-motion: reduce) { .ask-row.is-wait .ask-bubble { animation: none; } }
 
 /* ---------- Team (More, owner only) ---------- */
@@ -976,3 +978,16 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .tm-btn:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .sp-chip.is-pending { background: transparent; border-color: var(--danger-on-secondary); color: var(--danger-on-secondary); }
 .tm-name { overflow-wrap: anywhere; }
+
+/* ---------- Full conversation view (a full-screen dialog over the lead; the lead page keeps its place underneath) ---------- */
+.convo-full { position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: 0; border: 0; background: var(--primary); color: var(--on-primary); overflow: hidden; }
+.convo-full[open] { display: flex; flex-direction: column; }
+.convo-full-bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: var(--sp-2) var(--sp-3); min-height: 56px; padding: var(--sp-2) calc(12px + env(safe-area-inset-right)) var(--sp-2) calc(12px + env(safe-area-inset-left)); padding-top: calc(var(--sp-2) + env(safe-area-inset-top)); background: var(--primary-deep); border-bottom: 1px solid var(--line-on-primary); }
+.convo-full .sys-fold { order: 3; flex: 1 0 100%; justify-content: center; }
+.convo-full-h { margin: 0; font-size: var(--fs-lg); font-weight: 700; color: var(--on-primary); min-width: 0; overflow-wrap: anywhere; }
+.convo-full-close { flex: none; display: inline-flex; align-items: center; min-height: 44px; margin: 0; padding: 0 var(--sp-4); background: var(--primary-raised); border: 0; border-radius: var(--r-pill); color: var(--secondary); font-size: var(--fs-md); font-weight: 700; }
+.convo-full-close:active { background: var(--primary); }
+.convo-full-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding-bottom: env(safe-area-inset-bottom); }
+.convo-full-scroll:focus-visible { outline-offset: -3px; }
+.convo-full .thread { overflow-wrap: anywhere; }
+.convo-full::backdrop { background: var(--primary); }

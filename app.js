@@ -145,7 +145,7 @@
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
     qCopy: $('q-copy'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
     askScreen: $('screen-ask'), askScroll: $('ask-scroll'), askThread: $('ask-thread'), askStarters: $('ask-starters'), askForm: $('ask-form'), askInput: $('ask-input'),
-    askSend: $('ask-send'), askCount: $('ask-count'), askFooter: $('ask-footer'),
+    askSend: $('ask-send'), askCount: $('ask-count'),
     exportScreen: $('screen-export'), exGroup: $('ex-group'), exDates: $('ex-dates'), exFrom: $('ex-from'), exTo: $('ex-to'), exMake: $('ex-make'),
     exStatus: $('ex-status'), exSave: $('ex-save'), exHint: $('ex-hint'), exError: $('ex-error'),
     teamScreen: $('screen-team'), tmOff: $('tm-off'), tmForm: $('tm-form'), tmName: $('tm-name'), tmPhone: $('tm-phone'), tmErrName: $('tm-err-name'), tmErrPhone: $('tm-err-phone'),
@@ -178,6 +178,7 @@
     recEvent: $('rec-event'), eventFacts: $('event-facts'), eventWords: $('event-words'), eventDetails: $('event-details'),
     recQuote: $('rec-quote'), quoteBody: $('quote-body'), recOthers: $('rec-others'), othersList: $('others-list'),
     convo: $('convo'), convoScroll: $('convo-scroll'),
+    convoOpen: $('convo-open'), convoFull: $('convo-full'), convoFullClose: $('convo-full-close'), convoFullScroll: $('convo-full-scroll'), fullThread: $('full-thread'), fullEmpty: $('full-empty'), fullSysFold: $('full-sys-fold'),
     actions: $('actions'), actionsNote: $('actions-note'), actionErr: $('action-error'), history: $('history'), historyMore: $('history-more'),
     threadScroll: $('thread-scroll'), threadLoading: $('thread-loading'), threadBox: $('thread'), threadEmpty: $('thread-empty'),
     threadErr: $('thread-error'), pill: $('new-pill'),
@@ -228,6 +229,7 @@
     tab: NAV[0],
     filter: 'open',
     pending: null,       // status being saved from the page
+    pendingToken: null,  // which saveStatus call owns it
     confirming: null,    // status waiting in the confirm sheet
     historyOpen: false,
     addBusy: false,
@@ -638,6 +640,7 @@
     if (el.confirm.open) el.confirm.close();
     if (el.teamConfirm.open) closeTeamConfirm();
     if (el.addDlg.open) closeAdd();
+    if (name !== 'thread') closeFullSilently();
     show(el.btnAdd, signedIn && name === 'list' && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');
     markTabs();
     if (!signedIn) setLive('off');
@@ -1485,7 +1488,7 @@
 
   function renderAsk() {
     var a = S.ask, on = askOn();
-    show(el.askScroll, on); show(el.askForm, on); show(el.askFooter, on);
+    show(el.askScroll, on); show(el.askForm, on);
     if (!on) return;
     el.askInput.maxLength = a.cfg.max;
     el.askInput.disabled = a.busy;
@@ -2659,6 +2662,8 @@
 
   // The owner: every button still ahead. Staff: open leads only, and only the buttons whose switch is on.
   function actionsAheadFor(current) { return isStaff() ? L.staffActionsAhead(current, ACCESS.perms) : L.actionsAhead(current); }
+  // The status that decides the buttons: the owner's includes the opted-out flag; staff keep the plain status.
+  function actionsKeyFor(lead) { return isStaff() ? String((lead && lead.status) || '').toLowerCase() : L.actionsKey(lead); }
   function actionsNoteFor(current) {
     var c = String(current || '').toLowerCase();
     return isStaff() ? L.staffActionsNote(c, ACCESS.perms) : L.actionsNote(c);
@@ -2666,22 +2671,25 @@
 
   function renderActions() {
     var lead = S.thread.lead;
-    var current = String((lead && lead.status) || '').toLowerCase();
-    // Only the buttons still ahead are shown (C4): the current status is on the chip above, not repeated here.
+    var current = actionsKeyFor(lead);
     var ahead = actionsAheadFor(current);
+    // Kevin 11-09: the owner always sees Contacted, Booked and Lost together; the current one is marked and cannot be tapped.
+    // Staff see only the buttons still ahead (C4). Nothing to offer (locked) hides them all.
+    var showAll = !isStaff() && ahead.length > 0;
     L.actions().forEach(function (a) {
       var b = S.actionButtons[a.status];
       var isCurrent = current === a.status;
       var busy = S.pending === a.status;
-      b.hidden = !!lead && ahead.indexOf(a.status) === -1 && !busy;
+      b.hidden = !!lead && !showAll && ahead.indexOf(a.status) === -1 && !busy;
       b.disabled = !lead || !L.canSetStatus(current, a.status) || !!S.pending;
       b.classList.toggle('is-current', isCurrent);
+      if (isCurrent) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
       b.classList.toggle('is-busy', busy);
       if (busy) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy');
       b.title = isCurrent ? 'Already ' + a.label.toLowerCase() : '';
     });
     setText(el.actionsNote, actionsNoteFor(current));
-    var count = ahead.length;
+    var count = showAll ? L.actions().length : ahead.length;
     el.actions.hidden = !!lead && count === 0 && !S.pending;
     el.actions.style.gridTemplateColumns = 'repeat(' + Math.max(1, Math.min(3, count || 3)) + ', 1fr)';
   }
@@ -2796,16 +2804,21 @@
     var id = S.thread.id;
     if (!id || S.pending) return;
     S.pending = status;
+    var token = S.pendingToken = {}; // opening another lead frees S.pending: this save must then leave the other lead's save alone
     setText(el.actionErr, '');
     renderActions();
     Promise.resolve().then(function () { return S.api.setStatus(id, status, extra || {}); }).then(function () {
       S.historyOpen = false;
-      return Promise.all([refreshThread(), refreshList()]);
+      // This lead's follow-up rows are out of date now: forget them so renderNext cannot repeat an old promise before the refetch lands.
+      if (S.followUps) S.followUps = S.followUps.filter(function (r) { return r.lead_id !== id; });
+      return Promise.all([refreshThread(), refreshList(), refreshFollowUps()]);
     }).catch(function (e) {
       if (id === S.thread.id) setText(el.actionErr, L.friendlyStatusError(e, ACCESS.role));
       maybeRecheckAccess(e);
+      // Refused or failed: the page may be out of date (its chip and buttons). Refetching does not touch the message above.
+      if (id === S.thread.id) return Promise.all([refreshThread(), refreshList()]);
     }).then(function () {
-      S.pending = null;
+      if (S.pendingToken === token) S.pending = null;
       if (id === S.thread.id) {
         renderActions();
         // The tapped button may now be disabled: keep keyboard focus inside the strip.
@@ -3056,11 +3069,12 @@
     el.strip.className = 'rec-card strip tone-' + st.tone;
     var lostNote = String(lead.status || '').toLowerCase() === 'lost' ? String(lead.lost_note || '').trim() : '';
     setText(el.stripNote, lostNote ? 'Why: ' + lostNote : '');
-    setText(el.hStatus, isStaff() && actionsNoteFor(lead.status) && !actionsAheadFor(lead.status).length ? 'Status locked' : L.statusHeading(lead.status));
+    var statusKey = actionsKeyFor(lead);
+    setText(el.hStatus, isStaff() && actionsNoteFor(statusKey) && !actionsAheadFor(statusKey).length ? 'Status locked' : L.statusHeading(statusKey));
     renderActions();
     renderHistory();
     // The card is only there while there is something to do or say: buttons ahead, a lost note, or a locked-status note.
-    show(el.strip, actionsAheadFor(lead.status).length > 0 || !!lostNote || !!actionsNoteFor(lead.status));
+    show(el.strip, actionsAheadFor(statusKey).length > 0 || !!lostNote || !!actionsNoteFor(statusKey));
     renderNotes(lead);
     renderEvent(lead);
     renderQuote(lead);
@@ -3089,14 +3103,17 @@
   function renderFold(system) {
     var n = system.length;
     show(el.sysFold, n > 0);
+    show(el.fullSysFold, n > 0);
     if (!n) return;
-    el.sysFold.textContent = L.systemFoldText(n, S.thread.sysOpen);
-    el.sysFold.setAttribute('aria-expanded', String(S.thread.sysOpen));
+    [el.sysFold, el.fullSysFold].forEach(function (b) {
+      b.textContent = L.systemFoldText(n, S.thread.sysOpen);
+      b.setAttribute('aria-expanded', String(S.thread.sysOpen));
+    });
   }
 
-  function sysList(system) {
+  function sysList(system, id) {
     var list = make('div', 'sys-list');
-    list.id = 'sys-list';
+    list.id = id || 'sys-list';
     system.forEach(function (m) { list.appendChild(bubble(m)); });
     return list;
   }
@@ -3106,9 +3123,76 @@
     S.thread.sig = '';
     renderThread();
     // Open: show the automatic texts at the top. The second set runs after any scrollToBottom frame renderThread queued (review r2 M1).
-    var s = convoScroller();
-    if (S.thread.sysOpen) { s.scrollTop = 0; requestAnimationFrame(function () { s.scrollTop = 0; }); } else scrollToBottom();
+    var s = fullOpen() ? el.convoFullScroll : convoScroller();
+    if (S.thread.sysOpen) { s.scrollTop = 0; requestAnimationFrame(function () { s.scrollTop = 0; }); }
+    else { s.scrollTop = s.scrollHeight; requestAnimationFrame(function () { s.scrollTop = s.scrollHeight; }); }
+    if (!fullOpen()) scrollToBottom();
   }
+
+  // The messages, in chat order, with day pills and (when shown) the automatic texts on top. Used by the box and the full view.
+  function threadFrag(parts, sysId) {
+    var frag = document.createDocumentFragment();
+    if (parts.system.length && S.thread.sysOpen) frag.appendChild(sysList(parts.system, sysId));
+    var prev = null;
+    parts.chat.forEach(function (m) {
+      if (!prev || !L.sameDay(prev.at, m.at)) frag.appendChild(make('div', 'day', L.fmtDay(m.at)));
+      frag.appendChild(bubble(m));
+      prev = m;
+    });
+    return frag;
+  }
+
+  /* ---------- full conversation view (dialog over the lead; the lead page and its scroll stay underneath) ---------- */
+
+  function fullOpen() { return !!(el.convoFull && el.convoFull.open); }
+
+  // Re-draw the full view from the thread; keeps your place unless you were reading at the newest.
+  function renderFull(parts) {
+    if (!fullOpen()) return;
+    var sc = el.convoFullScroll;
+    var wasNear = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 100;
+    var top = sc.scrollTop;
+    var p = parts || L.splitThread(S.thread.rows);
+    el.fullThread.replaceChildren(threadFrag(p, 'full-sys-list'));
+    show(el.fullEmpty, p.chat.length === 0 && p.system.length === 0);
+    if (wasNear) { sc.scrollTop = sc.scrollHeight; requestAnimationFrame(function () { sc.scrollTop = sc.scrollHeight; }); }
+    else sc.scrollTop = top;
+  }
+
+  function openFull() {
+    if (fullOpen() || S.screen !== 'thread' || !S.signedIn || !S.thread.loaded) return;
+    if (typeof el.convoFull.showModal === 'function') el.convoFull.showModal();
+    else el.convoFull.setAttribute('open', '');
+    S.fullPushed = false;
+    try { history.pushState({ cvFull: 1 }, '', location.href); S.fullPushed = true; } catch (e) { /* no history entry: Close and Esc still work */ }
+    el.fullThread.replaceChildren();
+    renderFull();
+    el.convoFullScroll.scrollTop = el.convoFullScroll.scrollHeight;
+    try { el.convoFullClose.focus(); } catch (e) { /* ignore */ }
+  }
+
+  // Close the dialog and give focus back to the Open full button. 'silent' = no history step (route or sign-out already moved us).
+  function hideFull() {
+    if (!fullOpen()) return;
+    if (typeof el.convoFull.close === 'function') el.convoFull.close(); else el.convoFull.removeAttribute('open');
+    el.fullThread.replaceChildren();
+    try { if (S.screen === 'thread') el.convoOpen.focus(); } catch (e) { /* ignore */ }
+  }
+
+  // Close button / Esc: step back through the history entry openFull pushed; popstate then hides the view (same path as the Back gesture).
+  function requestCloseFull() {
+    if (!fullOpen()) return;
+    if (S.fullPushed && history.state && history.state.cvFull) history.back();
+    else hideFull();
+  }
+
+  function onPopState() {
+    var act = L.fullPopAction(fullOpen(), history.state);
+    if (act === 'hide') { S.fullPushed = false; hideFull(); }
+    else if (act === 'step') history.back();
+  }
+
+  function closeFullSilently() { S.fullPushed = false; hideFull(); }
 
   function renderThread() {
     renderRecord();
@@ -3132,15 +3216,8 @@
     var wasNear = first ? true : isNearBottom();
     var prevTop = scroller.scrollTop;
     var grew = rows.length > S.thread.count;
-    var frag = document.createDocumentFragment();
-    if (parts.system.length && S.thread.sysOpen) frag.appendChild(sysList(parts.system));
-    var prev = null;
-    rows.forEach(function (m) {
-      if (!prev || !L.sameDay(prev.at, m.at)) frag.appendChild(make('div', 'day', L.fmtDay(m.at)));
-      frag.appendChild(bubble(m));
-      prev = m;
-    });
-    el.threadBox.replaceChildren(frag);
+    el.threadBox.replaceChildren(threadFrag(parts, 'sys-list'));
+    renderFull(parts);
     show(el.threadBox, all.length > 0);
     show(el.threadEmpty, rows.length === 0 && parts.system.length === 0);
     S.thread.sig = sig;
@@ -3160,6 +3237,7 @@
       S.thread = emptyThread(id);
       S.pending = null;
       S.historyOpen = false;
+      closeFullSilently();
       el.threadBox.replaceChildren();
       show(el.threadBox, false);
       show(el.threadEmpty, false);
@@ -3179,6 +3257,7 @@
     }
     el.back.setAttribute('aria-label', 'Back to ' + S.tab.label.toLowerCase());
     refreshThread();
+    if (!S.followUps) refreshFollowUps(); // the line under the name only promises a text that has a follow_ups row
   }
 
   /* ---------- routing ---------- */
@@ -3614,6 +3693,13 @@
 
   function bindEvents() {
     window.addEventListener('hashchange', route);
+    window.addEventListener('popstate', onPopState);
+    // A reload while the full view was open lands on its history entry with the view closed: step off it (same rule as onPopState), so Back is not a dead step.
+    try { if (L.fullPopAction(false, history.state) === 'step') history.back(); } catch (e) { /* ignore */ }
+    el.convoOpen.addEventListener('click', openFull);
+    el.convoFullClose.addEventListener('click', requestCloseFull);
+    el.convoFull.addEventListener('cancel', function (e) { e.preventDefault(); requestCloseFull(); });
+    el.fullSysFold.addEventListener('click', toggleFold);
 
     // Back: from a lead record to the tab it was opened from; from a tool under More to More.
     el.back.addEventListener('click', function () { location.hash = S.screen === 'thread' ? S.tab.href : navFor('more').href; });

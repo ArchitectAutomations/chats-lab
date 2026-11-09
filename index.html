@@ -344,15 +344,11 @@
     <form class="ask-composer" id="ask-form" autocomplete="off">
       <div class="ask-composer-row">
         <label class="sr-only" for="ask-input">Your question</label>
-        <textarea class="field ask-input" id="ask-input" rows="1" maxlength="300" placeholder="Ask a question" aria-describedby="ask-count ask-footer"></textarea>
+        <textarea class="field ask-input" id="ask-input" rows="1" maxlength="300" placeholder="Ask a question" aria-describedby="ask-count"></textarea>
         <button class="btn primary ask-send" id="ask-send" type="submit">Ask</button>
       </div>
       <p class="hint ask-count" id="ask-count" hidden></p>
     </form>
-    <div class="ask-footer" id="ask-footer">
-      <p>Answers come from your CRM, but AI can make mistakes. Tap a lead to check.</p>
-      <p>Your question and the matching lead details are sent to OpenAI (USA) to write the answer.</p>
-    </div>
   </main>
 
   <!-- Help & support (More): tell Kevin about a problem, a question or an idea; the owner's own requests with their status.
@@ -515,7 +511,10 @@
         <div class="convo-bar">
           <h3 class="convo-h" id="h-convo">Conversation</h3>
           <!-- Automatic texts to the owner fold into this one line; it sits next to the heading so it is always in view. -->
-          <button type="button" class="sys-fold" id="sys-fold" aria-controls="sys-list" aria-expanded="false" hidden></button>
+          <div class="convo-tools">
+            <button type="button" class="sys-fold" id="sys-fold" aria-controls="sys-list" aria-expanded="false" hidden></button>
+            <button type="button" class="convo-open" id="convo-open" aria-haspopup="dialog">Open full</button>
+          </div>
         </div>
         <!-- tabindex: this box scrolls on its own, so keyboard users must be able to focus it. -->
         <div class="convo-scroll" id="convo-scroll" tabindex="0">
@@ -582,6 +581,22 @@
   <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
 
   <!-- Confirm sheet for Contacted / Booked / Lost. A native modal dialog: focus stays inside, Esc cancels. -->
+  <!-- Full conversation: the same messages as the box on the lead page, full screen. Close, Esc and Back all return to the lead. -->
+  <dialog class="convo-full" id="convo-full" aria-labelledby="convo-full-h">
+    <div class="convo-full-bar">
+      <h2 class="convo-full-h" id="convo-full-h">Conversation</h2>
+      <button type="button" class="convo-full-close" id="convo-full-close">Close</button>
+      <button type="button" class="sys-fold" id="full-sys-fold" aria-controls="full-sys-list" aria-expanded="false" hidden></button>
+    </div>
+    <div class="convo-full-scroll" id="convo-full-scroll" tabindex="0">
+      <div class="thread" id="full-thread"></div>
+      <div class="empty" id="full-empty" hidden>
+        <p class="empty-title">No texts yet</p>
+        <p>Nothing has been sent or received for this lead.</p>
+      </div>
+    </div>
+  </dialog>
+
   <dialog class="sheet" id="confirm" aria-labelledby="confirm-text">
     <div class="sheet-body">
       <p class="sheet-text" id="confirm-text"></p>
