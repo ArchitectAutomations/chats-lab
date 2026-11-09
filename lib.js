@@ -63,9 +63,13 @@
   }
 
   function toDate(v) {
+    if (v === null || v === undefined || v === '') return null;   // new Date(null) is 1970: never a real time
     var d = v instanceof Date ? v : new Date(v);
     return isNaN(d.getTime()) ? null : d;
   }
+
+  // A timestamp a person can read as "ago": a real date that is not the epoch (a missing value often arrives as 0 or 1970).
+  function realTime(v) { var d = toDate(v); return d && d.getTime() > 86400000 ? d : null; }
 
   function nowDate(now) { return toDate(now === undefined ? new Date() : now) || new Date(); }
 
@@ -103,7 +107,7 @@
 
   // "just now", "2 min ago", "3 h ago", then "Nov 3"
   function fmtAgo(iso, now) {
-    var d = toDate(iso);
+    var d = realTime(iso);
     if (!d) return '';
     var n = nowDate(now);
     var s = (n.getTime() - d.getTime()) / 1000;
@@ -385,15 +389,24 @@
     note_too_long: 'Keep the note under 500 characters.'
   };
 
-  function friendlyStatusError(err) {
+  // Staff-only refusals from cv_set_lead_status (sql/018): plain words.
+  var STAFF_ERRORS = {
+    staff_no_price: 'Only the owner can enter a final price. Mark the lead booked without one and the owner adds it.',
+    staff_open_leads_only: 'Staff can only change a lead that is still open. Ask the owner to change a booked or lost lead.'
+  };
+
+  function friendlyStatusError(err, role) {
     var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).trim();
     var msg = raw.toLowerCase();
+    var sm = /\b(staff_no_price|staff_open_leads_only)\b/.exec(msg);
+    if (sm) return STAFF_ERRORS[sm[1]];
     var m = /\b(not_owner|bad_status|not_found|not_allowed|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(msg);
     if (m) {
       if (m[1] === 'bad_input') {
         var why = String(m[2] || (err && err.details) || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
         return BAD_INPUT[why] || 'Check the price or the reason and try again.';
       }
+      if (m[1] === 'not_owner' && role === 'staff') return 'The owner has switched this off for your account.';
       if (m[1] === 'not_owner') return "Your sign-in isn't linked to this lead's business. Sign out, then sign in with your own number.";
       if (m[1] === 'bad_status') return "The page sent a status the system doesn't accept. Reload the page and try again.";
       if (m[1] === 'not_found') return "This lead can't be found any more. Go back to your list.";
@@ -594,7 +607,7 @@
 
   // "just now", "12 min ago", "3 h ago", "1 day ago", "4 days ago"
   function fmtSince(iso, now) {
-    var d = toDate(iso);
+    var d = realTime(iso);
     if (!d) return '';
     var s = (nowDate(now).getTime() - d.getTime()) / 1000;
     if (s < 45) return 'just now';
@@ -606,7 +619,7 @@
 
   // "Nov 9" (with the year when it is not this year), Toronto date.
   function fmtShortDate(iso, now) {
-    var d = toDate(iso);
+    var d = realTime(iso);
     if (!d) return '';
     var p = partsOf(d), n = partsOf(nowDate(now));
     return MONTHS[p.m - 1] + ' ' + p.d + (p.y !== n.y ? ', ' + p.y : '');
@@ -665,8 +678,8 @@
       return 'Follow-up text is due now unless you mark ' + lc('booked') + ' or ' + lc('lost');
     }
     if (st === 'quoted') {
-      var q = toDate(lead.status_at || lead.last_outbound_at);
-      var inb = toDate(lead.last_inbound_at);
+      var q = realTime(lead.status_at) || realTime(lead.last_outbound_at);
+      var inb = realTime(lead.last_inbound_at);
       if (inb && (!q || inb.getTime() > q.getTime())) return 'They replied ' + fmtSince(inb, now);
       return q ? 'Quote sent ' + fmtSince(q, now) + ', no reply' : 'Quote sent, no reply yet';
     }
@@ -2697,6 +2710,70 @@
     return 'Couldn’t get an answer. Check your connection and try again.';
   }
 
+
+  /* ---------- staff access (sql/017 cv_my_role, sql/018): who is signed in, and what a staff member may see ---------- */
+
+  // cv_my_role() -> { state, perms }. state: 'owner' | 'staff' | 'none' | 'bad'. 'bad' (null, no role, an unknown role word,
+  // a role of the wrong type) must never unlock anything. Only a literal true in perms is a yes.
+  function roleView(res) {
+    if (!res || typeof res !== 'object' || Array.isArray(res) || typeof res.role !== 'string') return { state: 'bad', perms: {} };
+    if (res.role === 'none') return { state: 'none', perms: {} };
+    if (res.role !== 'owner' && res.role !== 'staff') return { state: 'bad', perms: {} };
+    var perms = {};
+    if (res.role === 'staff' && res.perms && typeof res.perms === 'object' && !Array.isArray(res.perms)) {
+      Object.keys(res.perms).forEach(function (k) { perms[k] = res.perms[k] === true; });
+    }
+    return { state: res.role, perms: perms };
+  }
+
+  // A failed cv_my_role call -> { kind, text }. Always a retry: a failure is never the "access removed" answer.
+  function roleError(err) {
+    var msg = String((err && err.message) || (typeof err === 'string' ? err : '')).toLowerCase();
+    if (err && (err.status === 401 || err.code === 'PGRST301' || /jwt/.test(msg))) return { kind: 'auth', text: SESSION_RAN_OUT };
+    if (!err || err.status === 0 || err.status === undefined || /failed to fetch|network|load failed|timeout/.test(msg)) {
+      return { kind: 'network', text: "Can't reach the server. Check your connection and try again." };
+    }
+    return { kind: 'other', text: "We couldn't check your access just now. Try again in a moment." };
+  }
+
+  // Things a staff member never gets, whatever the config says (the server is the real gate; this keeps the page honest).
+  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team'];
+
+  // Is a page feature on for this role? Owner: the config switch alone, exactly as before. Staff: also each cv_my_role switch.
+  function roleFeatureOn(role, perms, features, key) {
+    if (!featureOn(features, key)) return false;
+    if (role !== 'staff') return true;
+    var p = perms || {};
+    if (STAFF_BLOCKED.indexOf(key) !== -1) return false;
+    if (key === 'followups') return p.followups === true;
+    if (key === 'calendar' || key === 'search') return p.leads_read === true;
+    if (key === 'notes') return p.notes === true;
+    return true;
+  }
+
+  // The status buttons a staff member is offered for a lead: only an open lead, only the switches that are on.
+  function staffActionsAhead(current, perms) {
+    var cur = String(current || '').toLowerCase();
+    if (cur === 'booked' || cur === 'lost' || statusGroup(cur) !== 'open') return [];
+    var p = perms || {};
+    return actionsAhead(cur).filter(function (st) { return p['status_' + st] === true; });
+  }
+
+  // One plain line under the buttons for staff; '' when nothing needs saying.
+  function staffActionsNote(current, perms) {
+    var cur = String(current || '').toLowerCase();
+    if (cur === 'booked' || cur === 'lost') return 'Only the owner can change a booked or lost lead.';
+    var base = actionsNote(cur);
+    if (base) return base;
+    if (canSetStatus(cur, 'contacted') || canSetStatus(cur, 'booked') || canSetStatus(cur, 'lost')) {
+      if (!staffActionsAhead(cur, perms).length) return 'The owner has switched off status changes for your account.';
+    }
+    return '';
+  }
+
+  // What a staff member with no cv_staff_* access at all sees on Leads.
+  var STAFF_NO_LEADS = 'The owner has switched off lead access for your account. Ask them if this is a mistake.';
+
   return {
     TZ: TZ,
     normalizePhone: normalizePhone,
@@ -2742,6 +2819,13 @@
     canSetStatus: canSetStatus,
     actionsNote: actionsNote,
     friendlyStatusError: friendlyStatusError,
+    roleView: roleView,
+    roleError: roleError,
+    roleFeatureOn: roleFeatureOn,
+    staffActionsAhead: staffActionsAhead,
+    staffActionsNote: staffActionsNote,
+    STAFF_NO_LEADS: STAFF_NO_LEADS,
+    STAFF_BLOCKED: STAFF_BLOCKED,
     historyLine: historyLine,
     sortHistory: sortHistory,
     toCents: toCents,

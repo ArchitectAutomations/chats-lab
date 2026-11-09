@@ -30,7 +30,7 @@
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
     setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test',
-    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', ask: 'cv-ask', askConfig: 'cv_ask_config', sendCode: 'auth', verify: 'auth'
+    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', ask: 'cv-ask', askConfig: 'cv_ask_config', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
   };
   function trackApi(api) {
     Object.keys(API_NAMES).forEach(function (k) {
@@ -86,27 +86,36 @@
   ];
 
   // Feature switches (CV_CUSTOM.features): an off feature is not shown anywhere. Leads ('list') and More are always on.
-  function feature(key) { return L.featureOn(custom.features, key); }
+  // Who is signed in, from cv_my_role (set once the answer is in). role '' = not asked yet: the owner's page, exactly as before.
+  // state: idle | checking | ready | removed | error. Nothing but 'ready' unlocks the page.
+  var ACCESS = { role: '', perms: {}, state: 'idle', seq: 0, lastCheck: 0, errorText: '' };
+  function isStaff() { return ACCESS.role === 'staff'; }
+  function feature(key) { return L.roleFeatureOn(ACCESS.role, ACCESS.perms, custom.features, key); }
   function tabByRoute(r) { return TABS.filter(function (x) { return x.route === r; })[0]; }
 
   // The client's bar and More list (CV_CUSTOM.tabs order, labels from CV_CUSTOM.tabLabels).
-  var PLAN = L.tabPlan(custom.tabs, feature);
+  var PLAN, BAR, MORE_ITEMS, NAV, TAB_ROUTES, HAS_FOLLOWUPS, HAS_SEARCH, HAS_NOTES, HAS_PUSH, HAS_ADD;
   function labelled(route) {
     var t = tabByRoute(route);
     var labels = custom.tabLabels || {};
     var label = typeof labels[route] === 'string' && labels[route].trim() ? labels[route].trim() : t.label;
     return { route: t.route, href: t.href, label: label, show: t.show, icon: t.icon };
   }
-  var BAR = PLAN.bar.concat(['more']).map(labelled);
-  var MORE_ITEMS = PLAN.more.map(labelled);
-  // Every screen the router can open (bar tabs, More and the tools under it).
-  var NAV = BAR.concat(MORE_ITEMS);
-  var TAB_ROUTES = NAV.map(function (n) { return n.route; });
-  var HAS_FOLLOWUPS = TAB_ROUTES.indexOf('followups') !== -1;
-  var HAS_SEARCH = feature('search');
-  var HAS_NOTES = feature('notes');
-  var HAS_PUSH = feature('push');
-  var HAS_ADD = feature('addLead');
+  // Worked out again once cv_my_role has answered (a staff member gets fewer tabs and switches).
+  function computeNav() {
+    PLAN = L.tabPlan(custom.tabs, feature);
+    BAR = PLAN.bar.concat(['more']).map(labelled);
+    MORE_ITEMS = PLAN.more.map(labelled);
+    // Every screen the router can open (bar tabs, More and the tools under it).
+    NAV = BAR.concat(MORE_ITEMS);
+    TAB_ROUTES = NAV.map(function (n) { return n.route; });
+    HAS_FOLLOWUPS = TAB_ROUTES.indexOf('followups') !== -1;
+    HAS_SEARCH = feature('search');
+    HAS_NOTES = feature('notes');
+    HAS_PUSH = feature('push');
+    HAS_ADD = feature('addLead');
+  }
+  computeNav();
 
   function $(id) { return document.getElementById(id); }
   var el = {
@@ -117,6 +126,7 @@
     alertsHead: $('alerts-h'), alertsInfo: $('alerts-info'), alertsSum: $('alerts-sum'), alertsBody: $('alerts-body'), alertsTest: $('alerts-test'), alertsOff: $('alerts-off'), alertsMsg: $('alerts-msg'),
     topbar: $('topbar'), back: $('btn-back'), title: $('title'), subtitle: $('subtitle'),
     live: $('live'), liveText: $('live-text'),
+    roleScreen: $('screen-role'), roleTitle: $('role-title'), roleText: $('role-text'), roleRetry: $('role-retry'), roleSignout: $('role-signout'),
     signin: $('screen-signin'), list: $('screen-list'), metrics: $('screen-metrics'), thread: $('screen-thread'),
     search: $('lead-search'), searchBox: $('search-box'), searchStatus: $('search-status'), searchResults: $('search-results'), browseBox: $('browse-box'),
     calendar: $('screen-calendar'), calTitle: $('cal-title'), calPrev: $('cal-prev'), calNext: $('cal-next'), calPossible: $('cal-possible'),
@@ -176,6 +186,7 @@
 
   var S = {
     api: null,
+    base: null,          // the owner API map; the staff map is picked from it once cv_my_role says staff
     signedIn: false,
     leads: [],
     listLoaded: false,
@@ -334,7 +345,7 @@
       return r.data;
     }
 
-    return {
+    var api = {
       getSession: function () {
         return client.auth.getSession().then(function (r) { return r.data && r.data.session; });
       },
@@ -346,6 +357,8 @@
         return client.auth.verifyOtp({ phone: phone, token: token, type: 'sms' });
       },
       signOut: function () { return client.auth.signOut({ scope: 'local' }); },
+      // sql/017: who is this? -> { role: 'owner' | 'staff' | 'none', perms: { name: boolean } }. Asked once, right after sign-in.
+      myRole: function () { return client.rpc('cv_my_role').then(ok); },
       // No owner-readable business name in the data contract yet: the nav shows "Leads".
       businessName: function () { return Promise.resolve(null); },
       fetchList: function () {
@@ -467,6 +480,37 @@
         return function () { client.removeChannel(ch); client.removeChannel(ev); client.removeChannel(nt); };
       }
     };
+
+    // The staff API map (sql/017, sql/018), beside the owner one above. Staff read ONLY through the cv_staff_* functions: they have no
+    // access to the tables or views, no price, no metrics, no Realtime. Each function returns the same shapes the page already draws
+    // (money and owner-only columns are simply not there). Text the server hid is shown exactly as sent.
+    api.staffMap = function () {
+      return {
+        getSession: api.getSession, onAuth: api.onAuth, sendCode: api.sendCode, verify: api.verify, signOut: api.signOut, myRole: api.myRole,
+        businessName: api.businessName,
+        fetchList: function () { return client.rpc('cv_staff_leads').then(ok); },
+        // { lead, thread, history } -> the page's { lead, rows, history }. The server returns null for an unknown lead.
+        fetchThread: function (id) {
+          return client.rpc('cv_staff_lead', { p_lead_id: id }).then(ok).then(function (r) {
+            return { lead: (r && r.lead) || null, rows: (r && r.thread) || [], history: (r && r.history) || null };
+          });
+        },
+        searchLeads: function (q) {
+          if (!L.searchFilter(q)) return Promise.resolve([]);
+          return client.rpc('cv_staff_search', { p_q: String(q || '').trim() }).then(ok);
+        },
+        fetchFollowUps: function () { return client.rpc('cv_staff_follow_ups').then(ok); },
+        // Same three functions as the owner (sql/018 changed their gate). setStatus sends no amount: staff have no price field.
+        setStatus: function (id, status, extra) {
+          var args = { p_lead_id: id, p_status: status };
+          Object.keys(extra || {}).forEach(function (k) { if (k !== 'p_amount' && extra[k] !== null && extra[k] !== undefined) args[k] = extra[k]; });
+          return client.rpc('cv_set_lead_status', args).then(ok);
+        },
+        addNote: api.addNote,
+        deleteNote: api.deleteNote
+      };
+    };
+    return api;
   }
 
   function loadMock() {
@@ -543,9 +587,10 @@
 
   function setScreen(name) {
     S.screen = name;
-    var signedIn = name !== 'signin';
+    var signedIn = name !== 'signin' && name !== 'role';
     el.app.classList.toggle('signed-in', signedIn);
     show(el.signin, name === 'signin');
+    show(el.roleScreen, name === 'role');
     show(el.list, name === 'list');
     show(el.metrics, name === 'metrics');
     show(el.followups, name === 'followups');
@@ -574,6 +619,7 @@
     if (!signedIn) setLive('off');
     renderConn();
   }
+
 
   function showSignin() {
     setScreen('signin');
@@ -620,7 +666,7 @@
   function scheduleRefresh(delay) {
     clearTimeout(S.refreshTimer);
     S.refreshTimer = setTimeout(function () {
-      if (!S.signedIn) return;
+      if (!S.signedIn || ACCESS.state !== 'ready') return;
       refreshList();
       refreshFollowUps();
       if (S.screen === 'thread' && S.thread.id) refreshThread();
@@ -632,6 +678,13 @@
   function retryLater() {
     if (S.retryTimer) return;
     S.retryTimer = setTimeout(function () { S.retryTimer = null; scheduleRefresh(0); }, 10000);
+  }
+
+  // A staff member whose switch was turned off (or who was removed) while the page was open: ask cv_my_role again, at most once a minute.
+  function maybeRecheckAccess(e) {
+    if (!isStaff() || ACCESS.state !== 'ready' || Date.now() - ACCESS.lastCheck < 60000) return;
+    var msg = String((e && e.message) || '').toLowerCase();
+    if ((e && e.code === '42501') || /not_allowed|not_owner/.test(msg)) checkAccess();
   }
 
   function isAuthFailure(e) {
@@ -646,8 +699,18 @@
     else if (S.screen === 'calendar') renderCalendar();
   }
 
+  // A staff member whose "see leads" switch is off: nothing to fetch (the server would refuse), one plain line instead.
+  function leadsBlocked() { return isStaff() && ACCESS.perms.leads_read !== true; }
+
   function refreshList() {
     var n = ++S.seq.list;
+    if (leadsBlocked()) {
+      S.leads = []; S.listLoaded = false; S.listError = L.STAFF_NO_LEADS;
+      el.leadList.replaceChildren(); renderNeeds([]);
+      renderBadge(); renderLeadScreens();
+      if (Date.now() - ACCESS.lastCheck >= 60000 && ACCESS.state === 'ready') checkAccess();   // the switch may have been turned back on
+      return Promise.resolve();
+    }
     return S.api.fetchList().then(function (rows) {
       if (n !== S.seq.list || !S.signedIn) return;
       S.leads = L.sortLeads(rows);
@@ -661,6 +724,7 @@
         S.listError = isAuthFailure(e) ? 'Your session ran out. Sign out and sign in again.' : "Couldn't load your leads. Trying again…";
         renderLeadScreens();
       }
+      maybeRecheckAccess(e);
       retryLater();
     });
   }
@@ -682,6 +746,7 @@
         show(el.threadLoading, false);
         setText(el.threadErr, isAuthFailure(e) ? 'Your session ran out. Sign out and sign in again.' : "Couldn't load this conversation. Trying again…");
       }
+      maybeRecheckAccess(e);
       retryLater();
     });
   }
@@ -780,7 +845,7 @@
     if (v.money) top.appendChild(make('span', 'lead-money', v.money));
     a.appendChild(top);
     a.appendChild(make('span', 'row-job', v.job));
-    if (L.isManual(lead)) a.appendChild(make('span', 'row-tag', 'Added by you'));
+    if (L.isManual(lead)) a.appendChild(make('span', 'row-tag', isStaff() ? 'Added by hand' : 'Added by you'));
     if (opts.needs && v.said) a.appendChild(make('span', 'row-said', v.said)); // text only, never markup
     (opts.lines || []).forEach(function (ln) {
       if (!ln) return;
@@ -1874,6 +1939,7 @@
         S.followUpsError = isAuthFailure(e) ? 'Your session ran out. Sign out and sign in again.' : "Couldn't load your follow-ups. Trying again…";
         if (S.screen === 'followups') renderFollowUps();
       }
+      maybeRecheckAccess(e);
       retryLater();
     });
   }
@@ -1983,7 +2049,7 @@
     Promise.resolve().then(function () { return S.api.setStatus(it.leadId, status, extra || {}); }).then(function () {
       return Promise.all([refreshPastEvents(), refreshList(), refreshForecast()]).then(settle, settle);
     }, function (e) {
-      S.pastErr = 'Could not save ' + it.name + '. ' + L.friendlyStatusError(e);
+      S.pastErr = 'Could not save ' + it.name + '. ' + L.friendlyStatusError(e, ACCESS.role);
       return refreshPastEvents().then(settle, settle);
     });
   }
@@ -2385,11 +2451,18 @@
     el.actions.replaceChildren(frag);
   }
 
+  // The owner: every button still ahead. Staff: open leads only, and only the buttons whose switch is on.
+  function actionsAheadFor(current) { return isStaff() ? L.staffActionsAhead(current, ACCESS.perms) : L.actionsAhead(current); }
+  function actionsNoteFor(current) {
+    var c = String(current || '').toLowerCase();
+    return isStaff() ? L.staffActionsNote(c, ACCESS.perms) : L.actionsNote(c);
+  }
+
   function renderActions() {
     var lead = S.thread.lead;
     var current = String((lead && lead.status) || '').toLowerCase();
     // Only the buttons still ahead are shown (C4): the current status is on the chip above, not repeated here.
-    var ahead = L.actionsAhead(current);
+    var ahead = actionsAheadFor(current);
     L.actions().forEach(function (a) {
       var b = S.actionButtons[a.status];
       var isCurrent = current === a.status;
@@ -2401,7 +2474,7 @@
       if (busy) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy');
       b.title = isCurrent ? 'Already ' + a.label.toLowerCase() : '';
     });
-    setText(el.actionsNote, L.actionsNote(current));
+    setText(el.actionsNote, actionsNoteFor(current));
     var count = ahead.length;
     el.actions.hidden = !!lead && count === 0 && !S.pending;
     el.actions.style.gridTemplateColumns = 'repeat(' + Math.max(1, Math.min(3, count || 3)) + ', 1fr)';
@@ -2464,8 +2537,10 @@
     if (!lead || S.pending) return;
     var booked = action.status === 'booked', lost = action.status === 'lost';
     // Booked: final price, filled in from the quote. Lost: a reason is required.
-    show(el.priceBox, booked);
-    if (booked) { el.price.value = L.amountInput(lead.quote_total); el.price.removeAttribute('aria-invalid'); }
+    // Staff never enter a price: no field at all (the owner adds it afterwards).
+    var priced = booked && !isStaff();
+    show(el.priceBox, priced);
+    if (priced) { el.price.value = L.amountInput(lead.quote_total); el.price.removeAttribute('aria-invalid'); }
     show(el.reasonBox, lost);
     if (lost) {
       var checked = el.reasonChips.querySelectorAll('input');
@@ -2474,7 +2549,7 @@
       show(el.reasonOther, false);
     }
     openSheet({ kind: 'status', status: action.status, ctx: ctx || null }, L.confirmText(leadName(lead), action.status, lead, !!ctx), action.confirm,
-      'sheet-' + action.status, booked ? el.price : null);
+      'sheet-' + action.status, priced ? el.price : null);
   }
 
   function openNoteDelete(noteId) {
@@ -2488,7 +2563,9 @@
     if (!c) return;
     if (c.kind === 'note') { closeConfirm(); deleteNote(c.id); return; }
     var lead = c.ctx ? c.ctx.lead : S.thread.lead;
-    var x = L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value }, lead && lead.quote_total);
+    var x = isStaff() && c.status === 'booked'
+      ? { ok: true, args: {} }
+      : L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value }, lead && lead.quote_total);
     if (!x.ok) {
       setText(el.confirmErr, x.error);
       if (x.field === 'amount') { el.price.setAttribute('aria-invalid', 'true'); try { el.price.focus(); } catch (e) { /* ignore */ } }
@@ -2519,7 +2596,8 @@
       S.historyOpen = false;
       return Promise.all([refreshThread(), refreshList()]);
     }).catch(function (e) {
-      if (id === S.thread.id) setText(el.actionErr, L.friendlyStatusError(e));
+      if (id === S.thread.id) setText(el.actionErr, L.friendlyStatusError(e, ACCESS.role));
+      maybeRecheckAccess(e);
     }).then(function () {
       S.pending = null;
       if (id === S.thread.id) {
@@ -2772,11 +2850,11 @@
     el.strip.className = 'rec-card strip tone-' + st.tone;
     var lostNote = String(lead.status || '').toLowerCase() === 'lost' ? String(lead.lost_note || '').trim() : '';
     setText(el.stripNote, lostNote ? 'Why: ' + lostNote : '');
-    setText(el.hStatus, L.statusHeading(lead.status));
+    setText(el.hStatus, isStaff() && actionsNoteFor(lead.status) && !actionsAheadFor(lead.status).length ? 'Status locked' : L.statusHeading(lead.status));
     renderActions();
     renderHistory();
     // The card is only there while there is something to do or say: buttons ahead, a lost note, or a locked-status note.
-    show(el.strip, L.actionsAhead(lead.status).length > 0 || !!lostNote || !!L.actionsNote(String(lead.status || '').toLowerCase()));
+    show(el.strip, actionsAheadFor(lead.status).length > 0 || !!lostNote || !!actionsNoteFor(lead.status));
     renderNotes(lead);
     renderEvent(lead);
     renderQuote(lead);
@@ -2906,6 +2984,7 @@
       showSignin();
       return;
     }
+    if (ACCESS.state !== 'ready') { renderAccess(); return; }   // nothing is drawn until cv_my_role has answered
     var target = store('get', TARGET_KEY);
     if (target) {
       store('del', TARGET_KEY);
@@ -2936,14 +3015,102 @@
     }).catch(function () { /* keep it empty */ });
   }
 
-  function onSignedIn() {
-    if (S.signedIn) return;
-    S.signedIn = true;
-    startLive();
+  /* ---------- who is signed in (cv_my_role) ----------
+     Right after sign-in, before anything else loads. Owner: the page exactly as before. Staff: the staff API map, fewer tabs, no
+     Realtime (the 30-second refresh and the wake-up catch-up do the work), each switch from cv_my_role honoured.
+     'none' = "Your access was removed". A failed call = a retry screen. Anything else (no answer, an unknown role) = a retry
+     screen too: the page never opens on a guess. */
+
+  function renderAccess() {
+    var st = ACCESS.state;
+    setScreen('role');
+    if (st === 'removed') {
+      el.roleTitle.textContent = 'Your access was removed';
+      setText(el.roleText, 'This number no longer has access to these leads. If that is a mistake, ask the owner to add you again.');
+    } else if (st === 'error') {
+      el.roleTitle.textContent = "Couldn't check your access";
+      setText(el.roleText, ACCESS.errorText || "We couldn't check your access just now. Try again in a moment.");
+    } else {
+      el.roleTitle.textContent = 'Checking your access';
+      setText(el.roleText, 'One moment…');
+    }
+    show(el.roleRetry, st === 'error');
+    show(el.roleSignout, st === 'removed' || st === 'error');
+  }
+
+  // Nothing of a lead stays in memory or in the page once access is gone.
+  function clearLeadData() {
+    clearTimeout(S.refreshTimer);
+    S.seq.list++; S.seq.thread++; S.seq.followups++;
+    S.leads = []; S.listLoaded = false; S.listError = '';
+    S.thread = emptyThread(); S.followUps = null; S.followUpsError = '';
+    clearSearch();
+    el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.notesList.replaceChildren(); el.fuBody.replaceChildren();
+    el.calBody.replaceChildren(); el.calDayList.replaceChildren(); el.searchResults.replaceChildren();
+    el.calAgendaWeek.replaceChildren(); el.calAgendaLater.replaceChildren(); el.metricsBody.replaceChildren();
+    el.eventFacts.replaceChildren(); el.quoteBody.replaceChildren(); el.othersList.replaceChildren(); el.history.replaceChildren();
+    el.recPhone.removeAttribute('href'); el.contactActions.replaceChildren();
+    ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recPhone', 'eventDetails', 'confirmText', 'stripNote', 'actionErr', 'noteErr', 'contactNote']
+      .forEach(function (k) { if (el[k]) el[k].textContent = ''; });
+    el.noteText.value = ''; syncNoteSave();
+    closeConfirm();
+    renderBadge(); renderNeeds([]);
+  }
+
+  function checkAccess() {
+    var n = ++ACCESS.seq;
+    ACCESS.lastCheck = Date.now();
+    ACCESS.state = 'checking'; ACCESS.errorText = '';
+    renderAccess();
+    var base = S.base || S.api;
+    Promise.resolve().then(function () {
+      if (!base || typeof base.myRole !== 'function') throw { status: 500, message: 'no_role_call' };
+      return Promise.race([base.myRole(), new Promise(function (_, rej) { setTimeout(function () { rej({ status: 0, message: 'timeout' }); }, 12000); })]);
+    }).then(function (res) {
+      if (n !== ACCESS.seq || !S.signedIn) return;
+      var v = L.roleView(res);
+      if (v.state === 'none') { ACCESS.state = 'removed'; clearLeadData(); renderAccess(); return; }
+      if (v.state === 'bad') { ACCESS.state = 'error'; ACCESS.errorText = "We couldn't confirm your access. Try again, or sign out."; renderAccess(); return; }
+      enterApp(v);
+    }, function (e) {
+      if (n !== ACCESS.seq || !S.signedIn) return;
+      ACCESS.state = 'error'; ACCESS.errorText = L.roleError(e).text;
+      renderAccess();
+    });
+  }
+
+  function enterApp(v) {
+    ACCESS.role = v.state; ACCESS.perms = v.perms; ACCESS.state = 'ready';
+    S.api = v.state === 'staff' ? trackApi(S.base.staffMap()) : S.base;
+    computeNav();
+    buildTabbar();
+    show(el.searchWrap, HAS_SEARCH);
+    S.tab = NAV[0];
+    if (v.state === 'staff') setLive('off');   // no Realtime for staff: the server delivers them nothing
+    else startLive();
     loadBrand();
     loadPush();
     loadSupportConfig();
     route();
+  }
+
+  function beginSession() {
+    S.signedIn = true;
+    checkAccess();
+  }
+
+  function onSignedIn() {
+    if (S.signedIn) return;
+    beginSession();
+  }
+
+  function doSignOut() {
+    // This phone stops getting alerts first (while the session can still authorise the call). Soft-fail, 3 s cap, never blocks sign-out.
+    Promise.race([dropPushSubscription(), new Promise(function (res) { setTimeout(res, 3000); })])
+      .catch(function () { /* sign out anyway */ })
+      .then(function () { return S.api.signOut(); }).catch(function () { /* local sign-out below still runs */ }).then(function () {
+      if (S.signedIn) onSignedOut();
+    });
   }
 
   function clearStoredTargets() {
@@ -2959,6 +3126,12 @@
 
   function onSignedOut() {
     S.signedIn = false;
+    // Back to the first-screen state: the owner's API map and tabs, nothing asked yet (the next sign-in asks again).
+    ACCESS.seq++; ACCESS.role = ''; ACCESS.perms = {}; ACCESS.state = 'idle'; ACCESS.errorText = '';
+    if (S.base) S.api = S.base;
+    computeNav(); buildTabbar();
+    show(el.searchWrap, HAS_SEARCH);
+    show(el.alerts, false);
     // Session ended (expiry, other tab): drop this phone's browser subscription locally. The server call may no longer be authorised;
     // a leftover server row is removed on the push service's next 404/410.
     if (P.sub) { try { Promise.resolve(P.sub.unsubscribe()).catch(function () { /* ignore */ }); } catch (e) { /* ignore */ } }
@@ -2979,7 +3152,7 @@
     S.quote = { busy: false, seq: S.quote.seq + 1, view: null, req: null };
     el.qForm.reset(); qBusy(false); qFieldErrors({}); setText(el.qErr, ''); show(el.qKmBox, false); renderQuoteResult();
     S.cal = null; S.showPossible = false;
-    el.calBody.replaceChildren(); el.calDayList.replaceChildren(); el.notesList.replaceChildren(); el.noteText.value = ''; syncNoteSave();
+    clearLeadData();
     el.fuBody.replaceChildren();
     renderBadge(); renderNeeds([]);
     el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.metricsBody.replaceChildren();
@@ -3118,6 +3291,7 @@
   }
 
   function renderPush() {
+    if (isStaff()) { show(el.alerts, false); return; }   // alerts and the owner's text list are owner-only
     var st = L.pushState(pushEnv());
     var info = alertInfoLines();
     var f = document.createDocumentFragment();
@@ -3242,14 +3416,9 @@
     el.alertsTest.addEventListener('click', onAlertsTest);
     el.alertsOff.addEventListener('click', onAlertsOff);
 
-    el.signout.addEventListener('click', function () {
-      // This phone stops getting alerts first (while the session can still authorise the call). Soft-fail, 3 s cap, never blocks sign-out.
-      Promise.race([dropPushSubscription(), new Promise(function (res) { setTimeout(res, 3000); })])
-        .catch(function () { /* sign out anyway */ })
-        .then(function () { return S.api.signOut(); }).catch(function () { /* local sign-out below still runs */ }).then(function () {
-        if (S.signedIn) onSignedOut();
-      });
-    });
+    el.signout.addEventListener('click', doSignOut);
+    el.roleSignout.addEventListener('click', doSignOut);
+    el.roleRetry.addEventListener('click', checkAccess);
 
     // Status actions
     el.confirmYes.addEventListener('click', confirmYes);
@@ -3352,9 +3521,10 @@
 
     // Phones background tabs and drop sockets: catch up the moment the page is back.
     document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible' && S.signedIn && ACCESS.state === 'error') { checkAccess(); return; }
       if (document.visibilityState === 'visible' && S.signedIn) { scheduleRefresh(0); if (S.screen === 'support') refreshSupportList(); }
     });
-    window.addEventListener('online', function () { if (S.signedIn) scheduleRefresh(0); });
+    window.addEventListener('online', function () { if (S.signedIn && ACCESS.state === 'error') checkAccess(); else if (S.signedIn) scheduleRefresh(0); });
 
     // Safety net if Realtime is down, and keeps "2 min ago" honest.
     setInterval(function () {
@@ -3414,12 +3584,12 @@
       return;
     }
     (MOCK ? loadMock() : Promise.resolve(makeRealApi())).then(function (api) {
-      S.api = trackApi(api);
+      S.api = S.base = trackApi(api);
       api.onAuth(function (ev) { setTimeout(function () { handleAuthEvent(ev); }, 0); });
       return api.getSession();
     }).then(function (session) {
-      if (session) { S.signedIn = true; startLive(); loadBrand(); loadPush(); loadSupportConfig(); }
-      route();
+      if (session) onSignedIn();
+      else route();
       if (MOCK && !session && qs.get('screen') === 'code') showCodeStep('+14165550123');
     }).catch(function () {
       showSignin();

@@ -74,6 +74,16 @@
     </div>
   </main>
 
+  <!-- Access check: shown after sign-in until cv_my_role answers, and for "access removed" or "could not check". Text is set by the page (textContent only). -->
+  <main class="screen signin" id="screen-role" hidden>
+    <div class="signin-card">
+      <h1 class="brand" id="role-title">Checking your access</h1>
+      <p class="lede" id="role-text" role="status"></p>
+      <button class="btn primary" id="role-retry" type="button" hidden>Try again</button>
+      <button class="btn quiet" id="role-signout" type="button" hidden>Sign out</button>
+    </div>
+  </main>
+
   <!-- Lead list -->
   <main class="screen list-screen" id="screen-list" hidden>
     <div class="scroller" id="list-scroll">
