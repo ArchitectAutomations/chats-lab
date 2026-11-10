@@ -97,7 +97,7 @@
 }
 
 /* Sand surfaces: text turns green, muted and dividers follow. */
-.lead-row, .ag-row, .m-tile, .fc-note, .rec-card, .sheet, .field, .row.in .bubble, .waiting-row, .more-row, .alerts {
+.lead-row, .need-link, .ag-row, .m-tile, .fc-note, .rec-card, .sheet, .field, .row.in .bubble, .waiting-row, .more-row, .alerts {
   --ink: var(--on-secondary);
   --muted: var(--muted-on-secondary);
   --line: var(--secondary-deep);
@@ -432,21 +432,47 @@ a { color: var(--link); }
 
 .noscript { padding: 24px var(--gutter); color: var(--on-primary); }
 
-/* ---------- list filters (on green): four chips that always fit ---------- */
+/* ---------- list filters (on green): five chips that always fit (round 4) ----------
+   Count over label, each chip as wide as its label needs plus a share of the rest: Open / Contacted / Booked / Lost / All
+   fit one row at 320 px (the widest label, "Contacted", needs about 64 px at 13 px). */
 .filters {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-2);
+  display: flex; gap: 6px;
   max-width: var(--content); margin: 0 auto;
   padding: var(--sp-3) calc(12px + env(safe-area-inset-right)) var(--sp-2) calc(12px + env(safe-area-inset-left));
 }
 .filter {
-  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-  min-height: 44px; min-width: 0; padding: 0 var(--sp-2);
-  border-radius: var(--r-pill); border: 1.5px solid var(--muted-on-primary); background: transparent;
-  font-size: var(--fs-sm); font-weight: 600; color: var(--on-primary); white-space: nowrap;
+  flex: 1 1 auto; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  min-height: 48px; min-width: 0; padding: 4px 6px;
+  border-radius: var(--r-md); border: 1.5px solid var(--muted-on-primary); background: transparent;
+  font-size: 13px; font-weight: 600; color: var(--on-primary); white-space: nowrap; line-height: 1.15;
 }
-.filter-count { font-variant-numeric: tabular-nums; color: var(--muted-on-primary); font-weight: 600; }
+.filter-count { font-variant-numeric: tabular-nums; color: var(--on-primary); font-weight: 750; font-size: var(--fs-md); }
+.filter-label { color: var(--muted-on-primary); }
 .filter[aria-pressed="true"] { background: var(--action); border-color: var(--action); color: var(--on-accent); }
-.filter[aria-pressed="true"] .filter-count { color: inherit; }
+.filter[aria-pressed="true"] .filter-count, .filter[aria-pressed="true"] .filter-label { color: inherit; }
+@media (min-width: 600px) { .filter { flex-direction: row; gap: 6px; border-radius: var(--r-pill); font-size: var(--fs-sm); } .filter-count { font-size: var(--fs-sm); order: 2; } }
+
+/* Home, round 4: "See all N waiting", the full Needs-you list's heading, its New / Waiting over a day parts, "Show more". */
+.needs-more, .show-more, .list-back, .pe-bulk {
+  display: block; width: 100%; min-height: 44px; margin: var(--sp-2) 0 0; padding: 0 var(--sp-3);
+  border: 1.5px solid var(--muted-on-primary); border-radius: var(--r-pill); background: transparent;
+  color: var(--on-primary); font: inherit; font-size: var(--fs-md); font-weight: 650; cursor: pointer;
+}
+.needs-more:active, .show-more:active, .list-back:active, .pe-bulk:active { background: var(--primary-deep); }
+.needs-more:focus-visible, .show-more:focus-visible, .list-back:focus-visible, .pe-bulk:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+#list-more { max-width: calc(var(--content) - 24px); width: calc(100% - 24px); margin: var(--sp-3) auto var(--sp-5); }
+.list-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap;
+  max-width: var(--content); margin: 0 auto; padding: var(--sp-2) calc(12px + env(safe-area-inset-right)) var(--sp-2) calc(12px + env(safe-area-inset-left));
+}
+.list-head-title { margin: 0; font-size: var(--fs-lg); font-weight: 700; color: var(--on-primary); }
+.list-head .list-back { width: auto; margin: 0; padding: 0 var(--sp-4); }
+.lead-list > .list-sec { list-style: none; margin: var(--sp-2) var(--sp-1) 0; font-size: var(--fs-sm); font-weight: 700; color: var(--muted-on-primary); text-transform: none; }
+.row-new {
+  display: inline-flex; align-items: center; padding: 0 8px; border-radius: var(--r-pill); line-height: 1.6;
+  background: var(--accent-tint); color: var(--accent-ink); font-size: var(--fs-xs); font-weight: 750;
+}
+.lead-row.is-needs .row-foot { justify-content: flex-start; }
 .filter-note { max-width: var(--content); margin: 0 auto; padding: 0 calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-2) calc(var(--gutter) + env(safe-area-inset-left)); color: var(--muted-on-primary); font-size: var(--fs-sm); }
 
 /* ---------- thread: status actions (on the sand strip) ---------- */
@@ -621,6 +647,22 @@ a { color: var(--link); }
 .pe-btn[disabled] { cursor: default; opacity: 0.6; }
 .pe-btn:focus-visible, .fc-link:focus-visible, .pe-who:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .pe-more { padding-top: var(--sp-2); }
+/* Clear old leads in bulk (round 4): the entry under Did-these-happen, the line it leaves (with Undo), the sheet's sample. */
+.pe-showmore { margin-top: var(--sp-3); }
+.pe-bulk { margin-top: var(--sp-3); }
+.bulk-block { display: grid; gap: var(--sp-2); padding: 12px 14px; border-radius: var(--r-md); background: var(--primary-raised); border: 1px solid var(--line-on-primary); }
+.bulk-done { margin: 0; color: var(--on-primary); font-size: var(--fs-md); }
+.bulk-block .bulk-undo { margin: 0; width: auto; justify-self: start; padding: 0 var(--sp-5); }
+.bulk-block .error { margin: 0; }
+.bulk-sample { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: grid; gap: 6px; }
+.bulk-row { display: grid; gap: 1px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--secondary-deep); min-width: 0; }
+.bulk-name { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bulk-meta { font-size: var(--fs-sm); color: var(--muted-on-secondary); }
+.sheet .sheet-note#bulk-head { font-weight: 650; }
+.sheet.sheet-bulk { max-height: 94vh; max-height: 94dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.sheet.sheet-bulk #bulk-yes { background: transparent; color: var(--on-secondary); border-color: var(--on-secondary); }
+.sheet.sheet-bulk #bulk-yes:active { background: var(--secondary-deep); }
+.sheet.sheet-bulk #bulk-yes[disabled] { opacity: 0.5; }
 .fc-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 650; color: var(--link); text-decoration: underline; cursor: pointer; min-height: 24px; }
 
 /* ---------- search (Leads, on green) ---------- */
@@ -834,9 +876,29 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
   padding: var(--sp-3); border-radius: var(--r-lg); background: var(--primary-raised); border: 1px solid var(--line-on-primary); box-shadow: var(--shadow-card);
 }
 @media (min-width: 784px) { .needs { margin-left: auto; margin-right: auto; } }
-.needs-h { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0 var(--sp-1) var(--sp-3); font-size: var(--fs-lg); font-weight: 700; color: var(--on-primary); }
+.needs-h { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0 var(--sp-1); font-size: var(--fs-lg); font-weight: 700; color: var(--on-primary); }
 .needs-count { font-size: var(--fs-md); font-weight: 600; color: var(--on-primary); font-variant-numeric: tabular-nums; }
-.needs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+.needs-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }  /* round 4: a long name never widens the block */
+/* Review r4 item 3: the block is compact so it and the filter chips fit the first screen at 320x568. "See all" sits beside the
+   heading; each waiting lead is ONE line: name, how long, a call button (the full card with the last text is in "See all"). */
+.needs-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin: 0 0 6px; min-width: 0; }
+.needs-top .needs-more { width: auto; flex: none; margin: 0; padding: 0 var(--sp-4); }
+.need-line { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; list-style: none; }
+.need-link {
+  flex: 1 1 auto; min-width: 0; min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+  padding: 0 var(--sp-3); border-radius: var(--r-md); background: var(--secondary); color: var(--ink); text-decoration: none; box-shadow: var(--shadow-card);
+}
+.need-link:active { background: var(--secondary-deep); }
+.need-link:focus-visible, .need-line .row-call:focus-visible, .needs-late:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.need-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; font-size: var(--fs-md); }
+.need-link .row-wait { flex: none; white-space: nowrap; }
+.need-line .row-call { position: static; flex: none; }
+.needs-late {
+  display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: 44px; margin: 6px 0 0; padding: 0 var(--sp-1);
+  border: 0; background: transparent; color: var(--on-primary); font: inherit; font-size: var(--fs-sm); font-weight: 650; text-align: left; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.needs-late svg { flex: none; color: var(--muted-on-primary); }
 
 /* ---------- More ---------- */
 .more-wrap { max-width: var(--content); margin: 0 auto; padding: var(--sp-3) calc(12px + env(safe-area-inset-right)) var(--sp-5) calc(12px + env(safe-area-inset-left)); }

@@ -168,6 +168,9 @@
     btnVerify: $('btn-verify'), btnResend: $('btn-resend'), btnChange: $('btn-change'), configErr: $('config-error'),
     listScroll: $('list-scroll'), filters: $('filters'), listLoading: $('list-loading'), leadList: $('lead-list'),
     listEmpty: $('list-empty'), filterEmpty: $('filter-empty'), listErr: $('list-error'),
+    needsMore: $('needs-more'), needsLate: $('needs-late'), listHead: $('list-head'), listHeadTitle: $('list-head-title'), listBack: $('list-back'), listTrunc: $('list-trunc'), listMore: $('list-more'),
+    bulk: $('bulk'), bulkDate: $('bulk-date'), bulkHead: $('bulk-head'), bulkSample: $('bulk-sample'), bulkMore: $('bulk-more'), bulkNote: $('bulk-note'),
+    bulkErr: $('bulk-error'), bulkYes: $('bulk-yes'), bulkNo: $('bulk-no'),
     btnAdd: $('btn-add-lead'), toast: $('toast'),
     addDlg: $('add-lead'), addForm: $('add-form'), addName: $('add-name'), addPhone: $('add-phone'), addDate: $('add-date'),
     addGuests: $('add-guests'), addArea: $('add-area'), addOccasion: $('add-occasion'), addContacted: $('add-contacted'),
@@ -201,6 +204,9 @@
     base: null,          // the owner API map; the staff map is picked from it once cv_my_role says staff
     signedIn: false,
     leads: [],
+    counts: null,        // cv_list_counts (sql/025) from the last refresh; null = count the rows the page has
+    shown: {},           // list key -> rows drawn so far ("Show more", round 4); kept while the page is open
+    listTop: 0,          // the list's scroll position when a lead was opened, put back on return
     listLoaded: false,
     listError: '',
     thread: emptyThread(),
@@ -218,6 +224,8 @@
     pastErr: '',
     pastLatest: null,    // newest in-flight cv_past_events fetch (older ones wait for it)
     pastScroll: false,   // 'Review them' link: scroll to the section once it is drawn
+    pastLimit: 50,       // Did these happen?: rows asked for (50 more per "Show more", up to 200)
+    bulk: { open: false, date: '', view: null, seq: 0, busy: false, err: '', done: '', undo: null },  // clear old leads in bulk (round 4)
     search: { q: '', rows: null, error: '', seq: 0, timer: null },  // memory only: never URL / storage
     cal: null,           // { y, m, sel } month on screen and picked day
     showPossible: false,
@@ -233,6 +241,7 @@
     screen: '',
     tab: NAV[0],
     filter: 'open',
+    chip: 'open',        // the last chip picked (the full Needs-you list goes back to it)
     pending: null,       // status being saved from the page
     pendingToken: null,  // which saveStatus call owns it
     confirming: null,    // status waiting in the confirm sheet
@@ -391,10 +400,44 @@
       myRole: function () { return client.rpc('cv_my_role').then(ok); },
       // No owner-readable business name in the data contract yet: the nav shows "Leads".
       businessName: function () { return Promise.resolve(null); },
+      // Round 4: lead_list in pages of L.LIST_FETCH (the API's row limit), newest activity first, up to L.LIST_CAP rows. Past the cap
+      // the page says "showing N of M" from cv_list_counts. Review r4 item 7: KEYSET pages (after the last row's last_activity_at,
+      // lead_id), never offsets, so a lead that leaves or joins an earlier page cannot shift one past the next page. A lead with new
+      // activity while the pages are read jumps above the cursor, so one last read takes every row at or after the newest time the
+      // first page saw (newer copies win). A lead is kept once.
       fetchList: function () {
-        return client.from('lead_list').select('*')
-          .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(1000).then(ok);
+        var byId = {}, order = [], top = null;
+        function keep(r, fresher) {
+          if (!r || !r.lead_id) return;
+          if (!byId[r.lead_id]) order.push(r.lead_id); else if (!fresher) return;
+          byId[r.lead_id] = r;
+        }
+        function base() {
+          return client.from('lead_list').select('*')
+            .order('last_activity_at', { ascending: false, nullsFirst: false }).order('lead_id', { ascending: true });
+        }
+        function done() { return order.map(function (id) { return byId[id]; }); }
+        function catchUp() {
+          if (!top) return done();
+          return base().gte('last_activity_at', top).limit(L.LIST_FETCH).then(ok).then(function (rows) {
+            (rows || []).forEach(function (r) { keep(r, true); });
+            return done();
+          });
+        }
+        function page(after) {
+          var q = base();
+          if (after) q = q.or(L.keysetAfter('last_activity_at', after.last_activity_at, 'lead_id', after.lead_id));
+          return q.limit(L.LIST_FETCH).then(ok).then(function (rows) {
+            rows = rows || [];
+            if (!after && rows.length) top = rows[0].last_activity_at || null;
+            rows.forEach(function (r) { keep(r, false); });
+            return rows.length === L.LIST_FETCH && order.length < L.LIST_CAP ? page(rows[rows.length - 1]) : catchUp();
+          });
+        }
+        return page(null);
       },
+      // sql/025: Home counts from the server (owner only; staff count what they have).
+      listCounts: function () { return client.rpc('cv_list_counts').then(ok); },
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
@@ -491,16 +534,32 @@
         });
       },
       // Owner-only RPC (sql/011): -> [{ lead_id, created }]. args from L.addLeadArgs.
+      // Round 4: paged too, so the "opted out" warning still knows every number past 1,000. Keyset on lead_id (review r4 item 7).
       optedOutPhones: function () {
-        return client.from('lead_detail').select('phone').eq('opted_out', true).limit(1000)
-          .then(function (r) { return r.error ? [] : (r.data || []).map(function (x) { return x.phone; }); });
+        var all = [];
+        function page(after) {
+          var q = client.from('lead_detail').select('lead_id,phone').eq('opted_out', true).order('lead_id', { ascending: true });
+          if (after) q = q.gt('lead_id', after);
+          return q.limit(L.LIST_FETCH).then(function (r) {
+            if (r.error) return all;
+            var rows = r.data || [];
+            all = all.concat(rows.map(function (x) { return x.phone; }));
+            return rows.length === L.LIST_FETCH && all.length < L.LIST_CAP ? page(rows[rows.length - 1].lead_id) : all;
+          });
+        }
+        return page(null);
       },
       addLead: function (args) { return client.rpc('cv_add_lead', args).then(ok); },
       addNote: function (id, body) { return client.rpc('cv_add_note', { p_lead_id: id, p_body: body }).then(ok); },
       deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
       forecast: function () { return client.rpc('cv_forecast').then(ok); },
-      pastEvents: function () { return client.rpc('cv_past_events', { p_limit: 50 }).then(ok); },
+      pastEvents: function (limit) { return client.rpc('cv_past_events', { p_limit: limit || 50 }).then(ok); },
+      // sql/025: clear old leads in bulk (owner only). Errors keep their { message, details } for L.bulkErrorText.
+      bulkPreview: function (before) { return client.rpc('cv_bulk_lost_preview', { p_before: before || null }).then(ok); },
+      // review r4 item 1: the fingerprint of the exact set the preview showed; the server refuses 'changed' when it differs.
+      bulkLost: function (before, expected, fingerprint) { return client.rpc('cv_bulk_lost', { p_before: before, p_expected: expected, p_fingerprint: fingerprint }).then(ok); },
+      bulkUndo: function (batchId) { return client.rpc('cv_bulk_lost_undo', { p_batch: batchId }).then(ok); },
       // Push alerts (owner-only RPCs). Every call is soft-failed by the caller.
       pushConfig: function () { return client.rpc('cv_push_config').then(ok); },
       pushSubscribe: function (k, ua) {
@@ -514,8 +573,26 @@
       supportList: function () { return client.rpc('cv_support_list').then(ok); },
       // Spreadsheet download (owner-only RPC, sql/013): rows only; labels and CSV are built in lib.js.
       exportLeads: function (args) { return client.rpc('cv_export_leads', args).then(ok); },
+      // Round 4: in pages like the lead list (a busy owner can have more than 1,000 rows here too), up to L.LIST_CAP. Review r4
+      // item 7: keyset on lead_id (due_at is worked out from now(), so it is no key). A full page ends inside some lead's rows, so
+      // that lead's rows are dropped and read again, whole, by the next page (lead_id >= it). A lead has a few rows at most.
       fetchFollowUps: function () {
-        return client.from('follow_ups').select(FOLLOWUP_COLUMNS).limit(1000).then(ok);
+        var all = [];
+        function page(fromLead) {
+          var q = client.from('follow_ups').select(FOLLOWUP_COLUMNS).order('lead_id', { ascending: true }).order('follow_up_type', { ascending: true })
+            .order('due_at', { ascending: true, nullsFirst: false });
+          if (fromLead) q = q.gte('lead_id', fromLead);
+          return q.limit(L.LIST_FETCH).then(ok).then(function (rows) {
+            rows = rows || [];
+            if (rows.length < L.LIST_FETCH) return all.concat(rows);
+            var lastLead = rows[rows.length - 1].lead_id;
+            var whole = rows.filter(function (r) { return r.lead_id !== lastLead; });
+            if (!whole.length) return all.concat(rows);   // one lead filling a whole page cannot happen; stop rather than loop
+            all = all.concat(whole);
+            return all.length < L.LIST_CAP ? page(lastLead) : all;
+          });
+        }
+        return page(null);
       },
       // Payloads are never trusted: any event just triggers a refetch.
       subscribe: function (onEvent, onStatus) {
@@ -647,6 +724,8 @@
     var askAdd = S.screen === 'quote' && name !== 'quote' && !signingOut && quoteLeaveAsks();
     if (S.screen === 'quote' && name !== 'quote' && !askAdd) clearQuote();
     var asking = !!S.confirming && S.confirming.kind === 'quote-leave';
+    // Round 4: leaving the list (to a lead, a tab) keeps where it was; showList puts it back.
+    if (S.screen === 'list' && name !== 'list') S.listTop = el.listScroll.scrollTop;
     S.screen = name;
     var signedIn = name !== 'signin' && name !== 'role';
     el.app.classList.toggle('signed-in', signedIn);
@@ -681,6 +760,7 @@
     else if (!asking && el.confirm.open) el.confirm.close();
     if (askAdd) askAddBeforeLeaving();
     if (el.teamConfirm.open) closeTeamConfirm();
+    if (el.bulk.open) closeBulk();
     if (el.addDlg.open) closeAdd();
     if (name !== 'thread') closeFullSilently();
     show(el.btnAdd, signedIn && name === 'list' && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');
@@ -780,9 +860,13 @@
       if (Date.now() - ACCESS.lastCheck >= 60000 && ACCESS.state === 'ready') checkAccess();   // the switch may have been turned back on
       return Promise.resolve();
     }
-    return S.api.fetchList().then(function (rows) {
+    // Round 4: the server's counts ride along (owner only); a failed count falls back to counting the rows here.
+    var counts = typeof S.api.listCounts === 'function' ? Promise.resolve().then(function () { return S.api.listCounts(); }).catch(function () { return null; }) : null;
+    return Promise.all([S.api.fetchList(), counts]).then(function (res) {
+      var rows = res[0];
       if (n !== S.seq.list || !S.signedIn) return;
       S.leads = L.sortLeads(rows);
+      S.counts = res[1] || null;
       S.listLoaded = true;
       S.listError = '';
       renderBadge();
@@ -824,55 +908,115 @@
 
   var FILTER_EMPTY = {
     open: 'No open leads right now.',
+    contacted: 'No contacted leads right now.',
     booked: 'No booked leads yet.',
     lost: 'No lost leads.'
   };
 
+  // Round 4: five chips (Open / Contacted / Booked / Lost / All), count over label so all five fit at 320 px. Counts from the
+  // server when it gave them (right past what the page fetched), else from the rows here.
+  function pickFilter(key) {
+    if (S.filter === key) return;
+    if (key !== 'needs') S.chip = key;
+    S.filter = key;
+    S.shown[key] = L.LIST_PAGE;
+    store('set', FILTER_KEY, key === 'needs' ? S.chip : key);   // review r4 item 6: "See all" is never remembered across reloads
+    renderList();
+    el.listScroll.scrollTop = 0;
+    S.listTop = 0;
+  }
+
   function renderFilters() {
-    var counts = L.homeCounts(S.leads);
+    var counts = L.homeCounts(S.leads, undefined, S.counts);
     var frag = document.createDocumentFragment();
     L.filters().forEach(function (f) {
       var b = make('button', 'filter');
       b.type = 'button';
       b.setAttribute('aria-pressed', String(S.filter === f.key));
-      b.appendChild(make('span', '', f.label));
-      if (S.listLoaded) b.appendChild(make('span', 'filter-count', String(counts[f.key])));
-      if (f.key === 'lost') b.setAttribute('aria-label', f.label + (S.listLoaded ? ', ' + counts[f.key] : '') + ', includes people who opted out');
-      b.addEventListener('click', function () {
-        if (S.filter === f.key) return;
-        S.filter = f.key;
-        store('set', FILTER_KEY, f.key);
-        renderList();
-        el.listScroll.scrollTop = 0;
-      });
+      if (S.listLoaded) b.appendChild(make('span', 'filter-count', counts[f.key].toLocaleString('en-CA')));
+      b.appendChild(make('span', 'filter-label', f.label));
+      b.setAttribute('aria-label', f.label + (S.listLoaded ? ', ' + counts[f.key] : '') + (f.key === 'lost' ? ', includes people who opted out' : ''));
+      b.addEventListener('click', function () { pickFilter(f.key); });
       frag.appendChild(b);
     });
     el.filters.replaceChildren(frag);
   }
 
-  // The Needs-you block: the one place on Home for "who is waiting on me", longest wait first.
-  // Same row as every list, plus their last text and a Call icon (a separate tap zone; iPhone asks before dialling).
-  function renderNeeds(rows) {
+  // One waiting lead: the shared row (last text + wait cue, "New" when handed over in the last 24 hours) and a Call icon
+  // (a separate tap zone; iPhone asks before dialling). Used by the block and the full list.
+  function needCard(r) {
+    var lead = r.lead;
+    var tel = L.telHref(lead.phone); // lead_list.phone, strict E.164 only
+    var li = make('li', 'need-card');
+    li.appendChild(leadRow(lead, { needs: true, call: !!tel, fresh: !!r.fresh }).firstChild);
+    if (tel) {
+      var call = make('a', 'row-call');
+      call.href = tel;
+      call.setAttribute('aria-label', 'Call ' + leadName(lead));
+      call.appendChild(icon(ICON_PHONE, 22));
+      li.appendChild(call);
+    }
+    return li;
+  }
+
+  // One waiting lead in the Home block (review r4 item 3): ONE line, name, how long (the same clock cue, red past the warning
+  // threshold) and a Call button. The last text and the job are on the full card in "See all" and on the record.
+  function needLine(r) {
+    var lead = r.lead;
+    var tel = L.telHref(lead.phone); // lead_list.phone, strict E.164 only
+    var li = make('li', 'need-line');
+    var a = make('a', 'need-link');
+    a.href = '#/lead/' + encodeURIComponent(lead.lead_id);
+    a.appendChild(make('span', 'need-name', leadName(lead)));
+    var wait = String(r.waiting || '').replace(/^Waiting /, '');
+    if (wait) a.appendChild(waitNode({ text: wait, late: !!r.late }));
+    a.setAttribute('aria-label', leadName(lead) + (r.waiting ? ', ' + r.waiting.toLowerCase() : '') + (r.late ? ', overdue' : ''));
+    li.appendChild(a);
+    if (tel) {
+      var call = make('a', 'row-call');
+      call.href = tel;
+      call.setAttribute('aria-label', 'Call ' + leadName(lead));
+      call.appendChild(icon(ICON_PHONE, 22));
+      li.appendChild(call);
+    }
+    return li;
+  }
+
+  // The Needs-you block (round 4): the newest few waiting on the owner as one-line rows, "See all" beside the heading, and
+  // "N waiting over a day" when older ones are not in the block (review r4 item 4). all = every waiting row, newest first.
+  function renderNeeds(rows, total, all) {
     show(el.needs, rows.length > 0);
-    if (!rows.length) { el.needsList.replaceChildren(); return; }
+    if (!rows.length) { el.needsList.replaceChildren(); show(el.needsMore, false); show(el.needsLate, false); return; }
     el.needsTitle.textContent = L.statusInfo('handed_off').label;
-    el.needsCount.textContent = String(rows.length);
+    el.needsCount.textContent = String(total);
     var frag = document.createDocumentFragment();
-    rows.forEach(function (r) {
-      var lead = r.lead;
-      var tel = L.telHref(lead.phone); // lead_list.phone, strict E.164 only
-      var li = make('li', 'need-card');
-      li.appendChild(leadRow(lead, { needs: true, call: !!tel }).firstChild);
-      if (tel) {
-        var call = make('a', 'row-call');
-        call.href = tel;
-        call.setAttribute('aria-label', 'Call ' + leadName(lead));
-        call.appendChild(icon(ICON_PHONE, 22));
-        li.appendChild(call);
-      }
-      frag.appendChild(li);
-    });
+    rows.forEach(function (r) { frag.appendChild(needLine(r)); });
     el.needsList.replaceChildren(frag);
+    var more = L.needsMoreText(total);
+    el.needsMore.textContent = more ? 'See all' : '';
+    el.needsMore.setAttribute('aria-label', more);
+    show(el.needsMore, !!more);
+    var od = L.needsOverDay(all || rows, rows.length);
+    el.needsLate.replaceChildren();
+    if (od.text) {
+      el.needsLate.appendChild(icon(ICON_CLOCK, 16));
+      el.needsLate.appendChild(make('span', '', od.text));
+      el.needsLate.setAttribute('aria-label', od.text + ': open the list there');
+    }
+    show(el.needsLate, !!od.text);
+  }
+
+  // "N waiting over a day": the full list, opened at the first lead waiting more than a day (the "Waiting over a day" part, whose
+  // count is the line's number), with enough rows drawn to reach it.
+  function openOverDay() {
+    var od = L.needsOverDay(L.needsYou(S.leads), 0);
+    pickFilter('needs');
+    if (od.index >= L.LIST_PAGE) { S.shown.needs = Math.ceil((od.index + 1) / L.LIST_PAGE) * L.LIST_PAGE; renderList(); }
+    var t = el.leadList.querySelector ? el.leadList.querySelector('[data-overday]') : null;
+    if (!t) return;
+    try { t.scrollIntoView({ block: 'start' }); } catch (e) { /* old browsers: the list still opens */ }
+    var link = t.querySelector ? t.querySelector('a') : null;
+    if (link) try { link.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
   }
 
   function renderList() {
@@ -880,23 +1024,46 @@
     if (!S.listLoaded) {
       show(el.listLoading, !S.listError);
       setText(el.listErr, S.listError);
-      renderNeeds([]);
+      renderNeeds([], 0, []);
+      show(el.listHead, false); show(el.listMore, false); setText(el.listTrunc, '');
       return;
     }
     show(el.listLoading, false);
     setText(el.listErr, '');
+    var needsMode = S.filter === 'needs';
     var view = L.homeView(S.leads, S.filter);
     var leads = view.rest;
-    renderNeeds(view.needs);
+    renderNeeds(view.needs, view.needsAll.length, view.needsAll);
+    show(el.listHead, needsMode);
+    if (needsMode) el.listHeadTitle.textContent = L.statusInfo('handed_off').label + ': ' + view.needsAll.length + ', newest first';
     show(el.listEmpty, S.leads.length === 0);
-    var none = FILTER_EMPTY[S.filter] || 'No leads here.';
-    if (view.needs.length && S.filter === 'open') none = 'No other open leads right now.';
-    setText(el.filterEmpty, S.leads.length > 0 && leads.length === 0 && !(view.needs.length && S.filter === 'all') ? none : '');
+    var none = needsMode ? 'Nobody is waiting on you right now.' : (FILTER_EMPTY[S.filter] || 'No leads here.');
+    setText(el.filterEmpty, S.leads.length > 0 && leads.length === 0 ? none : '');
     setText(el.filterNote, S.filter === 'lost' && S.leads.length > 0 ? 'Includes people who opted out.' : '');
-    show(el.leadList, leads.length > 0);
+    setText(el.listTrunc, L.listTruncNote(S.leads.length, S.counts && S.counts.all));
+    var pg = L.listPage(needsMode ? view.needsAll : leads, S.shown[S.filter]);
+    show(el.leadList, pg.rows.length > 0);
     var frag = document.createDocumentFragment();
-    leads.forEach(function (lead) { frag.appendChild(leadRow(lead)); });
+    if (needsMode) {
+      // data-overday: where "N waiting over a day" opens the list (the "Waiting over a day" heading when its first row is the first such lead)
+      var marked = false;
+      L.needsSections(pg.rows, view.needsAll).forEach(function (sec) {
+        var h = make('li', 'list-sec', sec.label + ' (' + sec.count + ')');
+        h.setAttribute('role', 'presentation');
+        if (!marked && sec.key === 'older' && sec.rows[0] && sec.rows[0].overDay) { h.setAttribute('data-overday', '1'); marked = true; }
+        frag.appendChild(h);
+        sec.rows.forEach(function (r) {
+          var c = needCard(r);
+          if (!marked && r.overDay) { c.setAttribute('data-overday', '1'); marked = true; }
+          frag.appendChild(c);
+        });
+      });
+    } else {
+      pg.rows.forEach(function (lead) { frag.appendChild(leadRow(lead)); });
+    }
     el.leadList.replaceChildren(frag);
+    el.listMore.textContent = pg.moreText;
+    show(el.listMore, !!pg.moreText);
   }
 
   // THE lead row (Home, search, Calendar day, Lead value, Follow-ups): name and one price on top, date and guests,
@@ -925,6 +1092,7 @@
     if (!opts.quiet) {
       var foot = make('span', 'row-foot');
       if (opts.needs) {
+        if (opts.fresh) foot.appendChild(make('span', 'row-new', 'New'));
         if (v.wait) foot.appendChild(waitNode(v.wait));
       } else {
         foot.appendChild(chipNode(v.chip));
@@ -1127,6 +1295,9 @@
     setScreen('list');
     renderList();
     renderSearch();
+    // Round 4: back from a lead = the same chip, the same rows shown and the same place in the list.
+    var top = S.listTop;
+    if (top > 0) { el.listScroll.scrollTop = top; requestAnimationFrame(function () { if (S.screen === 'list') el.listScroll.scrollTop = top; }); }
     refreshList();
     if (searchActive()) runSearch();
   }
@@ -2531,7 +2702,7 @@
   function refreshPastEvents() {
     if (!pastOn()) return Promise.resolve();
     var n = ++S.seq.pastEvents;
-    var p = Promise.resolve(S.api.pastEvents()).then(function (r) {
+    var p = Promise.resolve(S.api.pastEvents(S.pastLimit)).then(function (r) {
       if (n !== S.seq.pastEvents || !S.signedIn) return;
       S.pastEvents = r || null;
     }, function () {
@@ -2576,7 +2747,7 @@
   // Top of Follow-ups: events that have passed with no outcome yet. Booked / Didn't book reuse the status sheet.
   function pastSection() {
     if (!pastOn()) return null;
-    var v = L.pastEventsView(S.pastEvents);
+    var v = L.pastEventsView(S.pastEvents, S.pastLimit);
     if (!v) return null;
     var sec = make('section', 'fu-block pe-block');
     sec.id = 'fu-past';
@@ -2590,8 +2761,171 @@
     var ul = make('ul', 'fu-list pe-list');
     v.items.forEach(function (it) { ul.appendChild(pastRow(it)); });
     sec.appendChild(ul);
-    if (v.more > 0) sec.appendChild(make('p', 'fu-empty pe-more', v.moreText));
+    // Round 4: 50 more at a time up to 200; past that the plain line, and the bulk clear for a real backlog.
+    if (v.canMore) {
+      var mb = make('button', 'show-more pe-showmore', v.moreBtn);
+      mb.type = 'button';
+      mb.addEventListener('click', function () { S.pastLimit = v.nextLimit; refreshPastEvents(); });
+      sec.appendChild(mb);
+    } else if (v.more > 0) sec.appendChild(make('p', 'fu-empty pe-more', v.moreText));
+    if (bulkOn()) {
+      var cb = make('button', 'pe-bulk', 'Clear old ones in bulk…');
+      cb.type = 'button';
+      cb.addEventListener('click', openBulk);
+      sec.appendChild(cb);
+    }
     return sec;
+  }
+
+  /* ---------- clear old leads in bulk (round 4, sql/025) ----------
+     Owner only, from "Did these happen?". The sheet shows how many and a sample before anything changes; one server call marks them
+     Lost in one transaction and sends nothing; the latest batch can be undone from the line it leaves at the top of Follow-ups. */
+  function bulkOn() { return pastOn() && !isStaff() && typeof S.api.bulkPreview === 'function' && typeof S.api.bulkLost === 'function'; }
+
+  // The line above "Did these happen?": what the last bulk action did, with Undo while it can be undone (7 days, review r4 item 5:
+  // "Marked 97 leads Lost on Nov 9. Undo"). Shown even when the list itself is empty (the clear may have emptied it).
+  function bulkBlock() {
+    if (!bulkOn() || (!S.bulk.done && !S.bulk.undo)) return null;
+    var sec = make('section', 'fu-block bulk-block');
+    sec.setAttribute('role', 'status');
+    var p = make('p', 'bulk-done', (S.bulk.undo && S.bulk.undo.text) || S.bulk.done || '');
+    sec.appendChild(p);
+    if (S.bulk.undo) {
+      var u = make('button', 'pe-bulk bulk-undo', S.bulk.busy ? 'Undoing…' : 'Undo');
+      u.type = 'button';
+      u.disabled = !!S.bulk.busy;
+      u.setAttribute('aria-label', 'Undo the last bulk clear');
+      u.addEventListener('click', bulkUndo);
+      sec.appendChild(u);
+    }
+    if (S.bulk.err && !el.bulk.open) { var er = make('p', 'error', S.bulk.err); er.setAttribute('role', 'alert'); sec.appendChild(er); }
+    return sec;
+  }
+
+  // Once per visit to Follow-ups: is there a batch that can still be undone? (Soft: any error leaves the line off.)
+  function refreshBulkState() {
+    if (!bulkOn()) return;
+    var n = ++S.bulk.seq;
+    Promise.resolve().then(function () { return S.api.bulkPreview(null); }).then(function (r) {
+      if (n !== S.bulk.seq || !S.signedIn) return;
+      var v = L.bulkPreviewView(r);
+      S.bulk.undo = v && v.undo ? v.undo : null;
+      if (!S.bulk.undo) S.bulk.done = '';
+      if (S.screen === 'followups') renderFollowUps();
+    }, function () { /* the line stays as it was */ });
+  }
+
+  function openBulk() {
+    if (!bulkOn() || el.bulk.open) return;
+    S.bulk.open = true; S.bulk.err = ''; S.bulk.view = null;
+    S.bulk.date = S.bulk.date || L.bulkDefaultDate();
+    el.bulkDate.value = S.bulk.date;
+    el.bulkDate.max = L.today().ymd;
+    renderBulk();
+    try { el.bulk.showModal(); } catch (e) { el.bulk.setAttribute('open', ''); }
+    runBulkPreview();
+  }
+
+  function closeBulk() {
+    S.bulk.open = false;
+    S.bulk.seq++;
+    if (el.bulk.open) { try { el.bulk.close(); } catch (e) { el.bulk.removeAttribute('open'); } }
+  }
+
+  var bulkTimer = null;
+  function bulkDateChanged() {
+    S.bulk.date = el.bulkDate.value;
+    S.bulk.view = null; S.bulk.err = '';
+    renderBulk();
+    clearTimeout(bulkTimer);
+    bulkTimer = setTimeout(runBulkPreview, 300);
+  }
+
+  function runBulkPreview() {
+    var date = S.bulk.date;
+    var n = ++S.bulk.seq;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) { S.bulk.view = null; renderBulk(); return Promise.resolve(); }
+    setText(el.bulkHead, 'Counting…');
+    return Promise.resolve().then(function () { return S.api.bulkPreview(date); }).then(function (r) {
+      if (n !== S.bulk.seq || !S.bulk.open) return;
+      S.bulk.view = L.bulkPreviewView(r);
+      if (S.bulk.view && S.bulk.view.undo) S.bulk.undo = S.bulk.view.undo;
+      renderBulk();
+    }, function (e) {
+      if (n !== S.bulk.seq || !S.bulk.open) return;
+      S.bulk.err = L.bulkErrorText(e);
+      renderBulk();
+    });
+  }
+
+  function renderBulk() {
+    var v = S.bulk.view;
+    setText(el.bulkHead, v ? v.headline : (S.bulk.err ? '' : (S.bulk.date ? 'Counting…' : 'Pick a date.')));
+    var frag = document.createDocumentFragment();
+    (v ? v.sample : []).forEach(function (it) {
+      var li = make('li', 'bulk-row');
+      li.appendChild(make('span', 'bulk-name', it.name));
+      li.appendChild(make('span', 'bulk-meta', it.meta));
+      frag.appendChild(li);
+    });
+    el.bulkSample.replaceChildren(frag);
+    show(el.bulkSample, !!(v && v.sample.length));
+    setText(el.bulkMore, v && v.sample.length && v.sampleMore > 0 ? 'and ' + v.sampleMore.toLocaleString('en-CA') + ' more' : '');
+    setText(el.bulkNote, v ? (v.capText || [v.left, v.note].filter(Boolean).join(' ')) : '');
+    setText(el.bulkErr, S.bulk.err);
+    el.bulkYes.textContent = S.bulk.busy ? 'Saving…' : (v && v.confirm ? v.confirm : 'Mark as ' + L.statusInfo('lost').label);
+    el.bulkYes.disabled = !!S.bulk.busy || !(v && v.confirm);
+    el.bulkNo.disabled = !!S.bulk.busy;
+    el.bulkDate.disabled = !!S.bulk.busy;
+  }
+
+  function bulkSettle() {
+    return Promise.all([refreshPastEvents(), refreshList(), refreshForecast(), refreshFollowUps()]).catch(function () { /* the next refresh catches up */ });
+  }
+
+  function bulkConfirm() {
+    var v = S.bulk.view;
+    if (S.bulk.busy || !v || !v.confirm) return;
+    S.bulk.busy = true; S.bulk.err = '';
+    renderBulk();
+    var date = S.bulk.date;
+    Promise.resolve().then(function () { return S.api.bulkLost(date, v.count, v.fingerprint); }).then(function (r) {
+      S.bulk.busy = false;
+      S.bulk.done = L.bulkDoneText(r);
+      S.bulk.undo = r && r.batch_id ? { batchId: r.batch_id, count: Number(r.marked) || 0, at: r.at, text: L.bulkUndoLine(r.marked, r.at) || S.bulk.done } : null;
+      closeBulk();
+      showToast(S.bulk.done);
+      S.pastLimit = 50;
+      if (S.screen === 'followups') renderFollowUps();
+      return bulkSettle();
+    }, function (e) {
+      S.bulk.busy = false;
+      S.bulk.err = L.bulkErrorText(e);
+      renderBulk();
+      // the set moved under the owner (count or the exact leads): show the new preview (nothing was changed)
+      if (String((e && e.details) || '') === 'changed') runBulkPreview();
+    });
+  }
+
+  function bulkUndo() {
+    var u = S.bulk.undo;
+    if (S.bulk.busy || !u) return;
+    S.bulk.busy = true; S.bulk.err = '';
+    renderFollowUps();
+    Promise.resolve().then(function () { return S.api.bulkUndo(u.batchId); }).then(function (r) {
+      S.bulk.busy = false;
+      S.bulk.undo = null;
+      S.bulk.done = L.bulkUndoneText(r);
+      showToast(S.bulk.done);
+      if (S.screen === 'followups') renderFollowUps();
+      return bulkSettle();
+    }, function (e) {
+      S.bulk.busy = false;
+      S.bulk.err = L.bulkErrorText(e);
+      var det = String((e && e.details) || '');
+      if (det === 'already_undone' || det === 'not_latest' || det === 'expired' || String((e && e.message) || '') === 'not_found') S.bulk.undo = null;
+      if (S.screen === 'followups') renderFollowUps();
+    });
   }
 
   // A redraw replaces every node: put keyboard focus back on the same button / heading (the row may be gone: heading).
@@ -2655,19 +2989,23 @@
 
   // One tappable row: the shared lead row (details from the lead list when it has them) plus the plain lines given.
   function fuRow(r, lines, opts) {
-    var lead = null;
-    for (var i = 0; i < S.leads.length; i++) if (S.leads[i] && S.leads[i].lead_id === r.lead_id) { lead = S.leads[i]; break; }
+    // Round 4: one lead_id map per draw (S.leadIdx, built in renderFollowUps), not a scan of every lead per row.
+    var lead = (S.leadIdx && S.leadIdx[r.lead_id]) || null;
     return leadRow(lead || r, { lines: lines, cls: opts && opts.cls, quiet: !lead || !!(opts && opts.quiet) });
   }
 
   function renderFollowUps() {
     var ae = document.activeElement, keep = ae && ae.getAttribute && el.fuBody.contains(ae) ? ae.getAttribute('data-pe') : null;
     var past = pastSection();
+    var bulkLine = bulkBlock();
+    S.leadIdx = L.leadIndex(S.leads);
     if (!S.followUps) {
       // A follow-ups load in progress or failed never hides the Did-these-happen list (its own RPC).
       show(el.fuLoading, !S.followUpsError);
       setText(el.fuErr, S.followUpsError);
-      if (past) el.fuBody.replaceChildren(past); else el.fuBody.replaceChildren();
+      el.fuBody.replaceChildren();
+      if (bulkLine) el.fuBody.appendChild(bulkLine);
+      if (past) el.fuBody.appendChild(past);
       restorePastFocus(keep);
       scrollToPast();
       return;
@@ -2676,6 +3014,7 @@
     setText(el.fuErr, '');
     var g = L.groupFollowUps(S.followUps, S.leads);
     var frag = document.createDocumentFragment();
+    if (bulkLine) frag.appendChild(bulkLine);
     if (past) frag.appendChild(past);
 
     // 1. Scheduled follow-up texts, soonest first, with a live countdown. (Who is waiting on the owner lives on Home.)
@@ -2747,6 +3086,7 @@
     setScreen('followups');
     renderFollowUps();
     refreshFollowUps();
+    refreshBulkState();
     refreshList(); // "asked for you" times
   }
 
@@ -3905,7 +4245,8 @@
   function clearLeadData() {
     clearTimeout(S.refreshTimer);
     S.seq.list++; S.seq.thread++; S.seq.followups++;
-    S.leads = []; S.listLoaded = false; S.listError = '';
+    S.leads = []; S.listLoaded = false; S.listError = ''; S.counts = null; S.shown = {}; S.listTop = 0;
+    S.bulk = { open: false, date: '', view: null, seq: S.bulk.seq + 1, busy: false, err: '', done: '', undo: null };
     S.thread = emptyThread(); S.followUps = null; S.followUpsError = '';
     clearSearch();
     el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.notesList.replaceChildren(); el.fuBody.replaceChildren();
@@ -4009,7 +4350,9 @@
     S.seq.list++; S.seq.thread++;
     S.leads = []; S.listLoaded = false; S.listError = '';
     S.thread = emptyThread();
-    S.filter = 'open'; S.pending = null; S.tab = NAV[0];
+    S.filter = 'open'; S.chip = 'open'; S.pending = null; S.tab = NAV[0];
+    S.counts = null; S.shown = {}; S.listTop = 0; S.pastLimit = 50;
+    S.bulk = { open: false, date: '', view: null, seq: S.bulk.seq + 1, busy: false, err: '', done: '', undo: null };
     S.seq.metrics++; S.seq.forecast++; S.seq.pastEvents++; S.pastEvents = null; S.pastBusy = ''; S.pastErr = ''; S.pastScroll = false; S.forecast = null; S.metrics = null; S.metricsError = '';
     S.seq.followups++; S.followUps = null; S.followUpsError = '';
     clearSearch();
@@ -4294,6 +4637,21 @@
     el.roleRetry.addEventListener('click', checkAccess);
 
     // Status actions
+    // Home lists (round 4): the full Needs-you list, back to the chips, and "Show more".
+    el.needsMore.addEventListener('click', function () { pickFilter('needs'); });
+    el.needsLate.addEventListener('click', openOverDay);
+    el.listBack.addEventListener('click', function () { pickFilter(S.chip && S.chip !== 'needs' ? S.chip : 'open'); });
+    el.listMore.addEventListener('click', function () {
+      S.shown[S.filter] = Math.max(L.LIST_PAGE, S.shown[S.filter] || 0) + L.LIST_PAGE;
+      renderList();
+    });
+    // Clear old leads in bulk (round 4)
+    el.bulkYes.addEventListener('click', bulkConfirm);
+    el.bulkNo.addEventListener('click', closeBulk);
+    el.bulk.addEventListener('cancel', function (e) { e.preventDefault(); if (!S.bulk.busy) closeBulk(); });
+    el.bulkDate.addEventListener('change', bulkDateChanged);
+    el.bulkDate.addEventListener('input', bulkDateChanged);
+
     el.confirmYes.addEventListener('click', confirmYes);
     el.confirmAlt.addEventListener('click', confirmNoFollowup);
     el.price.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); confirmYes(); } });
@@ -4457,6 +4815,7 @@
   function restorePrefs() {
     var f = store('get', FILTER_KEY);
     S.filter = L.isFilterKey(f) ? f : 'open';
+    S.chip = S.filter === 'needs' ? 'open' : S.filter;
     S.showPossible = store('get', POSSIBLE_KEY) === '1';
   }
 

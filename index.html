@@ -97,15 +97,27 @@
         <ul class="lead-list" id="search-results" aria-label="Search results" hidden></ul>
       </div>
       <div id="browse-box">
-      <!-- Needs you: everyone waiting on the owner, longest-waiting first. Built by renderNeeds(). -->
+      <!-- Needs you: the newest few waiting on the owner as one-line rows (round 4, review r4 item 3), "See all" for the rest, and
+           "N waiting over a day" when the older ones are not in the block (review r4 item 4). Built by renderNeeds(). -->
       <section class="needs" id="needs" aria-labelledby="needs-h" hidden>
-        <h2 class="needs-h" id="needs-h"><span id="needs-title">Needs you</span><span class="needs-count" id="needs-count"></span></h2>
+        <div class="needs-top">
+          <h2 class="needs-h" id="needs-h"><span id="needs-title">Needs you</span><span class="needs-count" id="needs-count"></span></h2>
+          <button class="needs-more" id="needs-more" type="button" hidden></button>
+        </div>
         <ul class="needs-list" id="needs-list"></ul>
+        <button class="needs-late" id="needs-late" type="button" hidden></button>
       </section>
       <div class="filters" id="filters" role="group" aria-label="Show leads"></div>
+      <!-- The full Needs-you list ("See all"): its heading and the way back to the chips. -->
+      <div class="list-head" id="list-head" hidden>
+        <h2 class="list-head-title" id="list-head-title"></h2>
+        <button class="list-back" id="list-back" type="button">Back to leads</button>
+      </div>
       <p class="filter-note" id="filter-note" hidden></p>
+      <p class="filter-note" id="list-trunc" hidden></p>
       <p class="status-line" id="list-loading">Loading your leads…</p>
       <ul class="lead-list" id="lead-list" hidden></ul>
+      <button class="show-more" id="list-more" type="button" hidden></button>
       <div class="empty" id="list-empty" hidden>
         <h2>No leads yet</h2>
         <p>When someone fills in your form or texts your number, they show up here with the whole conversation.</p>
@@ -655,6 +667,27 @@
   </dialog>
 
   <!-- Remove a team member: says plainly what happens. A native modal dialog like the others. -->
+  <!-- Clear old leads in bulk (round 4, sql/025): owner only, from Follow-ups > Did these happen?. Sends nothing; can be undone. -->
+  <dialog class="sheet sheet-bulk" id="bulk" aria-labelledby="bulk-title">
+    <div class="sheet-body">
+      <p class="sheet-text" id="bulk-title">Clear old leads</p>
+      <p class="hint" id="bulk-hint">Mark every open lead whose event was before this date as Lost.</p>
+      <div class="sheet-field">
+        <label class="field-label" for="bulk-date">Event before</label>
+        <input class="field" id="bulk-date" type="date" min="2000-01-01" max="2100-12-31">
+      </div>
+      <p class="sheet-note" id="bulk-head" role="status" aria-live="polite"></p>
+      <ul class="bulk-sample" id="bulk-sample" hidden></ul>
+      <p class="hint" id="bulk-more" hidden></p>
+      <p class="sheet-note" id="bulk-note" hidden></p>
+      <p class="error" id="bulk-error" role="alert" hidden></p>
+      <div class="sheet-actions">
+        <button class="btn primary" id="bulk-yes" type="button" disabled></button>
+        <button class="btn quiet" id="bulk-no" type="button">Cancel</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog class="sheet" id="team-confirm" aria-labelledby="team-confirm-text">
     <div class="sheet-body">
       <p class="sheet-text" id="team-confirm-text"></p>

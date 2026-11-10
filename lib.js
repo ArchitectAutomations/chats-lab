@@ -311,20 +311,24 @@
   function isClosed(status) { return statusGroup(status) !== 'open'; }
 
   // List filter chips, in display order. 'Needs you' = the bot handed the lead to the owner.
-  // The needs / booked / lost chips reuse the status labels, so a client's wording carries through.
-  // 'needs' is still a valid group for the logic (the Needs-you block on Home uses it) but has no chip any more.
-  var FILTER_KEYS = ['all', 'needs', 'open', 'booked', 'lost'];
-  var CHIP_KEYS = ['open', 'booked', 'lost', 'all'];
-  // The four chips on Home, in display order. Open is the default.
+  // The contacted / booked / lost chips reuse the status labels, so a client's wording carries through.
+  // 'needs' has no chip: it is the full Needs-you list behind "See all" (round 4), remembered like a chip.
+  var FILTER_KEYS = ['all', 'needs', 'open', 'contacted', 'booked', 'lost'];
+  var CHIP_KEYS = ['open', 'contacted', 'booked', 'lost', 'all'];
+  // The five chips on Home, in display order. Open is the default. Contacted (round 4, Kevin 11-09) is the part of Open
+  // he has already reached: status contacted (so never booked or lost).
   function filters() {
     return [
       { key: 'open', label: 'Open' },
+      { key: 'contacted', label: statusInfo('contacted').label },
       { key: 'booked', label: statusInfo('booked').label },
       { key: 'lost', label: statusInfo('lost').label },
       { key: 'all', label: 'All' }
     ];
   }
 
+  // A remembered list choice: a chip only. The full Needs-you list ("See all") is never remembered across reloads (review r4
+  // item 6): a reload always opens on the chips with the Needs-you block on top.
   function isFilterKey(key) {
     return CHIP_KEYS.indexOf(key) !== -1;
   }
@@ -332,6 +336,7 @@
   function matchesFilter(lead, key) {
     var st = String((lead && lead.status) || '').toLowerCase();
     if (key === 'needs') return st === 'handed_off';
+    if (key === 'contacted') return st === 'contacted';
     if (key === 'open' || key === 'booked' || key === 'lost') return statusGroup(st) === key;
     return true;
   }
@@ -507,7 +512,7 @@
     quote_priced: 'Priced by you', quote_sent: 'Quote sent'
   };
   var HISTORY_SOURCES = {
-    page: 'from the page', sms: 'by text', text: 'by text', owner_sms: 'by text',
+    page: 'from the page', sms: 'by text', text: 'by text', owner_sms: 'by text', bulk: 'bulk clear',
     system: 'automatic', auto: 'automatic', workflow: 'automatic', bot: 'automatic'
   };
 
@@ -803,7 +808,10 @@
   // total = subtotal + travel_fee), so when a line carries it a Subtotal / Travel fee row would count it twice: none then. A travel fee
   // that no line carries (an older stored shape) still shows Subtotal + Travel fee. No travel fee: the subtotal is the total again.
   // One line, no discount, nothing added: that line IS the total, so no Total row. rawItems = the stored / engine line items.
-  var TRAVEL_LINE = /\b(delivery|travel)\b/i;
+  // Round 4 (review r3 item C): the engine's own delivery line only, label exactly "Delivery" (Owner Quote / Compute Quote,
+  // n8n/lab-sub.json travelItem). A line merely containing the word ("Bar delivery", "Travel bar") is not the travel fee, so an
+  // old-format quote that has one AND a separate travel fee still shows the fee.
+  var TRAVEL_LINE = /^\s*delivery\s*$/i;
   function quoteSums(rawItems, subtotal, travelFee, total) {
     var items = (Array.isArray(rawItems) ? rawItems : []).filter(function (it) { return it && typeof it === 'object'; });
     var inLines = items.some(function (it) { return TRAVEL_LINE.test(String(it.label || '')); });
@@ -1005,12 +1013,15 @@
   /* ---------- Did these happen? (cv_past_events, sql/016) ---------- */
 
   var PE_SHOW = 50;
+  var PE_MAX = 200;   // cv_past_events clamps p_limit to 200
   // The cv_past_events() JSON -> what the section shows, or null when it must stay hidden (no data, switched off, nothing to review).
   // Names are plain text; the database sends no phone, email, address or messages, and none is read here.
-  function pastEventsView(res) {
+  // limit (round 4): how many the owner has asked to see, 50 at a time ("Show more") up to 200; canMore = another page exists.
+  function pastEventsView(res, limit) {
     if (!res || typeof res !== 'object' || res.enabled === false || !Array.isArray(res.items)) return null;
+    var lim = Math.min(PE_MAX, Math.max(PE_SHOW, Math.floor(Number(limit) || 0)));
     var items = [];
-    res.items.slice(0, PE_SHOW).forEach(function (it) {
+    res.items.slice(0, lim).forEach(function (it) {
       if (!it || !isUuid(it.lead_id)) return;
       var q = num(it.quote_total), d = num(it.days_past);
       var date = fmtEventDate(it.event_date);
@@ -1025,8 +1036,81 @@
     if (!items.length) return null;
     var total = num(res.total);
     if (total === null || total < items.length) total = items.length;
-    return { total: total, items: items, more: total - items.length,
+    var canMore = total > items.length && items.length >= lim && lim < PE_MAX;
+    return { total: total, items: items, more: total - items.length, limit: lim, canMore: canMore,
+      nextLimit: Math.min(PE_MAX, lim + PE_SHOW),
+      moreBtn: canMore ? 'Show ' + Math.min(PE_SHOW, total - items.length, PE_MAX - lim) + ' more' : '',
       moreText: (total - items.length) + ' more. They appear here as you mark these.' };
+  }
+
+  /* ---------- clear old leads in bulk (round 4, sql/025 cv_bulk_lost*) ---------- */
+
+  var BULK_NOTE = 'Old lead, not followed up';
+  // The date box's first value: the 1st of last month ("mark everything before October as Lost").
+  function bulkDefaultDate(now) {
+    var t = today(now), p = shiftMonth(t.y, t.m, -1);
+    return ymd(p.y, p.m, 1);
+  }
+  // The line the last bulk clear leaves at the top of Follow-ups (review r4 item 5): "Marked 97 leads Lost on Nov 9." ('' without a count).
+  function bulkUndoLine(marked, at, now) {
+    var n = Math.floor(num(marked) || 0);
+    if (n <= 0) return '';
+    var d = fmtShortDate(at, now);
+    return 'Marked ' + plural(n, 'lead', 'leads') + ' ' + statusInfo('lost').label + (d ? ' on ' + d : '') + '.';
+  }
+  // Review r4 item 2: the leads the server left alone, in plain words ('' when none).
+  function bulkLeftText(recent, moreDates) {
+    var r = Math.max(0, Math.floor(num(recent) || 0)), m = Math.max(0, Math.floor(num(moreDates) || 0));
+    return [r ? plural(r, 'recent one', 'recent ones') + ' left alone (a text, a hand-over or a change in the last 14 days).' : '',
+      m ? plural(m, 'lead', 'leads') + ' with more than one event date left alone.' : ''].filter(Boolean).join(' ');
+  }
+  // cv_bulk_lost_preview JSON -> what the sheet says, or null (switched off / no answer). Names are plain text.
+  // fingerprint = the exact set shown (review r4 item 1): no fingerprint, no Mark button.
+  function bulkPreviewView(res, now) {
+    if (!res || typeof res !== 'object' || res.enabled !== true) return null;
+    var n = Math.max(0, Math.floor(num(res.count) || 0)), cap = Math.floor(num(res.cap) || 2000);
+    var fp = typeof res.fingerprint === 'string' && /^[0-9a-f]{32}$/.test(res.fingerprint) ? res.fingerprint : '';
+    var before = typeof res.before === 'string' ? fmtEventDate(res.before, now) : '';
+    var sample = (Array.isArray(res.sample) ? res.sample : []).filter(function (it) { return it && isUuid(it.lead_id); }).map(function (it) {
+      return { leadId: it.lead_id, name: displayName(it), meta: [fmtEventDate(it.event_date, now), statusInfo(it.status).label].filter(Boolean).join(' · ') };
+    });
+    var u = res.undo && typeof res.undo === 'object' && isUuid(res.undo.batch_id) && num(res.undo.can_undo) > 0 ? res.undo : null;
+    var tooMany = n > cap || res.too_many === true;
+    return {
+      count: n, cap: cap, tooMany: tooMany, fingerprint: fp, sample: sample, sampleMore: Math.max(0, n - sample.length),
+      left: bulkLeftText(res.left_recent, res.left_more_dates),
+      headline: !before ? '' : n === 0 ? 'No open leads have an event before ' + before + '.'
+        : plural(n, 'lead', 'leads') + ' with an event before ' + before + ' will be marked ' + statusInfo('lost').label + '.',
+      note: n > 0 && !tooMany ? 'No texts are sent. Reason: Other, "' + BULK_NOTE + '". Booked, lost, opted-out and future events are left alone. You can undo this.' : '',
+      capText: tooMany ? 'That is more than ' + cap.toLocaleString('en-CA') + ' at once. Pick an earlier date and clear them in steps.' : '',
+      confirm: n > 0 && !tooMany && fp ? 'Mark ' + plural(n, 'lead', 'leads') + ' ' + statusInfo('lost').label : '',
+      undo: u ? { batchId: u.batch_id, count: Math.floor(num(u.can_undo)), at: u.at, text: bulkUndoLine(u.marked, u.at, now) } : null
+    };
+  }
+  var BULK_ERRORS = {
+    changed: 'The list changed while you were looking. Check the new count and try again.',
+    nothing: 'No leads match that date any more.',
+    too_many: 'That is more than 2,000 leads at once. Pick an earlier date and clear them in steps.',
+    feature_off: 'This is switched off for your account.',
+    already_undone: 'That bulk clear was already undone.',
+    not_latest: 'Only the latest bulk clear can be undone.',
+    expired: 'A bulk clear can only be undone for 7 days.',
+    date: 'Pick a date.', expected: 'Check the count and try again.', fingerprint: 'Check the count and try again.', batch: 'Nothing to undo.'
+  };
+  function bulkErrorText(e) {
+    var msg = String((e && e.message) || '').toLowerCase(), det = String((e && e.details) || '').toLowerCase();
+    if (BULK_ERRORS[det]) return BULK_ERRORS[det];
+    if (msg === 'not_found') return 'Nothing to undo.';
+    if (msg === 'not_owner' || (e && e.code === '42501')) return 'Only the owner can do this.';
+    return "Couldn't save that. Nothing was changed. Try again.";
+  }
+  function bulkDoneText(r) {
+    var n = Math.floor(num(r && r.marked) || 0);
+    return plural(n, 'lead', 'leads') + ' marked ' + statusInfo('lost').label + '. No texts were sent.';
+  }
+  function bulkUndoneText(r) {
+    var n = Math.floor(num(r && r.restored) || 0), k = Math.floor(num(r && r.skipped) || 0);
+    return plural(n, 'lead', 'leads') + ' put back as they were.' + (k > 0 ? ' ' + plural(k, 'lead was', 'leads were') + ' changed since and left alone.' : '');
   }
 
   // Seconds -> "9 sec", "12 min", "3 h 10 min", "2 days", "2 days 3 h". '' for no value.
@@ -2388,13 +2472,21 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   function fuType(r) { return String((r && r.follow_up_type) || '').toLowerCase(); }
+  // lead_id -> lead, first one wins (a list with a repeat keeps its first row, as a scan would).
+  function leadIndex(leads) {
+    var out = Object.create(null);
+    (Array.isArray(leads) ? leads : []).forEach(function (l) { if (l && l.lead_id && !(l.lead_id in out)) out[l.lead_id] = l; });
+    return out;
+  }
   function timeOf(v) { var d = realDate(v); return d ? d.getTime() : null; }
 
   // When the lead asked for the owner: the row's own asked_at if the view has one, else the lead's
   // status_at while it is handed off (from lead_list). null when unknown.
+  // leads may be a lead_id -> lead map (groupFollowUps builds one, so 1,000 rows x 5,000 leads is not a scan per row).
   function askedAt(row, leads) {
     if (row && realDate(row.asked_at)) return row.asked_at;
-    var lead = (Array.isArray(leads) ? leads : []).filter(function (l) { return l && l.lead_id === row.lead_id; })[0];
+    var lead = leads && !Array.isArray(leads) && typeof leads === 'object' ? leads[row.lead_id]
+      : (Array.isArray(leads) ? leads : []).filter(function (l) { return l && l.lead_id === row.lead_id; })[0];
     if (lead && String(lead.status || '').toLowerCase() === 'handed_off' && realDate(lead.status_at)) return lead.status_at;
     return null;
   }
@@ -2409,11 +2501,12 @@ function renderPriceBlockSms(lineItems, total, currency) {
   function groupFollowUps(rows, leads, now) {
     var n = nowDate(now).getTime();
     var out = { needs: [], scheduled: [], sent: [], held: [], digest: [], other: [] };
+    var byId = leadIndex(leads);
     (Array.isArray(rows) ? rows : []).forEach(function (r) {
       if (!r || !isUuid(r.lead_id)) return;
       var type = fuType(r);
       if (type === 'owner_callback') {
-        out.needs.push(Object.assign({}, r, { asked_at: askedAt(r, leads) }));
+        out.needs.push(Object.assign({}, r, { asked_at: askedAt(r, byId) }));
       } else if (type === 'auto_nudge') {
         var sent = timeOf(r.sent_at);
         if (sent !== null) { if (n - sent <= SENT_WINDOW_DAYS * 86400000) out.sent.push(r); }
@@ -2522,41 +2615,125 @@ function renderPriceBlockSms(lineItems, total, currency) {
     return t.slice(0, LAST_TEXT_MAX - 1).replace(/\s+$/, '') + '\u2026';
   }
 
-  // Leads waiting on the owner, longest-waiting first (unknown time last). Opted-out leads never show.
-  // Each row: { lead, since, waiting }. The time is status_at (when it was handed over), else last activity.
+  // Leads waiting on the owner, NEWEST first (round 4: at 100+ waiting, new ones must not land at the bottom; unknown time last).
+  // Opted-out leads never show. Each row: { lead, since, waiting, late, fresh, overDay }. The time is status_at (when it was handed
+  // over), else last activity. ONE threshold (review r4b): fresh = handed over in the last 24 hours (NEEDS_FRESH_HOURS, the "New"
+  // part of See all); overDay = waiting more than that (the "Waiting over a day" part and the "N waiting over a day" line, so the
+  // line's number is that part's count); late = the red cue, past CV_CUSTOM.waitWarnHours (24 h by default, so all three agree).
+  // A row with no known time is neither fresh nor overDay.
+  var NEEDS_FRESH_HOURS = 24;
+  // The block shows the newest 3 as one-line rows (name, how long, a call button; review r4 item 3), about 52 px each, so the
+  // block and the filter chips both fit the first screen at 320x568. The full cards are in "See all".
+  var NEEDS_SHOW = 3;
   function needsYou(leads, now) {
+    var t = nowDate(now).getTime();
     var rows = (Array.isArray(leads) ? leads : []).filter(function (l) {
       return l && String(l.status || '').toLowerCase() === 'handed_off' && !isOptedOut(l);
     }).map(function (l) {
       var since = realDate(l.status_at) ? l.status_at : (realDate(l.last_activity_at) ? l.last_activity_at : (realDate(l.created_at) ? l.created_at : null));
-      return { lead: l, since: since, waiting: waitingFor(since, now), late: waitLate(since, now) };
+      var at = timeOf(since);
+      return { lead: l, since: since, waiting: waitingFor(since, now), late: waitLate(since, now),
+        fresh: at !== null && t - at <= NEEDS_FRESH_HOURS * 3600000, overDay: at !== null && t - at > NEEDS_FRESH_HOURS * 3600000 };
     });
     rows.sort(function (a, b) {
       var ta = timeOf(a.since), tb = timeOf(b.since);
       if (ta === null && tb === null) return 0;
       if (ta === null) return 1;
       if (tb === null) return -1;
-      return ta - tb;
+      return tb - ta;
     });
     return rows;
   }
 
-  // Home: { needs: rows for the block, rest: leads under the chips }. The block always shows everyone waiting;
-  // the Open and All lists leave those leads out so nobody is drawn twice.
+  // Home (round 4): { needs: the newest NEEDS_SHOW waiting rows for the block, needsAll: every waiting row, rest: the leads under
+  // the chip }. A waiting lead is ALSO in Open and All (Kevin 11-09: it must populate the open leads), marked by its wait cue.
+  // key 'needs' = "See all": rest is every waiting lead, newest first, and the block steps aside (needs: []).
   function homeView(leads, key, now) {
-    var needs = needsYou(leads, now);
-    var inBlock = {};
-    needs.forEach(function (r) { inBlock[r.lead.lead_id] = true; });
-    var rest = filterLeads(leads, key);
-    if (key === 'open' || key === 'all') rest = rest.filter(function (l) { return !inBlock[l.lead_id]; });
-    return { needs: needs, rest: rest };
+    var all = needsYou(leads, now);
+    if (key === 'needs') return { needs: [], needsAll: all, rest: all.map(function (r) { return r.lead; }) };
+    return { needs: all.slice(0, NEEDS_SHOW), needsAll: all, rest: filterLeads(leads, key) };
   }
 
-  // Chip counts match the rows under each chip.
-  function homeCounts(leads, now) {
+  // Chip counts. The page's own count of the rows it has, unless the server's (cv_list_counts, sql/025) is given: those stay right
+  // past what the page fetched. A server count with a missing or bad number is not used at all.
+  var COUNT_KEYS = ['open', 'contacted', 'booked', 'lost', 'all'];
+  function homeCounts(leads, now, server) {
+    if (server && typeof server === 'object' && COUNT_KEYS.every(function (k) { var v = server[k]; return typeof v === 'number' && v >= 0 && Math.floor(v) === v; })) {
+      var out = {};
+      COUNT_KEYS.forEach(function (k) { out[k] = server[k]; });
+      return out;
+    }
     var c = filterCounts(leads);
-    var n = needsYou(leads, now).length;
-    return { open: Math.max(0, c.open - n), booked: c.booked, lost: c.lost, all: Math.max(0, c.all - n) };
+    return { open: c.open, contacted: c.contacted, booked: c.booked, lost: c.lost, all: c.all };
+  }
+
+  // The full Needs-you list in parts: handed over in the last 24 hours, then waiting over a day (each newest first), then the
+  // rare row with no known time. rows = the rows drawn (a page); all = every waiting row, for the counts in the headings (a page
+  // never shrinks a count). "Waiting over a day" counts exactly what needsOverDay counts (review r4b).
+  function needsSections(rows, all) {
+    var list = Array.isArray(rows) ? rows : [];
+    var every = Array.isArray(all) ? all : list;
+    function part(key) { return function (r) { return !!r && (key === 'fresh' ? !!r.fresh : key === 'older' ? !!r.overDay : !r.fresh && !r.overDay); }; }
+    return [
+      { key: 'fresh', label: 'New: last 24 hours' },
+      { key: 'older', label: 'Waiting over a day' },
+      { key: 'unknown', label: 'Time not known' }
+    ].map(function (s) {
+      return { key: s.key, label: s.label, count: every.filter(part(s.key)).length, rows: list.filter(part(s.key)) };
+    }).filter(function (s) { return s.rows.length > 0; });
+  }
+
+  // "See all 102" under the block, '' when the block already shows everyone.
+  function needsMoreText(total) {
+    var n = Number(total) || 0;
+    return n > NEEDS_SHOW ? 'See all ' + n + ' waiting' : '';
+  }
+
+  // Review r4 item 4: when most of the waiting leads are older than a day, the block (newest first) never shows them. One line
+  // under it: "97 waiting over a day", '' when every one of them is already in the block. index = the first such row in the full
+  // list (newest first), so "See all" can open right there.
+  function needsOverDay(all, shown) {
+    var list = Array.isArray(all) ? all : [];
+    var inBlock = Math.max(0, Math.floor(Number(shown) || 0));
+    var n = 0, first = -1, hidden = 0;
+    list.forEach(function (r, i) {
+      if (!r || !r.overDay) return;
+      n++;
+      if (first === -1) first = i;
+      if (i >= inBlock) hidden++;
+    });
+    return { count: n, index: first, text: hidden > 0 ? n + ' waiting over a day' : '' };
+  }
+
+  // Long lists (round 4): rows are drawn LIST_PAGE at a time with "Show more".
+  // -> { rows: the first `shown` (at least one page), left: how many are not drawn, moreText }
+  var LIST_PAGE = 50;
+  function listPage(rows, shown) {
+    var list = Array.isArray(rows) ? rows : [];
+    var n = Math.max(LIST_PAGE, Math.floor(Number(shown) || 0));
+    var page = list.slice(0, n);
+    var left = list.length - page.length;
+    return { rows: page, shown: page.length, left: left,
+      moreText: left > 0 ? 'Show ' + Math.min(LIST_PAGE, left) + ' more (' + left + ' not shown)' : '' };
+  }
+
+  // The page reads lead_list LIST_FETCH rows at a time, up to LIST_CAP. Past that it says so honestly (search still finds anyone).
+  var LIST_FETCH = 1000;
+  var LIST_CAP = 5000;
+
+  // Review r4 item 7: the PostgREST or-filter for "the rows after this one" in an order of <col> DESC NULLS LAST, <idCol> ASC
+  // (keyset paging). Values are checked, never pasted raw: a timestamp of digits and - : . + T Z, a uuid; anything else throws.
+  function keysetAfter(col, at, idCol, id) {
+    if (!/^[a-z_]+$/.test(col) || !/^[a-z_]+$/.test(idCol) || !isUuid(id)) throw new Error('keyset: bad key');
+    if (at === null || at === undefined || at === '') return 'and(' + col + '.is.null,' + idCol + '.gt.' + id + ')';
+    var t = String(at);
+    if (!/^[0-9TZ:.+ -]{10,40}$/.test(t)) throw new Error('keyset: bad time');
+    return col + '.lt."' + t + '",and(' + col + '.eq."' + t + '",' + idCol + '.gt.' + id + '),' + col + '.is.null';
+  }
+  function listTruncNote(loaded, total) {
+    var a = Number(loaded) || 0, b = Number(total) || 0;
+    if (!(b > a)) return '';
+    return 'Showing your ' + a.toLocaleString('en-CA') + ' most recent leads of ' + b.toLocaleString('en-CA') + '. Search finds any lead.';
   }
 
   // "Sat, Nov 14", "40 guests", "$650": the job in three bits. money:false leaves the price out.
@@ -3809,7 +3986,27 @@ function renderPriceBlockSms(lineItems, total, currency) {
     rowView: rowView,
     actionsAhead: actionsAhead,
     needsYou: needsYou,
+    NEEDS_SHOW: NEEDS_SHOW,
+    NEEDS_FRESH_HOURS: NEEDS_FRESH_HOURS,
+    needsSections: needsSections,
+    needsMoreText: needsMoreText,
+    LIST_PAGE: LIST_PAGE,
+    LIST_FETCH: LIST_FETCH,
+    LIST_CAP: LIST_CAP,
+    listPage: listPage,
+    listTruncNote: listTruncNote,
+    keysetAfter: keysetAfter,
+    leadIndex: leadIndex,
+    BULK_NOTE: BULK_NOTE,
+    bulkDefaultDate: bulkDefaultDate,
+    bulkPreviewView: bulkPreviewView,
+    bulkErrorText: bulkErrorText,
+    bulkDoneText: bulkDoneText,
+    bulkUndoneText: bulkUndoneText,
+    bulkUndoLine: bulkUndoLine,
+    bulkLeftText: bulkLeftText,
     homeView: homeView,
+    needsOverDay: needsOverDay,
     homeCounts: homeCounts,
     jobBits: jobBits,
     headMoney: headMoney,
