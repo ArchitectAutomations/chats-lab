@@ -213,12 +213,12 @@
   </main>
 
   <!-- Quote calculator: read-only price check through the Edge Function cv-quote (same engine as form leads).
-       Nothing is saved or sent from here. -->
+       Nothing is sent from here; from a lead's price link, Add saves the price on that lead. -->
   <main class="screen quote-screen" id="screen-quote" hidden>
     <div class="scroller" id="q-scroll">
       <div class="q-wrap">
         <form class="q-form" id="q-form" novalidate>
-          <p class="q-lede">Same prices your leads get from the form. Nothing is saved or sent.</p>
+          <p class="q-lede">Same prices your leads get from the form. Nothing here is sent to anyone.</p>
 
 
           <div class="q-field">
@@ -271,15 +271,19 @@
             <div class="q-field">
               <label class="field-label" for="q-occasion">Occasion</label>
               <input class="field" id="q-occasion" type="text" autocomplete="off" maxlength="60" aria-describedby="q-err-occasion">
+              <select class="field" id="q-occasion-pick" aria-describedby="q-err-occasion" hidden disabled></select>
               <p class="error" id="q-err-occasion" hidden></p>
             </div>
             <div class="q-field">
               <label class="field-label" for="q-promo">Promo code</label>
               <input class="field" id="q-promo" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32" aria-describedby="q-err-promo_code">
+              <select class="field" id="q-promo-pick" aria-describedby="q-promo-gives q-err-promo_code" hidden disabled></select>
+              <p class="hint" id="q-promo-gives" hidden></p>
               <p class="error" id="q-err-promo_code" hidden></p>
             </div>
           </details>
 
+          <p class="hint q-stale" id="q-stale" role="status" hidden></p>
           <p class="error" id="q-error" role="alert" hidden></p>
           <button class="btn primary q-submit" id="q-submit" type="submit"><span class="spinner" aria-hidden="true"></span><span>Get quote</span></button>
         </form>
@@ -288,7 +292,13 @@
           <h2 class="rec-h" id="q-result-h" tabindex="-1">Quote</h2>
           <div id="q-result-body"></div>
           <p class="q-copied" id="q-copied" role="status"></p>
+          <div class="q-add-box" id="q-add-box" hidden>
+            <button class="btn primary" id="q-add" type="button">Add this quote to the lead</button>
+            <p class="rec-note" id="q-add-note"></p>
+            <p class="error" id="q-add-err" role="alert" hidden></p>
+          </div>
           <button class="btn quiet q-copy" id="q-copy" type="button" hidden>Copy quote</button>
+          <button class="q-new" id="q-new" type="button">Start a new quote</button>
         </section>
       </div>
     </div>
@@ -489,6 +499,7 @@
           <p class="rec-source" id="rec-source" hidden></p>
           <p class="rec-noauto" id="rec-noauto" hidden></p>
           <a class="rec-phone" id="rec-phone" hidden></a>
+          <p class="rec-email" id="rec-email" hidden></p>
         </header>
 
         <p class="stop-banner" id="optout-banner" role="note" hidden>Do not text: this person opted out.</p>
@@ -505,6 +516,20 @@
           <p class="actions-note" id="actions-note" hidden></p>
           <p class="error" id="action-error" role="alert" hidden></p>
         </section>
+
+        <section class="rec-card" id="rec-event" aria-labelledby="h-event" hidden>
+          <h3 class="rec-h" id="h-event">Event</h3>
+          <dl class="facts" id="event-facts"></dl>
+          <button type="button" class="more-toggle" id="event-more-btn" aria-controls="event-more" aria-expanded="false" hidden>More details</button>
+          <div id="event-more" hidden>
+            <dl class="facts facts-more" id="event-facts-more"></dl>
+            <div class="words" id="event-words" hidden>
+              <h4 class="words-h">In their words</h4>
+              <p class="words-text" id="event-details"></p>
+            </div>
+          </div>
+        </section>
+
       </div>
 
       <section class="convo" id="convo" aria-labelledby="h-convo">
@@ -529,20 +554,21 @@
       </section>
 
       <div class="record record-rest" id="record-rest">
-        <section class="rec-card" id="rec-event" aria-labelledby="h-event" hidden>
-          <h3 class="rec-h" id="h-event">Event</h3>
-          <dl class="facts" id="event-facts"></dl>
-          <div class="words" id="event-words" hidden>
-            <h4 class="words-h">In their words</h4>
-            <p class="words-text" id="event-details"></p>
-          </div>
-        </section>
-
         <p class="rec-price" id="rec-price" hidden><a class="fact-link" id="price-link" href="#/quote">Price it in the quote calculator</a></p>
 
         <section class="rec-card" id="rec-quote" aria-labelledby="h-quote" hidden>
           <h3 class="rec-h" id="h-quote">Quote</h3>
           <div id="quote-body"></div>
+        </section>
+
+        <section class="rec-card" id="rec-myquote" aria-labelledby="h-myquote" hidden>
+          <h3 class="rec-h" id="h-myquote">Your price</h3>
+          <p class="mq-status" id="mq-status"></p>
+          <div id="mq-body"></div>
+          <p class="rec-note" id="mq-note" hidden></p>
+          <p class="error" id="mq-error" role="alert" hidden></p>
+          <button class="btn primary mq-btn" id="mq-send" type="button" hidden>Send it to them</button>
+          <button class="btn quiet mq-btn" id="mq-resend" type="button" hidden>Send it again</button>
         </section>
 
         <section class="rec-card" id="rec-notes" aria-labelledby="h-notes" hidden>
@@ -600,6 +626,7 @@
   <dialog class="sheet" id="confirm" aria-labelledby="confirm-text">
     <div class="sheet-body">
       <p class="sheet-text" id="confirm-text"></p>
+      <p class="sheet-note" id="confirm-note" hidden></p>
       <div class="sheet-field" id="price-box" hidden>
         <label class="field-label" for="price">Final price</label>
         <div class="money-wrap"><span class="money-sign" aria-hidden="true">$</span><input class="field money-field" id="price" type="text" inputmode="decimal" autocomplete="off" aria-describedby="price-hint"></div>
@@ -616,6 +643,7 @@
       <p class="error" id="confirm-error" role="alert" hidden></p>
       <div class="sheet-actions">
         <button class="btn primary" id="confirm-yes" type="button"></button>
+        <button class="btn choice" id="confirm-alt" type="button" hidden></button>
         <button class="btn quiet" id="confirm-no" type="button">Cancel</button>
       </div>
     </div>

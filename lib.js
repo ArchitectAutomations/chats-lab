@@ -358,10 +358,28 @@
       if (lead && (lead.opted_out === true || followupMissesEvent(lead.event_date, now))) return q + ' No follow-up text will go out.';
       // Contacted or texted before: its one follow-up may be used up, and the page cannot see that. Promise nothing.
       if (lead && (lead.contacted_at || lead.nudge_sent_at)) return q;
+      // 022: the server's own answer (lead_detail.followup_possible) beats the promise below; absent (older read, staff) = as before.
+      if (lead && lead.followup_possible === false) return q + ' No follow-up text will go out.';
       return q + " They'll get one follow-up text in 5 days unless you mark them " + lc('booked') + ' or ' + lc('lost') + '.';
     }
     if (noConsent(lead)) return q;
     return q + " They won't get the next follow-up text.";
+  }
+
+  // 022: the sheet's two buttons when a lead with no quote could really get the day-5 text (both facts come from the server, lead_detail).
+  // The note describes WF3's actual text (F016_FOLLOWUP_TEMPLATE): it never names a quote or a price.
+  // null = no choice: the usual sheet and the usual single button.
+  function followupChoice(name, status, lead) {
+    if (status !== 'contacted' || !lead) return null;
+    if (lead.quote_received !== false || lead.followup_possible !== true) return null;
+    var who = String(name || '').trim() || 'This lead';
+    var lc = statusInfo('contacted').label.toLowerCase();
+    return {
+      text: 'Mark ' + (String(name || '').trim() || 'this lead') + ' as ' + lc + '?',
+      note: who + " hasn't received a quote yet. If you send the follow-up, they get one text in 5 days saying you reached out and asking if they'd still like to go ahead. It doesn't mention a quote or a price.",
+      send: 'Mark ' + lc + ' and send the follow-up',
+      none: 'Mark ' + lc + ', no follow-up'
+    };
   }
 
   // Can the page offer this change? Mirrors cv_set_lead_status (sql/021): the current status again is a no-op;
@@ -412,7 +430,9 @@
     bad_amount: 'The final price must be between $0 and $100,000.',
     reason_required: 'Pick a reason the lead was lost.',
     bad_reason: 'Pick one of the reasons shown.',
-    note_too_long: 'Keep the note under 500 characters.'
+    note_too_long: 'Keep the note under 500 characters.',
+    bad_followup: 'Pick one of the two follow-up choices.',
+    followup_only_with_contacted: 'Pick one of the two follow-up choices.'
   };
 
   // Staff-only refusals from cv_set_lead_status (sql/018): plain words.
@@ -451,20 +471,23 @@
 
   var HISTORY_ACTIONS = {
     'new': 'New lead', engaged: 'Started texting', quoted: 'Quoted', handed_off: 'Asked for you',
-    contacted: 'Contacted', booked: 'Booked', lost: 'Lost', opted_out: 'Opted out', reopened: 'Reopened'
+    contacted: 'Contacted', booked: 'Booked', lost: 'Lost', opted_out: 'Opted out', reopened: 'Reopened',
+    quote_priced: 'Priced by you', quote_sent: 'Quote sent'
   };
   var HISTORY_SOURCES = {
     page: 'from the page', sms: 'by text', text: 'by text', owner_sms: 'by text',
     system: 'automatic', auto: 'automatic', workflow: 'automatic', bot: 'automatic'
   };
 
+  // lead_history.no_followup (sql/022): why a page Contacted took the day-5 text away.
+  var NO_FOLLOWUP_HISTORY = { chosen: 'No follow-up text (you chose)', no_quote: 'No follow-up text (no quote sent)' };
   function historyLine(h, now) {
     if (!h) return '';
     var a = String(h.action || '').toLowerCase();
     var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
     var s = String(h.source || '').toLowerCase();
     var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
-    var extra = a === 'booked' ? fmtMoney(h.amount) : a === 'lost' ? lostReasonLabel(h.reason) : '';
+    var extra = a === 'booked' || a === 'quote_priced' || a === 'quote_sent' ? fmtMoney(h.amount) : a === 'lost' ? lostReasonLabel(h.reason) : a === 'contacted' ? NO_FOLLOWUP_HISTORY[h.no_followup] || '' : '';
     return [label, extra, fmtStamp(h.at, now), src].filter(Boolean).join(' \u00b7 ');
   }
 
@@ -504,6 +527,15 @@
     { key: 'none', label: 'No quote yet' }
   ];
 
+  // 023: one value per lead. What the customer was quoted wins; a price the owner saved but has not sent stands in only when there is no quote.
+  // Never added on top of anything: every total that uses it uses this one number.
+  function effectiveTotal(lead) {
+    if (!lead) return null;
+    if (lead.quote_total !== null && lead.quote_total !== undefined && lead.quote_total !== '') return lead.quote_total;
+    return lead.owner_price !== null && lead.owner_price !== undefined && lead.owner_price !== '' ? lead.owner_price
+      : (lead.owner_quote && typeof lead.owner_quote === 'object' && lead.owner_quote.state !== 'sent' ? lead.owner_quote.total : null);
+  }
+
   function tierOf(lead) {
     var k = String((lead && lead.value_tier) || '').toLowerCase();
     return TIERS.some(function (t) { return t.key === k; }) ? k : 'none';
@@ -524,10 +556,10 @@
       if (isClosed(l.status)) { s.closed.push(l); s.closedCount++; return; }
       s.open.push(l);
       s.count++;
-      s.totalCents += toCents(l.quote_total) || 0;
+      s.totalCents += toCents(effectiveTotal(l)) || 0;
     });
     function byQuote(a, b) {
-      var d = (toCents(b.quote_total) || 0) - (toCents(a.quote_total) || 0);
+      var d = (toCents(effectiveTotal(b)) || 0) - (toCents(effectiveTotal(a)) || 0);
       if (d) return d;
       return String(a.event_date || '9999').localeCompare(String(b.event_date || '9999'));
     }
@@ -797,6 +829,29 @@
     return out;
   }
 
+  // Lead page header: the email as text (or a plain "No email given"), and the event details split into the ones
+  // always shown (key) and the ones behind "More details" (more). Date and guests stay in the job line; the price stays in the
+  // quote cards. opts.staff drops everything money-related (the offer / promo) even if a read ever carried it.
+  function emailLine(lead) {
+    var raw = lead && typeof lead.email === 'string' ? lead.email.trim() : '';
+    if (!raw) return { text: 'No email given', href: null, missing: true };
+    return { text: raw, href: mailtoHref(raw), missing: false };
+  }
+  function leadDetails(lead, opts) {
+    var out = { key: [], more: [], words: '' };
+    if (!lead) return out;
+    var staff = !!(opts && opts.staff);
+    var facts = eventFacts(lead, opts && opts.now);
+    function pick(k) { return facts.filter(function (f) { return f.key === k; }); }
+    function one(key, label, value) { return value ? [{ key: key, label: label, value: String(value) }] : []; }
+    var hours = String(lead.service_hours_label || '').replace(/\s+/g, ' ').trim();
+    var bar = lead.bar_rental === true ? 'Yes' : lead.bar_rental === false ? 'No' : '';
+    out.key = [].concat(pick('occasion'), pick('time'), one('hours', 'Hours', hours), pick('area'), one('bar', 'Bar rental', bar));
+    out.more = [].concat(pick('multi'), staff ? [] : pick('offer'));
+    out.words = String(lead.additional_details || '').trim();
+    return out;
+  }
+
   /* ---------- metrics (cv_metrics) ---------- */
 
   function num(v) {
@@ -957,6 +1012,175 @@
     var c = num(o && o.count) || 0;
     var t = num(o && o.total);
     return { money: fmtMoney(t === null ? 0 : t), count: plural(c, one || 'job', many || 'jobs') };
+  }
+
+  /* ---------- the owner's saved price on a lead (sql/023) ---------- */
+
+  // Sending is OFF unless CV_CUSTOM.features.quoteSend is exactly true (Kevin has to see the wording first); the database has its own switch.
+  function quoteSendFeatureOn(features) { return !!(features && typeof features === 'object' && features.quoteSend === true); }
+
+  var OWNER_QUOTE_BLOCKS = {
+    manual: 'You added this lead yourself, so there is no consent on file to text them. Send the price however you normally reach them.',
+    opted_out: 'They opted out of texts, so it cannot be texted to them.',
+    stop: 'They asked not to be texted, so it cannot be texted to them.',
+    no_consent: 'There is no consent on file to text them.',
+    bad_phone: "Their number can't be texted from here.",
+    demo: 'This is a test lead, so no text can go to it.',
+    closed: 'This lead is finished, so no text can go to it.',
+    has_quote: 'They already have a quote.',
+    event_passed: 'The event date has passed, so it cannot be texted to them.',
+    details_changed: 'The event details changed after you priced this.',
+    price_old: 'This price is more than 30 days old.',
+    rate_changed: 'Your prices changed after this was worked out.'
+  };
+  // These only matter to a send, so nothing is said about them while sending is off. Re-pricing is the answer to the last three.
+  var BLOCK_SEND_ONLY = { event_passed: true, details_changed: true, price_old: true, rate_changed: true };
+  var BLOCK_REPRICE = { details_changed: true, price_old: true, rate_changed: true };
+  // What the card says about a refused send. A reason this page does not know yet still gets a sentence.
+  function ownerBlockNote(block, state, canSend) {
+    if (!block || (!canSend && BLOCK_SEND_ONLY[block])) return '';
+    var text = OWNER_QUOTE_BLOCKS[block] || (canSend ? "This price can't be texted right now." : '');
+    if (!BLOCK_REPRICE[block]) return text;
+    return text + (OWNER_REPRICE_STATES[state] ? ' Price it again before sending.' : ' It cannot be sent again as it is.');
+  }
+  // The states the server lets the owner price again from (sql/023 cv_add_lead_quote; unknown since crm-fix-final N4).
+  var OWNER_REPRICE_STATES = { saved: true, failed: true, unknown: true };
+
+  // lead_detail.owner_quote -> what the lead page shows. null = nothing saved.
+  function ownerQuoteView(lead, canSend, now) {
+    var o = lead && lead.owner_quote;
+    if (!o || typeof o !== 'object') return null;
+    var state = String(o.state || 'saved');
+    var block = o.send_block ? String(o.send_block) : '';
+    var count = Number(o.send_count) || 0;   // texts the phone company really accepted; a refused or unconfirmed try is never counted here
+    var sentAt = fmtStamp(o.sent_at, now);
+    // A resend still going, refused or unconfirmed: the first text reached them, so the card stays "sent" and says what happened to the last one.
+    var resend = !!o.sent_at && state !== 'sent' && state !== 'saved';
+    var sentLine = 'Priced by you, sent' + (sentAt ? ' ' + sentAt : '') + (count > 1 ? ' (' + count + ' times)' : '');
+    var status = 'Priced by you, not sent';
+    if (state === 'sent') status = sentLine;
+    else if (resend) status = sentLine + (state === 'sending' ? '. Sending it again now.' : state === 'failed' ? '. The last text did not go out.' : '. We could not confirm the last text went out.');
+    else if (state === 'sending') status = 'Priced by you, sending now';
+    else if (state === 'failed') status = 'Priced by you. The text did not go out.';
+    else if (state === 'unknown') status = "Priced by you. We could not confirm the text went out.";
+    var items = (Array.isArray(o.line_items) ? o.line_items : []).filter(function (it) { return it && typeof it === 'object'; }).map(function (it) {
+      return { label: String(it.label || '').trim(), detail: String(it.detail || '').trim(), amount: fmtMoney(it.amount) };
+    });
+    var first = state === 'unknown' ? (resend ? 'It may have gone out. Check the conversation before sending again.' : 'The earlier text may have gone out. Check the conversation before sending or pricing it again.')
+      : state === 'sending' ? 'It may already have gone out. Check the conversation.'
+      : o.earlier_maybe_sent === true ? 'An earlier text with a price may have gone out. Check the conversation before sending.' : '';
+    return {
+      state: state, sent: state === 'sent' || resend, status: status, count: count,
+      total: fmtMoney(o.total), subtotal: fmtMoney(o.subtotal), travel: toCents(o.travel_fee) === 0 ? 'None' : fmtMoney(o.travel_fee), items: items,
+      // the customer-facing record already holds the price once it is sent: the card then only says when it went
+      showDetails: state !== 'sent' && !resend,
+      // sending / unknown / an earlier maybe-sent text: it may have reached them, and that is said first whatever else is true
+      note: [first, ownerBlockNote(block, resend ? 'sent' : state, !!canSend)].filter(Boolean).join(' '),
+      reprice: !!canSend && !!BLOCK_REPRICE[block] && !resend && !!OWNER_REPRICE_STATES[state],
+      canSend: !!canSend && !block && !resend && (state === 'saved' || state === 'failed'),
+      canResend: !!canSend && !block && (state === 'sent' || state === 'unknown' || (resend && state === 'failed')),
+      sendLabel: state === 'failed' ? 'Try sending it again' : 'Send it to them'
+    };
+  }
+
+  // A lead -> the calculator's fields. A saved price starts from the answers it was worked out with; otherwise whatever the lead holds.
+  // "" / null = the lead does not say, the owner picks. Distance is only filled in from a saved price (the calculator works it out from the city).
+  function quotePrefill(lead) {
+    var o = lead && lead.owner_quote;
+    var inp = o && typeof o === 'object' && o.inputs && typeof o.inputs === 'object' && Object.keys(o.inputs).length ? o.inputs : null;
+    var text = function (v) { return v === null || v === undefined ? '' : String(v).trim(); };
+    if (inp) {
+      var promo = text(inp.promo_code).toLowerCase();
+      return { guests: text(inp.guests), hours: quoteHoursValue(inp.service_hours), bar: inp.bar_rental === true ? true : inp.bar_rental === false ? false : null,
+        area: text(inp.event_city), km: Number(inp.distance_km) > 0 ? text(inp.distance_km) : '', date: dateOnly(inp.event_date), occasion: text(inp.occasion), promo: promo };
+    }
+    var code = text(lead && lead.promo_code).toLowerCase();
+    return { guests: lead && Number(lead.guests) > 0 ? text(lead.guests) : '', hours: quoteHoursValue(lead && lead.service_hours_label),
+      // a hand-added lead's "no" is only the column's default, nobody answered it
+      bar: lead && lead.bar_rental === true ? true : lead && lead.bar_rental === false && lead.source !== 'manual' ? false : null,
+      area: text(lead && lead.event_area), km: '', date: dateOnly(lead && lead.event_date), occasion: text(lead && lead.occasion), promo: code === 'none' ? '' : code };
+  }
+  function dateOnly(v) { var m = /^\d{4}-\d{2}-\d{2}/.exec(String(v == null ? '' : v)); return m ? m[0] : ''; }
+  // 5, "5", "5 hours of bar service", "More than 8 hours" -> the calculator's choice; anything else -> "".
+  function quoteHoursValue(v) {
+    var s = String(v == null ? '' : v).trim();
+    if (/^over_8$|more than|over 8/i.test(s)) return 'over_8';
+    var m = /\d+/.exec(s);
+    return m && QUOTE_HOURS.indexOf(m[0]) !== -1 ? m[0] : '';
+  }
+  // The line beside Add: says when it replaces a figure, and which one.
+  // maybeSent: the price it replaces had a text that may have gone out (sql/023 unknown, or earlier_maybe_sent).
+  function quoteAddNote(savedTotal, maybeSent) {
+    return (savedTotal ? 'This replaces the ' + savedTotal + ' you saved on that lead.' : 'It saves this price on the lead.') +
+      (maybeSent ? ' The earlier text may have gone out, so check the conversation first.' : '') + ' Nothing is sent to them.';
+  }
+  // The confirmation after a save.
+  function quoteSavedLine(name, total, savedTotal) {
+    return 'Saved: ' + total + ' on ' + name + (savedTotal ? ', replacing ' + savedTotal : '') + '. Nothing was sent.';
+  }
+
+  // May a calculator result be added to this lead? (The server decides again.)
+  function canAddQuoteToLead(lead) {
+    if (!lead) return false;
+    if (String(lead.quote_status || '').toLowerCase() === 'firm') return false;
+    var st = String(lead.status || '').toLowerCase();
+    if (st === 'booked' || st === 'lost' || st === 'won' || st === 'dormant' || st === 'opted_out') return false;
+    var o = lead.owner_quote;
+    // unknown can be priced again (crm-fix-final N4): the note beside Add says the earlier text may have gone out
+    return !(o && typeof o === 'object' && (o.state === 'sent' || o.state === 'sending'));
+  }
+
+  // Engine response + the request -> cv_add_lead_quote's p_quote. Only what the server accepts; no arithmetic.
+  function quoteAddArgs(res, body) {
+    var r = res && typeof res === 'object' ? res : {};
+    var inputs = r.inputs && typeof r.inputs === 'object' ? r.inputs : (body && typeof body === 'object' ? body : {});
+    var promo = r.promotion && typeof r.promotion === 'object' && r.promotion.applied === true ? r.promotion : null;
+    return { status: r.status, total: r.total, subtotal: r.subtotal, travel_fee: r.travel_fee, deposit: r.deposit, currency: r.currency || 'CAD',
+      rate_card_version: r.rate_card_version || '', computed_at: r.computed_at || '', promo_code: promo ? String(inputs.promo_code || '') : '', promotion: promo,
+      line_items: Array.isArray(r.line_items) ? r.line_items : [], inputs: inputs };
+  }
+
+  var QUOTE_ADD_ERRORS = { has_firm_quote: 'This lead already has a quote, so this one was not added.', closed: 'This lead is finished, so a price cannot be added.',
+    already_sent: 'A price for this lead was already sent.', already_sending: 'A price for this lead is being sent right now.' };
+  // The server said this lead cannot take the price (a real quote arrived, the lead closed, it is gone): trying again will not help.
+  function quoteAddRefused(e) { return /not_allowed|not_found/.test(String((e && e.message) || '').toLowerCase()); }
+  function quoteAddError(e) {
+    var msg = String((e && e.message) || '').toLowerCase();
+    if (/not_owner/.test(msg)) return "Your sign-in can't change this lead.";
+    if (/not_found/.test(msg)) return "This lead can't be found any more.";
+    if (/not_allowed/.test(msg)) return QUOTE_ADD_ERRORS[String((e && e.details) || '').trim()] || "This quote can't be added to this lead.";
+    return "Couldn't add it. Check your connection and try again.";
+  }
+
+  // cv-quote-send errors (thrown as { status, error, details }) -> what the owner reads. Always says whether anything went out.
+  var QUOTE_SEND_BLOCKS = { manual: "This lead has no consent on file, so nothing was sent.", opted_out: 'They opted out of texts, so nothing was sent.', stop: 'They asked not to be texted, so nothing was sent.',
+    no_consent: 'There is no consent on file, so nothing was sent.', demo: 'This is a test lead, so nothing was sent.', bad_phone: "Their number can't be texted, so nothing was sent.",
+    closed: 'This lead is finished, so nothing was sent.', has_quote: 'They already have a quote, so nothing was sent.', already_sent: 'It was already sent. Nothing new went out.',
+    already_sending: 'It is sending right now. Nothing new went out.', send_unknown: "We can't tell whether the last text went out, so nothing new was sent. Check the conversation.", too_many: 'This lead has had 3 texts that went out or may have, so nothing new was sent.',
+    event_passed: 'The event date has passed, so nothing was sent.', details_changed: 'The event details changed after you priced this, so nothing was sent. Price it again.',
+    price_old: 'This price is more than 30 days old, so nothing was sent. Price it again.', rate_changed: 'Your prices changed after this was worked out, so nothing was sent. Price it again.',
+    price_changed: 'The price changed after you opened it, so nothing was sent. Look at it again.', no_sender: 'There is no number to send from yet, so nothing was sent.' };
+  function quoteSendError(e) {
+    var code = String((e && e.error) || '').toLowerCase();
+    var d = String((e && e.details) || '').trim();
+    if (code === 'not_allowed') return QUOTE_SEND_BLOCKS[d] || 'It could not be sent. Nothing went out.';
+    if (code === 'send_off') return 'Sending is switched off. Nothing went out.';
+    if (code === 'send_failed') return d === 'opted_out_at_twilio' ? 'They have blocked texts from this number. Nothing went out.' : 'The text could not be sent. Nothing went out.';
+    if (code === 'send_unknown') return "We couldn't confirm the text went out. Check the conversation before sending again.";
+    if (code === 'changed') return 'The quote changed. Look at the text again before sending.';
+    if (code === 'not_owner' || code === 'not_signed_in') return "Your sign-in can't send this. Nothing went out.";
+    if (code === 'not_configured') return 'Sending is not set up yet. Nothing went out.';
+    return 'The text could not be sent. Nothing went out.';
+  }
+
+  // Lines for the lead's history (the send state lives on the saved price, not in lead_events: staff never read it there).
+  function ownerQuoteHistory(lead) {
+    var o = lead && lead.owner_quote;
+    if (!o || typeof o !== 'object') return [];
+    var out = [];
+    if (o.added_at) out.push({ at: o.added_at, action: 'quote_priced', amount: o.total });
+    if (o.sent_at) out.push({ at: o.sent_at, action: 'quote_sent', amount: o.total, source: 'page' });
+    return out;
   }
 
   /* ---------- feature switches (CV_CUSTOM.features) ---------- */
@@ -1141,20 +1365,43 @@
     optedOut: 'This number opted out of texts.'
   };
 
-  // Where a lead came from, for the record header: "Added by you · Instagram", "From your booking form", "Texted you first".
+  // Where a lead came from, for the record header (Kevin 11-09: every lead, plain words, never a raw key).
+  // leads.source: tally_form (WF1), sms_inbound (first text), manual (+ Add lead), demo-seed (lab data), NULL (old rows). Anything else = not recorded.
+  // A lead read that carries no source at all (an older server) shows nothing rather than a false "not recorded".
+  // form_name is the Tally form's own title (two forms can be told apart); a title can hold a price, so opts.noFormName (staff) leaves it out.
   function isManual(lead) { return !!lead && lead.source === 'manual'; }
-  function sourceLine(lead) {
-    if (!lead) return '';
-    if (lead.source === 'manual') {
+  function formNameBit(lead, opts) {
+    if (opts && opts.noFormName) return '';
+    var n = String((lead && lead.form_name) || '').replace(/\s+/g, ' ').replace(/[\s:.]+$/, '').trim();
+    return n.length > 60 ? n.slice(0, 59).trim() + '…' : n;
+  }
+  function sourceLine(lead, opts) {
+    if (!lead || lead.source === undefined) return '';
+    var src = String(lead.source == null ? '' : lead.source).trim().toLowerCase();
+    var form = formNameBit(lead, opts);
+    if (src === 'manual') {
       var l = manualSourceLabel(lead.manual_source);
-      return l ? 'Added by you · ' + l : 'Added by you';
+      return l ? 'From: added by you (' + l + ')' : 'From: added by you';
     }
-    if (lead.source === 'tally_form') return 'From your booking form';
-    if (lead.source === 'sms_inbound') return 'Texted you first';
-    return '';
+    if (src === 'tally_form') return form ? 'From: website form (' + form + ')' : 'From: website form';
+    if (src === 'sms_inbound') return form ? 'From: texted in, then website form (' + form + ')' : 'From: texted in';
+    if (src === 'demo-seed') return 'From: demo data';
+    return 'From: not recorded';
+  }
+  // 022: lead_detail.quote_received === false only; absent (staff, older read) shows nothing. Text shares the source line.
+  var CLOSED_FOR_QUOTE = { booked: 1, lost: 1, won: 1, dormant: 1, opted_out: 1 };
+  function noQuoteLine(lead) {
+    if (!lead || lead.quote_received !== false) return '';
+    return CLOSED_FOR_QUOTE[String(lead.status || '').toLowerCase()] ? 'no quote sent' : 'no quote sent yet';
   }
   var NO_AUTO_TEXT = 'No automatic texts: you contact them yourself.';
-  function noAutoLine(lead) { return lead && lead.auto_texts === false ? NO_AUTO_TEXT : ''; }
+  // 022: after the owner's "no follow-up" (or none sent and no quote) the record says plainly that no text will go.
+  var NO_FOLLOWUP_LINE = { chosen: 'No follow-up text will go out: you chose not to send one.', no_quote: 'No follow-up text will go out: no quote was sent.' };
+  function noAutoLine(lead) {
+    if (!lead) return '';
+    if (lead.auto_texts === false) return NO_AUTO_TEXT;
+    return NO_FOLLOWUP_LINE[lead.no_followup] || '';
+  }
 
   // cv_metrics().sources -> the buckets that have leads, in the server's order, with plain labels.
   var SOURCE_BUCKETS = { form: 'Your booking form', text: 'Texted you first', other: 'Other' };
@@ -1316,6 +1563,106 @@
     return Object.keys(errors).length ? { ok: false, errors: errors } : { ok: true, body: body };
   }
 
+  /* ---------- quote calculator pick-lists (CV_CUSTOM.quoteOccasions / quotePromos) ----------
+     Per client. A client with no list keeps the plain text box. The page never offers a code that is not
+     in the client's list, one outside its dates, or one the endpoint would refuse by shape; the endpoint
+     still decides what a code does (promo_status in its answer). */
+
+  var PROMO_CODE_RE = /^[a-z0-9_-]{2,32}$/;
+  function isYmd(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z')); }
+
+  // The occasion choices, in the client's order: only text the endpoint accepts, no repeats. null = no list (use the text box).
+  function quoteOccasions(c) {
+    var raw = c && Array.isArray(c.quoteOccasions) ? c.quoteOccasions : null;
+    if (!raw) return null;
+    var out = [], seen = {};
+    raw.forEach(function (x) {
+      var s = String(x == null ? '' : x).replace(/\s+/g, ' ').trim();
+      if (!s || !OCCASION_RE.test(s) || seen[s.toLowerCase()]) return;
+      seen[s.toLowerCase()] = true; out.push(s);
+    });
+    return out.length ? out : null;
+  }
+
+  // One promo entry from the settings -> a clean entry, or null when it is malformed (a malformed entry is never offered).
+  // { code, label, gives, from, to (first day it no longer works), eventFrom, eventTo (event dates it covers, both included) }
+  function cleanPromo(p) {
+    if (!p || typeof p !== 'object') return null;
+    var code = String(p.code == null ? '' : p.code).trim().toLowerCase();
+    var label = String(p.label == null ? '' : p.label).replace(/\s+/g, ' ').trim();
+    if (!PROMO_CODE_RE.test(code) || !label || label.length > 70) return null;
+    var e = { code: code, label: label, gives: String(p.gives == null ? '' : p.gives).replace(/\s+/g, ' ').trim().slice(0, 240), from: '', to: '', eventFrom: '', eventTo: '' };
+    if (p.from != null && p.from !== '') { if (!isYmd(p.from)) return null; e.from = p.from; }
+    if (p.to != null && p.to !== '') { if (!isYmd(p.to)) return null; e.to = p.to; }
+    if (e.from && e.to && e.to <= e.from) return null;
+    if ((p.eventFrom || p.eventTo)) {
+      if (!isYmd(p.eventFrom) || !isYmd(p.eventTo) || p.eventTo < p.eventFrom) return null;
+      e.eventFrom = p.eventFrom; e.eventTo = p.eventTo;
+    }
+    return e;
+  }
+  // Every well-formed entry, offered or not. null = no list configured.
+  function quotePromoList(c) {
+    var raw = c && Array.isArray(c.quotePromos) ? c.quotePromos : null;
+    if (!raw) return null;
+    var out = [], seen = {};
+    raw.forEach(function (p) { var e = cleanPromo(p); if (e && !seen[e.code]) { seen[e.code] = true; out.push(e); } });
+    return out;
+  }
+  // The promos to put in the picker today (client time zone): inside their dates only. null = no list (use the text box);
+  // [] = a list with nothing running today (the picker shows just "No promo").
+  function quotePromos(c, now) {
+    var all = quotePromoList(c);
+    if (!all) return null;
+    var td = today(now).ymd;
+    return all.filter(function (e) { return (!e.from || td >= e.from) && (!e.to || td < e.to); });
+  }
+  // What the picker says under the choice: what it gives, then which event dates it covers.
+  function promoGives(e) {
+    if (!e) return '';
+    var parts = ['Code: ' + e.code + '.'];   // the code the owner types in or gives the customer (Kevin 11-09)
+    if (e.gives) parts.push(e.gives.replace(/[.\s]+$/, '') + '.');
+    if (e.eventFrom) parts.push('Events from ' + longDate(e.eventFrom) + ' to ' + longDate(e.eventTo) + '.');
+    return parts.join(' ');
+  }
+  function longDate(s) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m ? MONTH_NAMES[Number(m[2]) - 1] + ' ' + Number(m[3]) + ', ' + m[1] : s; }
+
+  // Same checks the endpoint makes before a coded offer applies, so the owner hears it before the wait. '' = fine.
+  // Only for a code in the client's list; an unlisted typed code (text-box clients) is left to the endpoint.
+  function quotePromoProblem(c, code, eventDate, now) {
+    var all = quotePromoList(c);
+    var k = String(code == null ? '' : code).trim().toLowerCase();
+    if (!all || !k) return '';
+    var e = all.filter(function (x) { return x.code === k; })[0];
+    if (!e) return 'That promo is not on the list.';
+    var td = today(now).ymd;
+    if ((e.from && td < e.from) || (e.to && td >= e.to)) return 'That promo is not running today.';
+    if (e.eventFrom) {
+      var d = String(eventDate || '').trim();
+      if (!d) return 'This offer needs the event date (events ' + longDate(e.eventFrom) + ' to ' + longDate(e.eventTo) + ').';
+      if (d < e.eventFrom || d > e.eventTo) return 'This offer covers events ' + longDate(e.eventFrom) + ' to ' + longDate(e.eventTo) + '. Change the event date or pick another promo.';
+    }
+    return '';
+  }
+
+  // An asked-for promo the endpoint did not apply -> one plain sentence, so a missing discount is never silent. '' = nothing to say.
+  function promoNote(r, c) {
+    var code = String(r && r.inputs && r.inputs.promo_code || '').trim();
+    if (!code) return '';
+    var hit = (quotePromoList(c) || []).filter(function (e) { return e.code === code.toLowerCase(); })[0];
+    var name = hit ? hit.label : 'That promo';
+    var st = String(r.promo_status || '');
+    if (st === 'matched') {
+      var p = r.promotion;
+      return p && typeof p === 'object' && p.applied === false ? name + ' does not apply to these answers, so it is not in this price.' : '';
+    }
+    if (st === 'no_active_match') return name + ' is not running, so it is not in this price.';
+    if (st === 'bundle_no_event_date') return name + ' needs an event date, so it is not in this price.';
+    if (st === 'bundle_out_of_window') return 'The event date is outside the dates for ' + (hit ? hit.label : 'that promo') + ', so it is not in this price.';
+    if (st === 'lookup_failed') return name + ' could not be checked, so it is not in this price. Try again.';
+    return '';
+  }
+
   // A discount line always reads as money off: "−$100", whichever sign the engine used.
   function signedMoney(v) {
     var c = toCents(v);
@@ -1342,7 +1689,7 @@
   }
 
   // Engine response -> what the page prints. No arithmetic: every number is the engine's.
-  function quoteResult(r) {
+  function quoteResult(r, custom) {
     r = r && typeof r === 'object' ? r : {};
     var defer = String(r.status || '').toLowerCase() !== 'firm' || r.total === null || r.total === undefined;
     var items = [];
@@ -1371,6 +1718,7 @@
       distance: km === null ? '' : Math.round(km).toLocaleString('en-CA') + ' km away',
       // A flag that only repeats a discount line already printed above it is dropped (matched on the engine's flag code, not its text).
       flags: defer ? [] : (Array.isArray(r.flags) ? r.flags : []).filter(function (x, i) { return typeof x === 'string' && x.trim() && !(shownDiscount && codes[i] === 'delivery_discount_applied'); }),
+      promoNote: defer ? '' : promoNote(r, custom),
       needsDistance: String(r.distance_status || '') === 'route_not_found' || (Array.isArray(r.defer_codes) && r.defer_codes.indexOf('missing_distance') !== -1)
     };
   }
@@ -1385,7 +1733,13 @@
     if (b.guests) head.push(plural(b.guests, 'guest', 'guests'));
     if (b.service_hours) head.push(b.service_hours === 'over_8' ? 'more than 8 hours' : b.service_hours + ' hours');
     if (b.event_city) head.push(b.event_city + (view.distance ? ' (' + view.distance + ')' : ''));
-    var lines = ['Quote' + (head.length ? ': ' + head.join(', ') : '')];
+    // The text must never START like a web address ("Quote: ..." reads as scheme "Quote" and a phone can paste it percent-encoded):
+    // line 1 is plain words, line 2 the details, and neither may begin with "word:".
+    var lines = ['Your quote'];
+    if (head.length) {
+      var detail = head.join(', ');
+      lines.push(/^[A-Za-z][A-Za-z0-9+.\-]*:/.test(detail) ? 'For ' + detail : detail);
+    }
     view.items.forEach(function (it) { lines.push(it.label + (it.detail ? ' (' + it.detail + ')' : '') + ': ' + it.amount); });
     if (view.subtotal) lines.push('Subtotal: ' + view.subtotal);
     if (view.travel) lines.push('Travel fee: ' + view.travel);
@@ -1872,10 +2226,23 @@
     var g = Number(lead.guests);
     if (lead.guests !== null && lead.guests !== undefined && lead.guests !== '' && isFinite(g) && g > 0) bits.push(plural(g, 'guest', 'guests'));
     if (!(opts && opts.money === false)) {
-      var money = statusGroup(lead.status) === 'booked' && toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : fmtMoney(lead.quote_total);
+      var money = statusGroup(lead.status) === 'booked' && toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : quotedOrOwnerMoney(lead);
       if (money) bits.push(money);
     }
     return bits;
+  }
+
+  // 023: the money beside a lead in a list. A saved price reads as what it is.
+  var OWNER_MONEY_WORDS = { sent: '', sending: ' sending now', unknown: ' may have gone out' };
+  function quotedOrOwnerMoney(lead) {
+    var q = fmtMoney(lead && lead.quote_total);
+    if (q) return q;
+    // lead_detail has the saved price with its send state; lead_list only the figure.
+    var o = lead && lead.owner_quote;
+    var saved = o && typeof o === 'object' ? fmtMoney(o.total) : '';
+    if (saved) return saved + (OWNER_MONEY_WORDS[String(o.state || 'saved')] || ' not sent');
+    var own = fmtMoney(lead && lead.owner_price);
+    return own ? own + ' not sent' : '';
   }
 
   /* ---------- one lead row for every list (UI round 2, R1) ---------- */
@@ -1889,7 +2256,7 @@
     var info = statusInfo(st);
     var chipLabel = statusChip(lead).label;
     if (statusGroup(st) === 'booked') chipLabel = info.label;
-    var money = statusGroup(st) === 'booked' && toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : fmtMoney(lead.quote_total);
+    var money = statusGroup(st) === 'booked' && toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : quotedOrOwnerMoney(lead);
     var needs = st === 'handed_off' && !isOptedOut(lead);
     var since = realDate(lead.status_at) ? lead.status_at : null; // never guess a wait from other times
     var lastText = realDate(lead.last_in_at) ? 'Last text ' + fmtAgoOn(lead.last_in_at, now) : '';
@@ -2585,7 +2952,7 @@
   // follow_ups.reason keys (sql/014 ask_reason_key) -> plain words.
   var ASK_REASONS = {
     auto_overdue: 'Automatic text is overdue', auto_day5: 'Day-5 follow-up text', auto_sent: 'Day-5 follow-up text sent',
-    added_by_you: 'Added by you: contact them yourself', needs_price: 'Needs your price', asked_for_you: 'Asked for you in the chat',
+    added_by_you: 'Added by you: contact them yourself', needs_price: 'Needs your price', priced_not_sent: 'Priced by you, not sent yet', priced_maybe_sent: 'Priced by you, may have been sent, check', asked_for_you: 'Asked for you in the chat',
     new_quote_sent: 'Quote sent: waiting for your call', held_overnight: 'Alert held overnight', texted_overnight: 'Texted you overnight',
     morning_list: 'In your morning list', other: 'Other'
   };
@@ -2939,6 +3306,8 @@
     quoteView: quoteView,
     promoText: promoText,
     eventFacts: eventFacts,
+    emailLine: emailLine,
+    leadDetails: leadDetails,
     filters: filters,
     isFilterKey: isFilterKey,
     matchesFilter: matchesFilter,
@@ -2969,6 +3338,19 @@
     sortHistory: sortHistory,
     toCents: toCents,
     fmtMoney: fmtMoney,
+    effectiveTotal: effectiveTotal,
+    ownerQuoteView: ownerQuoteView,
+    quotePrefill: quotePrefill,
+    quoteHoursValue: quoteHoursValue,
+    quoteAddNote: quoteAddNote,
+    quoteSavedLine: quoteSavedLine,
+    quoteAddRefused: quoteAddRefused,
+    canAddQuoteToLead: canAddQuoteToLead,
+    quoteAddArgs: quoteAddArgs,
+    quoteAddError: quoteAddError,
+    quoteSendError: quoteSendError,
+    quoteSendFeatureOn: quoteSendFeatureOn,
+    ownerQuoteHistory: ownerQuoteHistory,
     fmtDuration: fmtDuration,
     fmtWaiting: fmtWaiting,
     closeRateText: closeRateText,
@@ -3014,6 +3396,8 @@
     DUP_TEXT: DUP_TEXT,
     isManual: isManual,
     sourceLine: sourceLine,
+    noQuoteLine: noQuoteLine,
+    followupChoice: followupChoice,
     noAutoLine: noAutoLine,
     NO_AUTO_TEXT: NO_AUTO_TEXT,
     sourceRows: sourceRows,
@@ -3027,6 +3411,11 @@
     shortName: shortName,
     quoteRequest: quoteRequest,
     quoteResult: quoteResult,
+    quoteOccasions: quoteOccasions,
+    quotePromos: quotePromos,
+    quotePromoList: quotePromoList,
+    quotePromoProblem: quotePromoProblem,
+    promoGives: promoGives,
     quoteText: quoteText,
     quoteError: quoteError,
     lostReasons: lostReasons,

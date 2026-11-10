@@ -55,6 +55,7 @@
   // Mock mode sets a business name so the real brand path (More heading) runs in mock too, and a missing element would throw visibly.
   // Mock only: ?team=on forces the Team feature on (it is off in config.js until Kevin rules), for screenshots and tests.
   if (MOCK && qs.get('team') === 'on') custom.features = Object.assign({}, custom.features, { team: true });
+  if (MOCK && qs.get('quote_send') === 'on') custom.features = Object.assign({}, custom.features, { quoteSend: true });
   if (MOCK && !(typeof custom.businessName === 'string' && custom.businessName.trim())) custom.businessName = 'Mock Bartending Co';
   var TARGET_KEY = 'cv_target_lead';
   var FILTER_KEY = 'cv_filter';
@@ -140,10 +141,12 @@
     stripNote: $('strip-note'), hStatus: $('h-status'),
     priceBox: $('price-box'), price: $('price'), reasonBox: $('reason-box'), reasonChips: $('reason-chips'), reasonOther: $('reason-other'),
     reasonNote: $('reason-note'), confirmErr: $('confirm-error'),
-    quote: $('screen-quote'), qForm: $('q-form'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
-    qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qMore: $('q-more'),
+    qAddBox: $('q-add-box'), qAdd: $('q-add'), qAddNote: $('q-add-note'), qAddErr: $('q-add-err'),
+    recMyQuote: $('rec-myquote'), mqStatus: $('mq-status'), mqBody: $('mq-body'), mqNote: $('mq-note'), mqSend: $('mq-send'), mqResend: $('mq-resend'), mqErr: $('mq-error'),
+    quote: $('screen-quote'), qForm: $('q-form'), qStale: $('q-stale'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
+    qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qOccasionPick: $('q-occasion-pick'), qPromoPick: $('q-promo-pick'), qPromoGives: $('q-promo-gives'), qMore: $('q-more'),
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
-    qCopy: $('q-copy'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
+    qCopy: $('q-copy'), qNew: $('q-new'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
     askScreen: $('screen-ask'), askScroll: $('ask-scroll'), askThread: $('ask-thread'), askStarters: $('ask-starters'), askForm: $('ask-form'), askInput: $('ask-input'),
     askSend: $('ask-send'), askCount: $('ask-count'),
     exportScreen: $('screen-export'), exGroup: $('ex-group'), exDates: $('ex-dates'), exFrom: $('ex-from'), exTo: $('ex-to'), exMake: $('ex-make'),
@@ -176,13 +179,14 @@
     optoutBanner: $('optout-banner'), recContact: $('rec-contact'),
     contactActions: $('contact-actions'), contactNote: $('contact-note'),
     recEvent: $('rec-event'), eventFacts: $('event-facts'), eventWords: $('event-words'), eventDetails: $('event-details'),
+    eventFactsMore: $('event-facts-more'), eventMore: $('event-more'), eventMoreBtn: $('event-more-btn'), recEmail: $('rec-email'),
     recQuote: $('rec-quote'), quoteBody: $('quote-body'), recOthers: $('rec-others'), othersList: $('others-list'),
     convo: $('convo'), convoScroll: $('convo-scroll'),
     convoOpen: $('convo-open'), convoFull: $('convo-full'), convoFullClose: $('convo-full-close'), convoFullScroll: $('convo-full-scroll'), fullThread: $('full-thread'), fullEmpty: $('full-empty'), fullSysFold: $('full-sys-fold'),
     actions: $('actions'), actionsNote: $('actions-note'), actionErr: $('action-error'), history: $('history'), historyMore: $('history-more'),
     threadScroll: $('thread-scroll'), threadLoading: $('thread-loading'), threadBox: $('thread'), threadEmpty: $('thread-empty'),
     threadErr: $('thread-error'), pill: $('new-pill'),
-    confirm: $('confirm'), confirmText: $('confirm-text'), confirmYes: $('confirm-yes'), confirmNo: $('confirm-no')
+    confirm: $('confirm'), confirmText: $('confirm-text'), confirmYes: $('confirm-yes'), confirmAlt: $('confirm-alt'), confirmNote: $('confirm-note'), confirmNo: $('confirm-no')
   };
 
   // From this width the record shows the conversation and the details side by side, each scrolling on its own.
@@ -218,7 +222,8 @@
     cal: null,           // { y, m, sel } month on screen and picked day
     showPossible: false,
     noteBusy: false,
-    quote: { busy: false, seq: 0, view: null, req: null },
+    quote: { busy: false, seq: 0, view: null, req: null, raw: null, pending: null, fromLead: null, backTo: null, pre: null, added: false, adding: false, refused: false },
+    quoteSendBusy: false,
     phone: null,
     resendTimer: null,
     resendAt: 0,
@@ -234,7 +239,7 @@
     historyOpen: false,
     addBusy: false,
     toastTimer: null,
-    quotePrefill: null,  // { guests, area } from a lead's record -> the quote calculator, used once
+    quotePrefill: null,  // L.quotePrefill(lead) + fromLead + backTo: a lead's price link -> the quote calculator, used once
     nav: { cur: '', from: '', lead: null },  // screen before More / Help, and the lead record Help was reached from (same session)
     team: { view: null, listErr: '', listSeq: 0, addBusy: false, busy: {}, confirmPhone: '', confirmName: '', loading: false },  // Team: memory only
     support: { cfg: null, cfgState: 'idle', key: null, busy: false, removeLead: false, rows: null, listErr: false, listSeq: 0, cfgSeq: 0 },
@@ -338,7 +343,7 @@
   // Added for final price, lost reason and notes; dropped again if the view does not have them yet.
   var DETAIL_EXTRA = ',booked_amount,lost_reason,lost_note,notes';
   // Added for hand-added leads (sql/011); dropped again if the view does not have them yet.
-  var DETAIL_SOURCE = ',source,manual_source,auto_texts';
+  var DETAIL_SOURCE = ',source,manual_source,auto_texts,quote_received,followup_possible,no_followup,owner_quote';
   var SEARCH_BASE = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
   var SEARCH_COLUMNS = SEARCH_BASE + ',source,manual_source'; // sql/011 columns on lead_detail; the search falls back without them
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
@@ -350,6 +355,19 @@
     });
 
     // The HTTP status rides along on the error so a failed call can be recorded for Help & support (status + code word only).
+    function quoteSendCall(body) {
+      return client.functions.invoke('cv-quote-send', { body: body }).then(function (r) {
+        if (!r.error) return r.data;
+        var ctx = r.error.context;
+        if (ctx && typeof ctx.json === 'function') {
+          return ctx.json().catch(function () { return {}; }).then(function (b) {
+            throw { status: ctx.status, error: (b && b.error) || '', details: b && b.details };
+          });
+        }
+        throw { status: 0, error: 'network', details: '' };
+      });
+    }
+
     function ok(r) {
       if (r.error) { if (r.status && typeof r.error === 'object' && r.error.status === undefined) { try { r.error.status = r.status; } catch (e) { /* frozen: no status */ } } throw r.error; }
       return r.data;
@@ -442,6 +460,15 @@
           }
           throw { status: 0, error: String(r.error.name || 'network'), details: String(r.error.message || '') };
         });
+      },
+      // sql/023: the owner's saved price. Sending goes through the Edge Function; errors are thrown as { status, error, details } like quote above.
+      addLeadQuote: function (id, quote) { return client.rpc('cv_add_lead_quote', { p_lead_id: id, p_quote: quote }).then(ok); },
+      quotePreview: function (id, resend) { return quoteSendCall({ action: 'preview', lead_id: id, resend: !!resend }); },
+      quoteSend: function (a) {
+        var body = { action: 'send', lead_id: a.lead_id, hash: a.hash, resend: !!a.resend };
+        body.expected_total = a.expected_total;   // the owner_quote.total the owner was looking at; the server refuses a mismatch
+        if (a.resend) body.expected_count = a.expected_count;
+        return quoteSendCall(body);
       },
       askConfig: function () { return client.rpc('cv_ask_config').then(ok); },
       // Team (Edge Function cv-team, owner only): list / add / remove / retry_cleanup. Errors are thrown as { status, error, details }.
@@ -610,6 +637,11 @@
   /* ---------- screens ---------- */
 
   function setScreen(name) {
+    // Actually leaving the calculator: it opens blank next time. The one exception (sql/023): an unsaved quote made from a lead asks first.
+    var signingOut = name === 'signin' || name === 'role';
+    var askAdd = S.screen === 'quote' && name !== 'quote' && !signingOut && quoteLeaveAsks();
+    if (S.screen === 'quote' && name !== 'quote' && !askAdd) clearQuote();
+    var asking = !!S.confirming && S.confirming.kind === 'quote-leave';
     S.screen = name;
     var signedIn = name !== 'signin' && name !== 'role';
     el.app.classList.toggle('signed-in', signedIn);
@@ -637,7 +669,12 @@
       el.title.textContent = S.tab.label;
       setText(el.subtitle, '');
     }
-    if (el.confirm.open) el.confirm.close();
+    // The leave question is still unanswered when Back / Forward / a notification moves the page: it stays up, only the screen behind it changes.
+    // Back to the calculator answers it (the quote is still there); signing out drops it.
+    if (asking && name === 'quote') closeConfirm();
+    else if (asking && signingOut) { closeConfirm(); clearQuote(); }
+    else if (!asking && el.confirm.open) el.confirm.close();
+    if (askAdd) askAddBeforeLeaving();
     if (el.teamConfirm.open) closeTeamConfirm();
     if (el.addDlg.open) closeAdd();
     if (name !== 'thread') closeFullSilently();
@@ -1104,6 +1141,76 @@
   var Q_FIELDS = ['guests', 'service_hours', 'bar_rental', 'event_city', 'distance_km', 'event_date', 'occasion', 'promo_code'];
   var Q_INPUT = { guests: 'qGuests', service_hours: 'qHours', event_city: 'qCity', distance_km: 'qKm', event_date: 'qDate', occasion: 'qOccasion', promo_code: 'qPromo' };
 
+  // Occasion and Promo code are native pick-lists when the client's settings list them (CV_CUSTOM.quoteOccasions / quotePromos),
+  // else the plain text boxes. el.qOccasion / el.qPromo always point at whichever control is in use; both give the value the endpoint expects.
+  var QP = { occasions: null, promos: null, occasionLabel: null };
+  function qOccasionTemp() { return el.qOccasionPick.querySelector('option[data-temp]'); }
+  function qOption(value, text) { var o = make('option', '', text); o.value = value; return o; }
+
+  function buildQuotePickers() {
+    var occ = L.quoteOccasions(custom);
+    QP.occasions = occ;
+    var oldOcc = el.qOccasion.value;
+    if (occ) {
+      var frag = document.createDocumentFragment();
+      frag.appendChild(qOption('', 'Pick an occasion'));
+      occ.forEach(function (o) { frag.appendChild(qOption(o, o)); });
+      el.qOccasionPick.replaceChildren(frag);
+      el.qOccasionPick.disabled = false; el.qOccasionPick.hidden = false;
+      $('q-occasion').disabled = true; $('q-occasion').hidden = true;
+      el.qOccasion = el.qOccasionPick;
+      qSetOccasion(oldOcc);
+    } else {
+      el.qOccasionPick.hidden = true; el.qOccasionPick.disabled = true;
+      el.qOccasion = $('q-occasion'); el.qOccasion.hidden = false; el.qOccasion.disabled = false;
+    }
+    qLabelFor('q-occasion', el.qOccasion.id);
+
+    var promos = L.quotePromos(custom);
+    QP.promos = promos;
+    var oldPromo = el.qPromo.value;
+    if (promos) {
+      var pf = document.createDocumentFragment();
+      pf.appendChild(qOption('', 'No promo'));
+      promos.forEach(function (p) { pf.appendChild(qOption(p.code, p.label)); });
+      el.qPromoPick.replaceChildren(pf);
+      el.qPromoPick.disabled = false; el.qPromoPick.hidden = false;
+      $('q-promo').disabled = true; $('q-promo').hidden = true;
+      el.qPromo = el.qPromoPick;
+      if (oldPromo && promos.some(function (p) { return p.code === oldPromo; })) el.qPromo.value = oldPromo;
+    } else {
+      el.qPromoPick.hidden = true; el.qPromoPick.disabled = true;
+      el.qPromo = $('q-promo'); el.qPromo.hidden = false; el.qPromo.disabled = false;
+    }
+    qLabelFor('q-promo', el.qPromo.id);
+    qPromoHint();
+  }
+  function qLabelFor(origId, controlId) {
+    var lab = el.qForm.querySelector('label[for="' + origId + '"], label[for="' + origId + '-pick"]');
+    if (lab) lab.setAttribute('for', controlId);
+  }
+
+  // Show a value in the occasion list. A value that is not one of the choices (an old lead, typed text) is added as its own
+  // choice and selected, so it is neither lost nor changed. A match ignoring case picks the listed spelling.
+  function qSetOccasion(v) {
+    v = String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+    var t = qOccasionTemp(); if (t) t.remove();
+    if (!QP.occasions) { el.qOccasion.value = v; return; }
+    if (!v) { el.qOccasionPick.value = ''; return; }
+    var hit = QP.occasions.filter(function (o) { return o.toLowerCase() === v.toLowerCase(); })[0];
+    if (hit) { el.qOccasionPick.value = hit; return; }
+    var o = qOption(v, v + ' (from the lead)'); o.setAttribute('data-temp', '1');
+    el.qOccasionPick.appendChild(o);
+    el.qOccasionPick.value = v;
+  }
+
+  function qPromoHint() {
+    var txt = '';
+    if (QP.promos && el.qPromo.value) txt = L.promoGives(QP.promos.filter(function (p) { return p.code === el.qPromo.value; })[0]);
+    setText(el.qPromoGives, txt);
+    show(el.qPromoGives, !!txt);
+  }
+
   function qRadio(name) { var c = el.qForm.querySelector('input[name="' + name + '"]:checked'); return c ? c.value : ''; }
 
   function qForm() {
@@ -1146,9 +1253,104 @@
     if (on) el.qSubmit.setAttribute('aria-busy', 'true'); else el.qSubmit.removeAttribute('aria-busy');
   }
 
+  // The ONE place that empties the calculator: every field, the result, the "Copied" line and the errors.
+  // Called when the owner leaves the screen, on "Start a new quote" and on sign-out. Not called on backgrounding or re-render.
+  // An unsaved quote made from a lead asks first (setScreen, newQuote). Bumping S.quote.seq makes a late answer to a request sent before this point be ignored.
+  function clearQuote() {
+    S.quote = { busy: false, seq: S.quote.seq + 1, view: null, req: null, raw: null, pending: null, fromLead: null, backTo: null, pre: null, added: false, adding: false, refused: false };
+    el.qForm.reset(); qSetOccasion(''); qPromoHint();
+    qBusy(false); qFieldErrors({}); setText(el.qErr, ''); setText(el.qStale, ''); show(el.qKmBox, false);
+    el.qMore.open = false;
+    el.qCopied.textContent = '';
+    setText(el.qAddErr, '');
+    renderQuoteResult();
+  }
+
+  // A price on screen always belongs to the answers on screen.
+  function qSameAnswers(body) {
+    var r = L.quoteRequest(qForm());
+    return !!body && r.ok && JSON.stringify(r.body) === JSON.stringify(body);
+  }
+
+  // Take the price away until it is worked out again for the new answers.
+  function qDropPrice() {
+    var q = S.quote;
+    q.view = null; q.req = null; q.raw = null; q.added = false;
+    setText(el.qStale, 'Your answers changed. Tap Get quote for the new price.');
+    renderQuoteResult();
+  }
+
+  // Any change in the form. While a price is being saved the form is locked; the Add tap already matched what was on screen.
+  function qFormEdited(e) {
+    var q = S.quote;
+    qClearFieldError(e && e.target);
+    setText(el.qErr, '');
+    if (q.adding) return;
+    if (q.busy) {
+      if (qSameAnswers(q.pending)) return;
+      q.seq++;             // the answer on its way is for the old values
+      q.pending = null;
+      qBusy(false);
+      setText(el.qStale, 'Your answers changed. Tap Get quote for the new price.');
+      return;
+    }
+    if (q.view && !qSameAnswers(q.req)) qDropPrice();
+  }
+
+  // The red line under a field goes when that field is changed. A promo can be fixed by changing the event date too.
+  function qClearFieldError(target) {
+    if (!target) return;
+    Q_FIELDS.forEach(function (f) {
+      var input = Q_INPUT[f] ? el[Q_INPUT[f]] : null;
+      var hit = input ? input === target : target.name === 'q-bar';
+      if (!hit && !(f === 'promo_code' && target === el.qDate)) return;
+      var p = $('q-err-' + f);
+      if (p) setText(p, '');
+      var box = input || target;
+      if (box.removeAttribute) box.removeAttribute('aria-invalid');
+    });
+  }
+
+  // "Start a new quote". Not tied to a lead: empties at once. Tied to one: one sheet with all the choices (and it says when a price would be lost).
+  function newQuote() {
+    var q = S.quote;
+    if (q.adding) return;
+    if (q.fromLead) { askNewQuote(); return; }
+    var back = q.backTo;   // a lead that cannot take a price: Back still goes to it
+    clearQuote();
+    S.quote.backTo = back;
+    qStartTyping();
+  }
+
+  function askNewQuote() {
+    var q = S.quote, f = q.fromLead;
+    var unsaved = quoteLeaveAsks();
+    openSheet({ kind: 'quote-new' }, unsaved ? 'This ' + q.view.total + ' price is not on ' + f.name + ' yet. Start a new quote anyway?' : 'Start a new quote?', 'Start again for ' + f.name, 'sheet-plain', el.confirmNo);
+    el.confirmAlt.textContent = 'New quote, not for ' + f.name;
+    el.confirmAlt.hidden = false;
+    el.confirmNo.textContent = 'Keep this quote';
+  }
+
+  // again = fill it in from the lead once more and keep the link; otherwise blank, with no link to the lead.
+  function startQuoteOver(again) {
+    var q = S.quote, f = q.fromLead, back = q.backTo, pre = q.pre;
+    clearQuote();
+    if (again) {
+      S.quote.fromLead = f; S.quote.backTo = back; S.quote.pre = pre;
+      if (pre) qFill(pre);
+      qRenderLock();
+    }
+    qBackBar();
+    qStartTyping();
+  }
+
+  function qStartTyping() {
+    try { el.qGuests.focus(); el.qForm.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { /* ignore */ }
+  }
+
   function renderQuoteResult() {
     var v = S.quote.view;
-    if (!v) { show(el.qResult, false); return; }
+    if (!v) { show(el.qResult, false); renderQuoteAdd(); return; }
     var frag = document.createDocumentFragment();
     if (v.defer) {
       frag.appendChild(make('p', 'quote-review', 'Needs your review'));
@@ -1179,39 +1381,167 @@
       if (v.deposit) frag.appendChild(make('p', 'rec-note', 'Deposit to hold the date: ' + v.deposit));
       v.flags.forEach(function (f) { frag.appendChild(make('p', 'rec-note', f)); });
     }
+    if (v.promoNote) frag.appendChild(make('p', 'rec-note q-promo-note', v.promoNote));
     var city = S.quote.req && S.quote.req.event_city;
     if (v.distance) frag.appendChild(make('p', 'rec-note q-distance', (city ? city + ' is ' : '') + v.distance + '.'));
     el.qResultBody.replaceChildren(frag);
     show(el.qCopy, !v.defer);
     el.qCopied.textContent = '';
+    renderQuoteAdd();
     show(el.qResult, true);
   }
 
+  // sql/023: "Add this quote to Sam". Only from a lead's "Price it in the quote calculator", only after a firm quote.
+  function renderQuoteAdd() {
+    var q = S.quote, f = q.fromLead, v = q.view;
+    var offer = !!f && !!v && !v.defer && !q.added;
+    show(el.qAddBox, offer);
+    qRenderLock();
+    if (!offer) return;
+    show(el.qAdd, !q.refused);       // the server said no: only the reason stays
+    el.qAdd.textContent = q.adding ? 'Adding\u2026' : 'Add this quote to ' + f.name;
+    setText(el.qAddNote, q.refused ? '' : L.quoteAddNote(f.savedTotal, f.maybeSent));
+  }
+
+  // While a price is being saved nothing on the calculator can change under it.
+  function qRenderLock() {
+    var on = !!S.quote.adding;
+    el.qAdd.disabled = on;
+    el.qAdd.classList.toggle('is-busy', on);
+    el.qCopy.disabled = on;
+    el.qNew.disabled = on;
+    el.qForm.inert = on;
+  }
+
+  var QUOTE_ADD_WAIT_MS = 18000;   // an Add with no answer by then frees the sheet and the form (crm-fix-final P1)
+  function leaveSheetOpen() { return !!S.confirming && S.confirming.kind === 'quote-leave'; }
+
+  // Saves the quote on screen. The reply belongs to THIS quote: if the owner has started another one or left, it never touches the calculator or moves the page.
+  function addQuoteToLead() {
+    var q = S.quote, f = q.fromLead;
+    if (!f || !q.view || q.view.defer || q.adding || q.refused || q.added || q.busy) return;
+    if (!qSameAnswers(q.req)) {     // the page missed a change (a promo that ended, form restore): never save a price that does not match
+      // From the leave sheet: Stay, so the owner sees "Your answers changed" and prices it again (never a silent close).
+      if (leaveSheetOpen()) { closeConfirm(); stayOnQuote(); }
+      qDropPrice();
+      return;
+    }
+    var total = q.view.total;
+    var run = q.addRun = {};   // a late answer from an earlier try never touches a newer one
+    var timedOut = false;
+    q.adding = true;
+    setText(el.qAddErr, '');
+    if (leaveSheetOpen()) { setText(el.confirmErr, ''); sheetBusy(true, 'Adding\u2026'); }
+    renderQuoteAdd();
+    // No answer: free the buttons and the form, never claim either way (saving again only replaces the same price).
+    var timer = setTimeout(function () {
+      if (q !== S.quote || run !== q.addRun || !q.adding) return;
+      timedOut = true;
+      q.adding = false;
+      var msg = "Couldn't confirm it saved. Check the lead before trying again.";
+      setText(el.qAddErr, msg);
+      if (leaveSheetOpen()) { sheetBusy(false); el.confirmYes.textContent = 'Add'; setText(el.confirmErr, msg); }
+      renderQuoteAdd();
+    }, QUOTE_ADD_WAIT_MS);
+    Promise.resolve().then(function () { return S.api.addLeadQuote(f.id, L.quoteAddArgs(q.raw, q.req)); }).then(function () {
+      clearTimeout(timer);
+      if (!S.signedIn) return;
+      var said = L.quoteSavedLine(f.name, total, f.savedTotal);
+      quoteSavedRefresh();
+      if (q !== S.quote || run !== q.addRun) { showToast(said); return; }   // left, started over or tried again while it saved: say so, change nothing
+      q.added = true;
+      q.adding = false;
+      setText(el.qAddErr, '');
+      renderQuoteAdd();
+      showToast(said);
+      if (timedOut) { if (leaveSheetOpen()) { closeConfirm(); clearQuote(); } return; }   // a late yes: the owner has moved on, the page does not jump
+      if (S.screen === 'quote') { location.hash = '#/lead/' + encodeURIComponent(f.id); return; }   // the lead, with the price on it
+      closeConfirm();   // answered from the leave sheet: the owner stays where they were going
+      clearQuote();
+    }).catch(function (e) {
+      clearTimeout(timer);
+      if (!S.signedIn) return;
+      var msg = L.quoteAddError(e);
+      maybeRecheckAccess(e);
+      if (q !== S.quote || run !== q.addRun) { showToast(f.name + ': ' + msg); return; }
+      q.adding = false;
+      q.refused = L.quoteAddRefused(e);
+      setText(el.qAddErr, msg);
+      if (leaveSheetOpen()) {
+        sheetBusy(false);
+        if (q.refused) { closeConfirm(); clearQuote(); showToast(f.name + ': ' + msg); return; }   // nothing left to decide
+        el.confirmYes.textContent = 'Add';
+        setText(el.confirmErr, msg);   // the sheet stays open: the owner can try again
+      }
+      renderQuoteAdd();
+    });
+  }
+
+  // The list, follow-ups and an open lead now hold the saved price. (Going to the lead fetches it anyway.)
+  function quoteSavedRefresh() {
+    Promise.all([refreshList(), refreshFollowUps(), S.screen === 'thread' && S.thread.id ? refreshThread() : null]).catch(function () { /* the next refresh catches up */ });
+  }
+
+  // True only for a firm quote from a lead's price link that has not been added and is not being added, and that the server has not refused.
+  function quoteLeaveAsks() {
+    var q = S.quote;
+    return !!q.fromLead && !!q.view && !q.view.defer && !q.added && !q.adding && !q.refused;
+  }
+
+  function askAddBeforeLeaving() {
+    var q = S.quote, f = q.fromLead;
+    openSheet({ kind: 'quote-leave' }, 'Add this ' + q.view.total + ' quote to ' + f.name + ' before leaving?', 'Add', 'sheet-plain', el.confirmYes);
+    el.confirmAlt.textContent = 'Leave without adding';
+    el.confirmAlt.hidden = false;
+    el.confirmNo.textContent = 'Stay';
+    setText(el.confirmNote, L.quoteAddNote(f.savedTotal, f.maybeSent));
+  }
+
+  // Stay, the backdrop, Esc: back on the calculator with the quote untouched.
+  function stayOnQuote() { location.hash = '#/quote'; }
+
   function submitQuote() {
-    if (S.quote.busy) return;
+    var q = S.quote;
+    if (q.busy || q.adding) return;
     setText(el.qErr, '');
+    setText(el.qStale, '');
     var r = L.quoteRequest(qForm());
+    if (!r.ok && r.errors.occasion && QP.occasions) r.errors.occasion = "That occasion can't be used in a quote. Pick one from the list.";
     if (!r.ok) {
       var first = qFieldErrors(r.errors);
       if (first) try { first.focus(); } catch (e) { /* ignore */ }
       return;
     }
+    var pp = L.quotePromoProblem(custom, r.body.promo_code, r.body.event_date);
+    if (pp) {
+      qFieldErrors({ promo_code: pp });
+      try { el.qPromo.focus(); } catch (e) { /* ignore */ }
+      return;
+    }
     qFieldErrors({});
-    var n = ++S.quote.seq;
+    // The old price goes the moment a new one is asked for: it cannot be added or copied while this runs.
+    q.view = null; q.req = null; q.raw = null; q.added = false;
+    q.pending = r.body;
+    var n = ++q.seq;
     qBusy(true);
+    renderQuoteResult();
     Promise.resolve().then(function () { return S.api.quote(r.body); }).then(function (res) {
       if (n !== S.quote.seq) return;
-      S.quote.view = L.quoteResult(res);
+      S.quote.view = L.quoteResult(res, custom);
+      S.quote.pending = null;
       S.quote.req = r.body;
+      S.quote.raw = res;
+      S.quote.added = false;
       // A city the map could not find: offer the distance box.
       if (S.quote.view.needsDistance) show(el.qKmBox, true);
       renderQuoteResult();
       try { el.qResultH.focus(); el.qResult.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { /* ignore */ }
     }).catch(function (e) {
       if (n !== S.quote.seq) return;
-      var q = L.quoteError(e);
-      var first = qFieldErrors(q.fields);
-      setText(el.qErr, q.message);
+      var qe = L.quoteError(e);
+      var first = qFieldErrors(qe.fields);
+      setText(el.qErr, qe.message);
+      S.quote.pending = null;
       S.quote.view = null;
       renderQuoteResult();
       if (first) try { first.focus(); } catch (x) { /* ignore */ }
@@ -1220,6 +1550,7 @@
 
   // Clipboard API (https / localhost); falls back to a hidden textarea + execCommand.
   function copyQuote() {
+    if (!qSameAnswers(S.quote.req)) { qDropPrice(); return; }
     var text = L.quoteText(S.quote.view, S.quote.req);
     if (!text) return;
     var done = function () { el.qCopied.textContent = 'Copied. Paste it into a text or an email.'; };
@@ -1234,7 +1565,13 @@
         if (ok) done(); else fail();
       } catch (e) { fail(); }
     };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+    // Say explicitly that this is plain text, so no phone files it as a link (a quote is words, never an address).
+    var plain = function () { return navigator.clipboard.writeText(text); };
+    if (navigator.clipboard && typeof window.ClipboardItem === 'function' && navigator.clipboard.write) {
+      try {
+        navigator.clipboard.write([new window.ClipboardItem({ 'text/plain': new Blob([text], { type: 'text/plain' }) })]).then(done, function () { plain().then(done, fallback); });
+      } catch (e) { plain().then(done, fallback); }
+    } else if (navigator.clipboard && navigator.clipboard.writeText) plain().then(done, fallback);
     else fallback();
   }
 
@@ -1243,12 +1580,43 @@
     setScreen('quote');
     var pre = S.quotePrefill;
     S.quotePrefill = null;
-    if (pre) {
-      el.qGuests.value = pre.guests ? String(pre.guests) : '';
-      el.qCity.value = pre.area || '';
-    }
+    if (pre) { S.quote.fromLead = pre.fromLead || null; S.quote.backTo = pre.backTo || null; S.quote.pre = pre; }
+    buildQuotePickers();   // the lists are re-read each time: a promo that ended overnight drops out
+    if (pre) qFill(pre);
+    else if (S.quote.view && !qSameAnswers(S.quote.req)) qDropPrice();   // back on the calculator: a promo dropped from the list changes the answers
     qTypeChanged();
+    qBackBar();
     renderQuoteResult();
+  }
+
+  // Everything the lead (or its saved price) says, in the fields.
+  function qFill(pre) {
+    el.qGuests.value = pre.guests || '';
+    el.qHours.value = pre.hours || '';
+    Array.prototype.forEach.call(el.qForm.querySelectorAll('input[name="q-bar"]'), function (r) {
+      r.checked = pre.bar === (r.value === 'yes');
+    });
+    el.qCity.value = pre.area || '';
+    if (pre.km) { show(el.qKmBox, true); el.qKm.value = pre.km; }
+    el.qDate.value = pre.date || '';
+    qSetOccasion(pre.occasion || '');
+    qSetPromo(pre.promo || '');
+    if (pre.date || pre.occasion || el.qPromo.value) el.qMore.open = true;   // these live under More: show them filled in
+  }
+
+  // A code that is not running today is left out rather than added as a choice.
+  function qSetPromo(code) {
+    if (!QP.promos) { el.qPromo.value = code; qPromoHint(); return; }
+    el.qPromo.value = QP.promos.some(function (p) { return p.code === code; }) ? code : '';
+    qPromoHint();
+  }
+
+  // From a lead the bar says which lead Back returns to; otherwise the calculator's own title and More.
+  function qBackBar() {
+    if (S.screen !== 'quote') return;
+    var b = S.quote.backTo;
+    el.title.textContent = b ? b.name : S.tab.label;
+    el.back.setAttribute('aria-label', 'Back to ' + (b ? b.name : navFor('more').label.toLowerCase()));
   }
 
   /* ---------- Download spreadsheet (More) ----------
@@ -2444,6 +2812,8 @@
       b.appendChild(make('p', 'm-big', L.fmtMoney(open.total == null ? 0 : open.total)));
       var sub = 'across ' + L.plural(openCount, 'open lead', 'open leads');
       if (noQuote) sub += ', plus ' + noQuote + ' more without a quote yet';
+      var mine = m.open_priced_not_sent || {};
+      if (Number(mine.count)) sub += '. ' + L.fmtMoney(mine.total) + ' more priced by you, not sent';
       b.appendChild(make('p', 'm-sub', sub));
       return b;
     },
@@ -2695,7 +3065,7 @@
   }
 
   function renderHistory() {
-    var all = S.thread.history ? L.sortHistory(S.thread.history) : [];
+    var all = L.sortHistory((S.thread.history || []).concat(L.ownerQuoteHistory(S.thread.lead)));
     var rows = S.historyOpen ? all : all.slice(0, HISTORY_SHORT);
     var frag = document.createDocumentFragment();
     rows.forEach(function (h) {
@@ -2736,13 +3106,26 @@
 
   function openSheet(kind, text, yes, cls, focus) {
     S.confirming = kind;
+    el.confirmNo.textContent = 'Cancel';
     el.confirmText.textContent = text;
     el.confirmYes.textContent = yes;
     el.confirm.className = 'sheet ' + cls;
     setText(el.confirmErr, '');
+    // Every sheet starts with one button and no note; openConfirm adds the follow-up choice (022).
+    el.confirmYes.className = 'btn primary';
+    el.confirmAlt.hidden = true;
+    sheetBusy(false);
+    setText(el.confirmNote, '');
     if (typeof el.confirm.showModal === 'function') el.confirm.showModal();
     else el.confirm.setAttribute('open', '');
     try { (focus || el.confirmNo).focus(); } catch (e) { /* ignore */ }
+  }
+
+  // While the sheet's save runs no button can answer it.
+  function sheetBusy(on, label) {
+    el.confirmYes.disabled = el.confirmAlt.disabled = el.confirmNo.disabled = !!on;
+    if (on) el.confirmYes.setAttribute('aria-busy', 'true'); else el.confirmYes.removeAttribute('aria-busy');
+    if (label) el.confirmYes.textContent = label;
   }
 
   // ctx = a row from the Did-these-happen list (the sheet then works on that lead, not the open thread).
@@ -2754,7 +3137,7 @@
     // Staff never enter a price: no field at all (the owner adds it afterwards).
     var priced = booked && !isStaff();
     show(el.priceBox, priced);
-    if (priced) { el.price.value = L.amountInput(lead.quote_total); el.price.removeAttribute('aria-invalid'); }
+    if (priced) { el.price.value = L.amountInput(L.effectiveTotal(lead)); el.price.removeAttribute('aria-invalid'); }
     show(el.reasonBox, lost);
     if (lost) {
       var checked = el.reasonChips.querySelectorAll('input');
@@ -2762,8 +3145,16 @@
       el.reasonNote.value = '';
       show(el.reasonOther, false);
     }
-    openSheet({ kind: 'status', status: action.status, ctx: ctx || null }, L.confirmText(leadName(lead), action.status, lead, !!ctx), action.confirm,
+    // 022: a lead with no quote that could really get the day-5 text: two buttons, neither one the default (focus stays on Cancel).
+    var choice = !ctx && !isStaff() ? L.followupChoice(leadName(lead), action.status, lead) : null;
+    openSheet({ kind: 'status', status: action.status, ctx: ctx || null, choice: !!choice }, choice ? choice.text : L.confirmText(leadName(lead), action.status, lead, !!ctx), choice ? choice.send : action.confirm,
       'sheet-' + action.status, priced ? el.price : null);
+    if (choice) {
+      setText(el.confirmNote, choice.note);
+      el.confirmYes.className = 'btn choice';
+      el.confirmAlt.textContent = choice.none;
+      el.confirmAlt.hidden = false;
+    }
   }
 
   function openNoteDelete(noteId) {
@@ -2772,14 +3163,26 @@
   }
 
   // Yes on the sheet: check the extra fields first; the sheet stays open with a plain error if they are wrong.
-  function confirmYes() {
+  function confirmYes() { confirmStatus('send'); }
+  function confirmNoFollowup() { confirmStatus('none'); }
+
+  // Both choice buttons land here. closeConfirm clears S.confirming before the save, and saveStatus refuses while one is pending, so a double tap saves once.
+  function confirmStatus(followup) {
     var c = S.confirming;
     if (!c) return;
     if (c.kind === 'note') { closeConfirm(); deleteNote(c.id); return; }
+    if (c.kind === 'quote-send') { doQuoteSend(c); return; }
+    if (c.kind === 'quote-leave') {
+      if (S.quote.adding) return;
+      if (followup === 'none') { closeConfirm(); clearQuote(); return; }   // Leave without adding: the page is already where the owner was going
+      addQuoteToLead();   // the sheet stays open until it is saved
+      return;
+    }
+    if (c.kind === 'quote-new') { closeConfirm(); startQuoteOver(followup !== 'none'); return; }
     var lead = c.ctx ? c.ctx.lead : S.thread.lead;
     var x = isStaff() && c.status === 'booked'
       ? { ok: true, args: {} }
-      : L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value }, lead && lead.quote_total);
+      : L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value }, lead && L.effectiveTotal(lead));
     if (!x.ok) {
       setText(el.confirmErr, x.error);
       if (x.field === 'amount') { el.price.setAttribute('aria-invalid', 'true'); try { el.price.focus(); } catch (e) { /* ignore */ } }
@@ -2787,8 +3190,25 @@
       return;
     }
     closeConfirm();
+    if (c.choice) x.args.p_followup = followup; // 022: only a choice sheet ever sends this
     if (c.ctx) savePast(c.ctx, c.status, x.args);
     else saveStatus(c.status, x.args);
+  }
+
+  // Cancel, the backdrop, or the close button. For the leave prompt that means "Stay"; never while its save is running.
+  function dismissConfirm() {
+    var c = S.confirming;
+    if (c && c.kind === 'quote-leave' && S.quote.adding) return;
+    closeConfirm();
+    if (c && c.kind === 'quote-leave') stayOnQuote();
+  }
+
+  // The dialog closed by itself (Esc) with its question unanswered. A programmatic close clears S.confirming first; a newer sheet already open is left alone.
+  function onConfirmClosed() {
+    if (el.confirm.open) return;
+    var c = S.confirming;
+    S.confirming = null;
+    if (c && c.kind === 'quote-leave' && !S.quote.adding) stayOnQuote();
   }
 
   function closeConfirm() {
@@ -2957,16 +3377,42 @@
     show(el.recContact, actions.length > 0 || L.isOptedOut(lead));
   }
 
+  function renderEmail(lead) {
+    var e = L.emailLine(lead);
+    var node;
+    if (e.href) { node = make('a', 'rec-email-link', e.text); node.href = e.href; }
+    else node = make('span', e.missing ? 'rec-email-none' : 'rec-email-text', e.text);
+    el.recEmail.replaceChildren(node);
+    show(el.recEmail, true);
+  }
+
   function renderEvent(lead) {
-    var facts = L.eventFacts(lead);
-    el.eventFacts.replaceChildren();
-    facts.forEach(function (f) {
-      fact(el.eventFacts, f.label, f.value, { href: f.href, external: !!f.href, note: f.note, flag: f.flag });
-    });
-    var words = String(lead.additional_details || '').trim();
-    el.eventDetails.textContent = words;
-    show(el.eventWords, !!words);
-    show(el.recEvent, facts.length > 0 || !!words);
+    var d = L.leadDetails(lead, { staff: isStaff() });
+    function fill(dl, facts) {
+      dl.replaceChildren();
+      facts.forEach(function (f) { fact(dl, f.label, f.value, { href: f.href, external: !!f.href, note: f.note, flag: f.flag }); });
+    }
+    fill(el.eventFacts, d.key);
+    fill(el.eventFactsMore, d.more);
+    el.eventDetails.textContent = d.words;
+    show(el.eventWords, !!d.words);
+    var hasMore = d.more.length > 0 || !!d.words;
+    // Nothing up front: the extra details open by themselves, there is nothing to toggle.
+    var alone = hasMore && d.key.length === 0;
+    show(el.eventMoreBtn, hasMore && !alone);
+    if (alone) { el.eventMore.hidden = false; }
+    else if (S.eventMoreFor !== lead.lead_id) { el.eventMore.hidden = true; el.eventMoreBtn.setAttribute('aria-expanded', 'false'); el.eventMoreBtn.textContent = 'More details'; }
+    S.eventMoreFor = el.eventMore.hidden ? null : lead.lead_id;
+    show(el.recEvent, d.key.length > 0 || hasMore);
+  }
+
+  function toggleEventMore() {
+    var open = el.eventMore.hidden;
+    el.eventMore.hidden = !open;
+    el.eventMoreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    el.eventMoreBtn.textContent = open ? 'Fewer details' : 'More details';
+    var lead = S.thread && S.thread.lead;
+    S.eventMoreFor = open && lead ? lead.lead_id : null;
   }
 
   function renderQuote(lead) {
@@ -3012,6 +3458,87 @@
     show(el.recQuote, true);
   }
 
+  // sql/023: the price the owner saved on this lead, its send state, and the send button.
+  function renderMyQuote(lead) {
+    var q = !isStaff() ? L.ownerQuoteView(lead, feature('quote') && L.quoteSendFeatureOn(custom.features)) : null;
+    show(el.recMyQuote, !!q);
+    if (!q) return;
+    setText(el.mqStatus, q.status);
+    var frag = document.createDocumentFragment();
+    if (q.showDetails) {
+      if (q.items.length) {
+        var items = make('ul', 'quote-items');
+        q.items.forEach(function (it) {
+          var li = make('li', 'quote-item');
+          var txt = make('span', 'qi-text');
+          txt.appendChild(make('span', 'qi-label', it.label || 'Item'));
+          if (it.detail) txt.appendChild(make('span', 'qi-detail', it.detail));
+          li.appendChild(txt);
+          li.appendChild(make('span', 'qi-amount', it.amount));
+          items.appendChild(li);
+        });
+        frag.appendChild(items);
+      }
+      var sums = make('dl', 'quote-sums');
+      [['Subtotal', q.subtotal, ''], ['Travel fee', q.travel, ''], ['Total', q.total, 'is-total']].forEach(function (x) {
+        if (!x[1]) return;
+        sums.appendChild(make('dt', x[2], x[0])); sums.appendChild(make('dd', x[2], x[1]));
+      });
+      frag.appendChild(sums);
+    }
+    el.mqBody.replaceChildren(frag);
+    setText(el.mqNote, q.note);
+    show(el.mqSend, q.canSend);
+    el.mqSend.textContent = q.sendLabel;
+    show(el.mqResend, q.canResend);
+    el.mqSend.disabled = el.mqResend.disabled = !!S.quoteSendBusy;
+  }
+
+  // Step 1: ask the server for the exact text. Step 2: the owner reads it in the sheet and confirms. Nothing goes before that tap.
+  function startQuoteSend(resend) {
+    var lead = S.thread.lead;
+    if (!lead || S.quoteSendBusy) return;
+    var id = lead.lead_id;
+    var total = lead.owner_quote && lead.owner_quote.total;   // the price on the card right now: the server refuses the send if it has changed
+    S.quoteSendBusy = true;
+    setText(el.mqErr, '');
+    renderMyQuote(lead);
+    Promise.resolve().then(function () { return S.api.quotePreview(id, resend); }).then(function (p) {
+      S.quoteSendBusy = false;
+      if (id !== S.thread.id) return;
+      renderMyQuote(S.thread.lead);
+      if (!p || typeof p.body !== 'string' || !p.hash) { setText(el.mqErr, 'The text could not be prepared. Nothing went out.'); return; }
+      var name = leadName(lead) + (p.to_last4 ? ' at the number ending ' + p.to_last4 : '');
+      openSheet({ kind: 'quote-send', resend: !!resend, id: id, hash: p.hash, count: p.send_count, total: total }, resend ? 'Send this quote to ' + name + ' again?' : 'Send this text to ' + name + '?', resend ? 'Yes, send it again' : 'Send it', 'sheet-quote', el.confirmNo);
+      setText(el.confirmNote, p.body);
+    }).catch(function (e) {
+      S.quoteSendBusy = false;
+      if (id !== S.thread.id) return;
+      renderMyQuote(S.thread.lead);
+      setText(el.mqErr, L.quoteSendError(e));
+      if (e && e.error === 'not_allowed') refreshThread();   // refused: the card and its button may be out of date (the message above stays)
+    });
+  }
+
+  function doQuoteSend(c) {
+    closeConfirm();
+    if (S.quoteSendBusy) return;
+    var id = c.id;
+    S.quoteSendBusy = true;
+    setText(el.mqErr, '');
+    renderMyQuote(S.thread.lead);
+    Promise.resolve().then(function () { return S.api.quoteSend({ lead_id: id, hash: c.hash, resend: c.resend, expected_count: c.count, expected_total: c.total }); }).then(function () {
+      if (id === S.thread.id) setText(el.mqErr, '');
+    }).catch(function (e) {
+      if (id === S.thread.id) setText(el.mqErr, L.quoteSendError(e));
+      maybeRecheckAccess(e);
+    }).then(function () {
+      S.quoteSendBusy = false;
+      S.historyOpen = false;
+      return Promise.all([refreshThread(), refreshList(), refreshFollowUps()]);
+    });
+  }
+
   function renderOthers(lead) {
     var others = (Array.isArray(lead.other_events) ? lead.other_events : []).filter(function (o) { return o && L.isUuid(o.lead_id); });
     var frag = document.createDocumentFragment();
@@ -3044,6 +3571,21 @@
     if (el.recNext.textContent !== t || el.recNext.hidden !== !t) setText(el.recNext, t);
   }
 
+  // One line: where they came from, then (022) "no quote sent yet" when the server says so. Staff never see a form's title (it can hold a price).
+  function fillSource(lead) {
+    var src = L.sourceLine(lead, { noFormName: isStaff() });
+    var nq = isStaff() ? '' : L.noQuoteLine(lead);
+    if (!src && !nq) { setText(el.recSource, ''); return; }
+    var frag = document.createDocumentFragment();
+    if (src) frag.appendChild(document.createTextNode(src));
+    if (nq) {
+      if (src) frag.appendChild(document.createTextNode(' \u00b7 '));
+      frag.appendChild(make('span', 'rec-source-noquote', src ? nq : nq.charAt(0).toUpperCase() + nq.slice(1)));
+    }
+    el.recSource.replaceChildren(frag);
+    el.recSource.hidden = false;
+  }
+
   function renderRecord() {
     var lead = S.thread.lead;
     el.title.textContent = S.tab.label; // the lead's name is the big heading below; the bar says where Back goes
@@ -3061,11 +3603,12 @@
     fillChip(el.stripChip, st);
     renderNext();
     setText(el.recJob, L.jobBits(lead).join(' \u00b7 '));
-    setText(el.recSource, L.sourceLine(lead));
+    fillSource(lead);
     setText(el.recNoauto, L.noAutoLine(lead));
     show(el.recHead, true);
     show(el.optoutBanner, L.isOptedOut(lead));
     renderContact(lead);
+    renderEmail(lead);
     el.strip.className = 'rec-card strip tone-' + st.tone;
     var lostNote = String(lead.status || '').toLowerCase() === 'lost' ? String(lead.lost_note || '').trim() : '';
     setText(el.stripNote, lostNote ? 'Why: ' + lostNote : '');
@@ -3078,8 +3621,13 @@
     renderNotes(lead);
     renderEvent(lead);
     renderQuote(lead);
-    // A lead with no price yet can be priced in the calculator (nothing is saved to the lead in this round).
-    show(el.recPrice, TAB_ROUTES.indexOf('quote') !== -1 && (lead.quote_total === null || lead.quote_total === undefined || lead.quote_total === ''));
+    renderMyQuote(lead);
+    // A lead with no price yet can be priced in the calculator; a saved, unsent price can be changed the same way.
+    var noQuote = lead.quote_total === null || lead.quote_total === undefined || lead.quote_total === '';
+    var mine = lead.owner_quote && typeof lead.owner_quote === 'object' ? lead.owner_quote : null;
+    show(el.recPrice, TAB_ROUTES.indexOf('quote') !== -1 && noQuote && (!mine || mine.state === 'saved' || mine.state === 'failed' || mine.state === 'unknown'));
+    var myView = L.ownerQuoteView(lead, feature('quote') && L.quoteSendFeatureOn(custom.features));
+    el.priceLink.textContent = myView && myView.reprice ? 'Price it again in the quote calculator' : mine ? 'Change this price in the quote calculator' : 'Price it in the quote calculator';
     renderOthers(lead);
   }
 
@@ -3276,7 +3824,13 @@
       if (r.name === 'list' && L.isUuid(target)) { location.replace('#/lead/' + target); return; }
     }
     trackNav(r.name);
-    if (r.name === 'lead') { showThread(r.id); return; }
+    if (r.name === 'lead') {
+      // Coming back from the calculator to the lead it was opened from: Back on the lead goes where it went before (not to the calculator's More tab).
+      var from = S.screen === 'quote' ? S.quote.backTo : null;
+      if (from && from.id === r.id && from.tab) S.tab = from.tab;
+      showThread(r.id);
+      return;
+    }
     S.tab = navFor(r.name);
     S.tab.show();
   }
@@ -3333,9 +3887,9 @@
     el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.notesList.replaceChildren(); el.fuBody.replaceChildren();
     el.calBody.replaceChildren(); el.calDayList.replaceChildren(); el.searchResults.replaceChildren();
     el.calAgendaWeek.replaceChildren(); el.calAgendaLater.replaceChildren(); el.metricsBody.replaceChildren();
-    el.eventFacts.replaceChildren(); el.quoteBody.replaceChildren(); el.othersList.replaceChildren(); el.history.replaceChildren();
+    el.eventFacts.replaceChildren(); el.eventFactsMore.replaceChildren(); el.recEmail.replaceChildren(); S.eventMoreFor = null; el.quoteBody.replaceChildren(); el.othersList.replaceChildren(); el.history.replaceChildren();
     el.recPhone.removeAttribute('href'); el.contactActions.replaceChildren();
-    ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recPhone', 'eventDetails', 'confirmText', 'stripNote', 'actionErr', 'noteErr', 'contactNote']
+    ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recPhone', 'recEmail', 'eventDetails', 'confirmText', 'confirmNote', 'stripNote', 'actionErr', 'noteErr', 'contactNote']
       .forEach(function (k) { if (el[k]) el[k].textContent = ''; });
     el.noteText.value = ''; syncNoteSave();
     closeConfirm();
@@ -3435,8 +3989,7 @@
     S.seq.metrics++; S.seq.forecast++; S.seq.pastEvents++; S.pastEvents = null; S.pastBusy = ''; S.pastErr = ''; S.pastScroll = false; S.forecast = null; S.metrics = null; S.metricsError = '';
     S.seq.followups++; S.followUps = null; S.followUpsError = '';
     clearSearch();
-    S.quote = { busy: false, seq: S.quote.seq + 1, view: null, req: null };
-    el.qForm.reset(); qBusy(false); qFieldErrors({}); setText(el.qErr, ''); show(el.qKmBox, false); renderQuoteResult();
+    clearQuote();
     S.cal = null; S.showPossible = false;
     clearLeadData();
     el.fuBody.replaceChildren();
@@ -3702,7 +4255,10 @@
     el.fullSysFold.addEventListener('click', toggleFold);
 
     // Back: from a lead record to the tab it was opened from; from a tool under More to More.
-    el.back.addEventListener('click', function () { location.hash = S.screen === 'thread' ? S.tab.href : navFor('more').href; });
+    el.back.addEventListener('click', function () {
+      if (S.screen === 'quote' && S.quote.backTo) { location.hash = '#/lead/' + encodeURIComponent(S.quote.backTo.id); return; }
+      location.hash = S.screen === 'thread' ? S.tab.href : navFor('more').href;
+    });
 
     el.alertsSum.addEventListener('click', function () { P.open = !P.open; renderPush(); });
     el.alertsOn.addEventListener('click', onAlertsOn);
@@ -3715,6 +4271,7 @@
 
     // Status actions
     el.confirmYes.addEventListener('click', confirmYes);
+    el.confirmAlt.addEventListener('click', confirmNoFollowup);
     el.price.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); confirmYes(); } });
     el.price.addEventListener('input', function () { el.price.removeAttribute('aria-invalid'); setText(el.confirmErr, ''); });
 
@@ -3731,9 +4288,16 @@
       var f = k === 'addName' ? 'name' : k === 'addGuests' ? 'guests' : k === 'addArea' ? 'area' : k === 'addOccasion' ? 'occasion' : 'email';
       el[k].addEventListener('input', function () { setAddError(f, ''); });
     });
+    el.qAdd.addEventListener('click', addQuoteToLead);
+    el.mqSend.addEventListener('click', function () { startQuoteSend(false); });
+    el.mqResend.addEventListener('click', function () { startQuoteSend(true); });
     el.priceLink.addEventListener('click', function () {
       var lead = S.thread.lead;
-      S.quotePrefill = lead ? { guests: lead.guests, area: String(lead.event_area || '') } : null;
+      S.quotePrefill = lead ? Object.assign(L.quotePrefill(lead), {
+        fromLead: L.canAddQuoteToLead(lead) ? { id: lead.lead_id, name: leadName(lead), savedTotal: lead.owner_quote ? L.fmtMoney(lead.owner_quote.total) : '',
+          maybeSent: !!lead.owner_quote && (lead.owner_quote.state === 'unknown' || lead.owner_quote.earlier_maybe_sent === true) } : null,
+        backTo: { id: lead.lead_id, name: leadName(lead), tab: S.tab }
+      }) : null;
     });
 
     // Search (Leads)
@@ -3742,8 +4306,12 @@
 
     // Quote calculator
     el.qForm.addEventListener('submit', function (e) { e.preventDefault(); submitQuote(); });
+    el.qForm.addEventListener('input', qFormEdited);
+    el.qForm.addEventListener('change', qFormEdited);
+    el.qPromoPick.addEventListener('change', qPromoHint);
     Array.prototype.forEach.call(el.qForm.querySelectorAll('input[name="q-type"]'), function (r) { r.addEventListener('change', qTypeChanged); });
     el.qCopy.addEventListener('click', copyQuote);
+    el.qNew.addEventListener('click', newQuote);
 
     // Download spreadsheet
     el.askForm.addEventListener('submit', function (e) { e.preventDefault(); submitAsk(); });
@@ -3783,6 +4351,7 @@
     el.noteSave.addEventListener('click', saveNote);
     el.noteText.addEventListener('input', function () { noteCount(); setText(el.noteErr, ''); });
     el.sysFold.addEventListener('click', toggleFold);
+    el.eventMoreBtn.addEventListener('click', toggleEventMore);
 
     // Calendar
     el.calPrev.addEventListener('click', function () { moveMonth(-1); });
@@ -3792,10 +4361,11 @@
       store('set', POSSIBLE_KEY, S.showPossible ? '1' : '0');
       renderCalendar();
     });
-    el.confirmNo.addEventListener('click', closeConfirm);
-    el.confirm.addEventListener('close', function () { S.confirming = null; });
+    el.confirmNo.addEventListener('click', dismissConfirm);
+    el.confirm.addEventListener('close', onConfirmClosed);
+    el.confirm.addEventListener('cancel', function (e) { if (leaveSheetOpen() && S.quote.adding) e.preventDefault(); });
     // Tap on the dimmed backdrop (the dialog box itself, outside the sheet body) cancels.
-    el.confirm.addEventListener('click', function (e) { if (e.target === el.confirm) closeConfirm(); });
+    el.confirm.addEventListener('click', function (e) { if (e.target === el.confirm) dismissConfirm(); });
     el.historyMore.addEventListener('click', function () {
       S.historyOpen = !S.historyOpen;
       renderHistory();

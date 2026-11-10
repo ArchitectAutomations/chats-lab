@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261109-1749-c3c21aa6d";
+window.CV_BUILD = "20261109-2023-e3abeb70d";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -48,10 +48,26 @@ window.CV_CUSTOM = {
   // ask (More > Ask your CRM: questions about your leads answered by AI, read only; the database has its own switch, cv_config ask_enabled).
   // support (More > Help & support: tell Kevin about a problem; the database has its own switch, cv_config support_enabled).
   // export (More > Download spreadsheet: all your leads as a file for Numbers, Excel or Google Sheets; the database has its own switch, cv_config export_enabled).
+  // quoteSend (the "Send it to them" button on a lead's saved price). OFF unless exactly true; the database has its own switch, cv_config quote_send_enabled.
   // team (More > Team, owner only: add or remove the people who can read your leads and notes). OFF unless exactly true; leave false until Kevin rules.
   // Hours a "Needs you" lead may wait before its wait turns red with "· overdue" (1–720; default 24, Kevin 11-06).
   waitWarnHours: 24,
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false },
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: false },
+
+  // Quote calculator pick-lists (More details). Leave a list out and that field stays a plain text box.
+  // quoteOccasions: exactly the Occasion choices on the client's booking form, same words, same order.
+  // (Source: Tally form lb2Jjk / 4aQv1A, "Occasion" dropdown; the form has no "Other" text box, so neither does the page.)
+  quoteOccasions: ['Wedding', 'Corporate event', 'Birthday', 'Private party', 'Other'],
+  // quotePromos: the client's promo codes, as they are in the database's promotions table (the calculator only applies a code
+  // that row is running now). code = what the calculator receives. label + gives = plain words for the owner.
+  // from / to = the dates it runs (YYYY-MM-DD in the time zone above; "to" is the first day it no longer works): outside them it is not offered.
+  // eventFrom / eventTo = event dates it covers (both included); the page asks for an event date before sending such a code.
+  // When David changes a promo's dates or adds a code, change it here too: tools/tests/test_lib.js checks this list against the lab calculator.
+  quotePromos: [
+    { code: 'barsetup-all', label: 'Free bar setup', gives: 'The bar rental fee is waived when the bar is rented (old booking form)', from: '2026-10-08', to: '2027-01-01' },
+    { code: 'bundle700-all', label: '$700 event bundle', gives: '1 bartender for 4 hours, the bar and delivery for $700, 1 to 100 guests, $50 per extra hour up to 8 (new booking form)',
+      from: '2026-11-01', to: '2027-02-01', eventFrom: '2026-11-01', eventTo: '2027-01-31' }
+  ],
 
   // Ask your CRM: the starter questions shown under the empty chat (at most 4, each 80 characters at most).
   askStarters: ['How much did I book this month?', 'Who needs me right now?', "What's booked this weekend?", 'Where are my leads coming from?'],
