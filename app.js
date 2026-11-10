@@ -56,6 +56,12 @@
   // Mock only: ?team=on forces the Team feature on (it is off in config.js until Kevin rules), for screenshots and tests.
   if (MOCK && qs.get('team') === 'on') custom.features = Object.assign({}, custom.features, { team: true });
   if (MOCK && qs.get('quote_send') === 'on') custom.features = Object.assign({}, custom.features, { quoteSend: true });
+  // Mock only: ?off=ask,push,forecast switches those features off (a comma list of feature names), for screenshots and tests of the "off = invisible" rule.
+  if (MOCK && qs.get('off')) {
+    var mockOff = {};
+    String(qs.get('off')).split(',').forEach(function (k) { if (/^[A-Za-z]{2,24}$/.test(k.trim())) mockOff[k.trim()] = false; });
+    custom.features = Object.assign({}, custom.features, mockOff);
+  }
   if (MOCK && !(typeof custom.businessName === 'string' && custom.businessName.trim())) custom.businessName = 'Mock Bartending Co';
   var TARGET_KEY = 'cv_target_lead';
   var FILTER_KEY = 'cv_filter';
@@ -74,7 +80,7 @@
      Every tab the page knows. Adding a tab = one line here, plus its <main> screen in index.html and
      its show function; config.js (CV_CUSTOM.tabs / tabLabels) picks which ones show, their order and names.
      `route` is the hash name ('list' is '#/'), `icon` is an SVG path (24x24, stroked).
-     The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Ask your CRM, Quote calculator, Help & support and Download spreadsheet live under More; Lead value is a section inside Metrics
+     The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Ask your CRM, Quote calculator, How to use the CRM, Help & support and Download spreadsheet live under More; Lead value is a section inside Metrics
      (L.tabPlan decides, from CV_CUSTOM.tabs and the feature switches). */
   var TABS = [
     { route: 'list', href: '#/', label: 'Leads', show: showList, icon: 'M12 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM5 19.5c.6-3.3 3.3-5 7-5s6.4 1.7 7 5' },
@@ -83,6 +89,7 @@
     { route: 'metrics', href: '#/metrics', label: 'Metrics', show: showMetrics, icon: 'M5 20v-8M12 20V5M19 20v-5M3 20h18' },
     { route: 'ask', href: '#/ask', label: 'Ask your CRM', show: showAsk, icon: 'M4 5.5h16v10.5H10l-4.5 3.5V16H4zM10 9.2a2 2 0 1 1 2.8 1.8c-.5.3-.8.6-.8 1.2M12 13.6v.2' },
     { route: 'quote', href: '#/quote', label: 'Quote calculator', show: showQuote, icon: 'M7 3.5h10v17H7zM9.5 7h5M9.5 11h1M13.5 11h1M9.5 14.5h1M13.5 14.5h1M9.5 18h5' },
+    { route: 'guide', href: '#/guide', label: 'How to use the CRM', show: showGuide, icon: 'M6 4.5h10a2 2 0 0 1 2 2V19H8a2 2 0 0 1-2-2zM6 17a2 2 0 0 1 2-2h10M10 8.5h4' },
     { route: 'support', href: '#/support', label: 'Help & support', show: showSupport, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM9.6 9.6a2.4 2.4 0 1 1 3.5 2.1c-.7.4-1.1.9-1.1 1.7M12 16.6v.2' },
     { route: 'export', href: '#/export', label: 'Download spreadsheet', show: showExport, icon: 'M12 4v11M7 10l5 5 5-5M5 20h14' },
     { route: 'team', href: '#/team', label: 'Team', show: showTeam, icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3.5 19c.5-3 2.6-4.5 5.5-4.5s5 1.5 5.5 4.5M16 11a2.5 2.5 0 1 0 0-5M17.5 14.7c1.8.4 2.8 1.7 3 4.3' },
@@ -155,6 +162,7 @@
     tmFull: $('tm-full'), tmError: $('tm-error'), tmAdd: $('tm-add'), tmDone: $('tm-done'), tmLink: $('tm-link'), tmCopy: $('tm-copy'), tmCopyMsg: $('tm-copy-msg'),
     tmListLoading: $('tm-list-loading'), tmList: $('tm-list'), tmListEmpty: $('tm-list-empty'), tmListError: $('tm-list-error'), tmReload: $('tm-reload'), tmRowMsg: $('tm-row-msg'),
     teamConfirm: $('team-confirm'), teamConfirmText: $('team-confirm-text'), teamConfirmYes: $('team-confirm-yes'), teamConfirmNo: $('team-confirm-no'),
+    guideScreen: $('screen-guide'), guideLede: $('guide-lede'), guideBody: $('guide-body'),
     support: $('screen-support'), spOff: $('sp-off'), spContact: $('sp-contact'), spCall: $('sp-call'), spCallLabel: $('sp-call-label'),
     spText: $('sp-text'), spTextLabel: $('sp-text-label'), spForm: $('sp-form'), spKinds: $('sp-kinds'), spMessage: $('sp-message'),
     spCount: $('sp-count'), spLead: $('sp-lead'), spLeadText: $('sp-lead-text'), spLeadRemove: $('sp-lead-remove'), spInclude: $('sp-include'),
@@ -743,6 +751,7 @@
     show(el.quote, name === 'quote');
     show(el.more, name === 'more');
     show(el.support, name === 'support');
+    show(el.guideScreen, name === 'guide');
     show(el.teamScreen, name === 'team');
     show(el.askScreen, name === 'ask');
     show(el.exportScreen, name === 'export');
@@ -750,9 +759,9 @@
     show(el.topbar, signedIn);
     show(el.tabbar, signedIn && PLAN.showBar);
     // Back arrow on a lead record and on the tools under More; every other screen is a tab with a plain title.
-    var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team';
+    var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide';
     show(el.back, sub);
-    if (name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
+    if (name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
     if (name !== 'thread') {
       el.title.textContent = S.tab.label;
       setText(el.subtitle, '');
@@ -2054,6 +2063,95 @@
     setScreen('export');
   }
 
+  /* ---------- How to use the CRM (More) ----------
+     Static text from L.guideView, drawn with textContent only. Each section shows only when ALL its flags are on (guideFlag: the page's own
+     feature checks, so a switched-off feature is not in the guide at all). Staff never get it (features.guide is staff-blocked, staff is
+     OFF anyway). The quickstart starts open; what the owner opens or closes is kept while the page is open. */
+  var G = { open: { quick: true } };
+
+  function guideAvailable() { return feature('guide') && !isStaff(); }
+
+  // The flags a guide section can ask for. A tab-shaped one needs its switch AND its place in CV_CUSTOM.tabs; Ask and Help also need the database's say-so.
+  function guideFlag(f) {
+    var tab = function (r) { return feature(r) && TAB_ROUTES.indexOf(r) !== -1; };
+    var sp = S.support && S.support.cfg;
+    switch (f) {
+      case 'followups': case 'calendar': case 'metrics': case 'quote': case 'export': return tab(f);
+      case 'ask': return askOn();
+      case 'support': return feature('support') && TAB_ROUTES.indexOf('support') !== -1 && !!(sp && sp.enabled);
+      case 'supportContact': return guideFlag('support') && !!sp.phone;
+      case 'supportNoContact': return guideFlag('support') && !sp.phone;
+      case 'supportSend': return guideFlag('support') && sp.sendEnabled === true;
+      case 'supportNoSend': return guideFlag('support') && sp.sendEnabled !== true;
+      // The page switch AND the database's answer (cv_past_events enabled): without it Follow-ups draws no "Did these happen?" and no bulk button.
+      case 'pastEvents': return pastOn() && !!S.pastEvents && S.pastEvents.enabled !== false;
+      case 'bulk': return bulkOn() && !!S.pastEvents && S.pastEvents.enabled !== false;
+      case 'addLead': return HAS_ADD && !!S.api && typeof S.api.addLead === 'function';
+      case 'search': return HAS_SEARCH;
+      case 'push': return HAS_PUSH && L.pushState(pushEnv()) !== 'hidden';
+      case 'noQuoteFilter': return noQuoteOn();
+      case 'quoteDraft': return feature('quoteDraft');
+      case 'quoteAge': return feature('quote') && Number(custom.quoteAgeWarnDays) !== 0;
+      case 'forecast': return feature('forecast') && !!L.forecastView(S.forecast);
+      case 'value': return feature('value');
+      default: return false;
+    }
+  }
+
+  function guideSection(id, title, bodyNodes, extraClass) {
+    var d = make('details', 'rec-card guide-sec' + (extraClass ? ' ' + extraClass : ''));
+    d.setAttribute('data-gid', id);
+    d.open = !!G.open[id];
+    d.addEventListener('toggle', function () { G.open[id] = d.open; });
+    d.appendChild(make('summary', '', title));
+    var body = make('div', 'guide-body');
+    bodyNodes.forEach(function (n) { body.appendChild(n); });
+    d.appendChild(body);
+    return d;
+  }
+
+  function renderGuide() {
+    var v = L.guideView(guideFlag, { tab: function (r) { return labelled(r).label; } });
+    setText(el.guideLede, v.lede);
+    var frag = document.createDocumentFragment();
+    function steps(list) {
+      var ol = make('ol', 'guide-steps');
+      list.forEach(function (t) { ol.appendChild(make('li', '', t)); });
+      return ol;
+    }
+    if (v.quickstart) frag.appendChild(guideSection('quick', v.quickstart.title, [steps(v.quickstart.steps)], 'is-quick'));
+    v.sections.forEach(function (s) {
+      var nodes = [steps(s.steps)];
+      if (s.note) nodes.push(make('p', 'guide-note', s.note));
+      frag.appendChild(guideSection(s.id, s.title, nodes));
+    });
+    if (v.faq.length) {
+      var qa = make('div', 'guide-qa');
+      v.faq.forEach(function (x, i) {
+        var q = make('details', 'guide-q');
+        q.setAttribute('data-gid', 'q' + i);
+        q.open = !!G.open['q' + i];
+        q.addEventListener('toggle', function () { G.open['q' + i] = q.open; });
+        q.appendChild(make('summary', '', x.q));
+        q.appendChild(make('p', '', x.a));
+        qa.appendChild(q);
+      });
+      frag.appendChild(guideSection('faq', 'Common questions', [qa]));
+    }
+    el.guideBody.replaceChildren(frag);
+  }
+
+  function showGuide() {
+    S.thread.id = null;
+    setScreen('guide');
+    if (!guideAvailable()) { location.replace('#/more'); return; }
+    renderGuide();
+    // The database's say-so for Ask / Help and the forecast arrive on their own; draw again when they land (a section never shows before it is known to be on).
+    var again = function () { if (S.screen === 'guide') renderGuide(); };
+    var sp = S.support;
+    Promise.all([loadAskConfig(), sp.cfgState === 'ready' ? null : loadSupportConfig(), refreshForecast(), refreshPastEvents()]).then(again, again);
+  }
+
   /* ---------- Ask your CRM (More) ----------
      Read only: the question goes to the cv-ask Edge Function, the answer comes back as pieces (text, figures, lead chips) that are
      drawn with createElement / textContent only. The conversation is a plain array in memory: never written to storage, gone on
@@ -2650,9 +2748,9 @@
 
   // Remember the screen before More / Help (and the lead record it came from) so a request can say where it was sent from.
   function trackNav(name) {
-    var group = name === 'more' || name === 'support' || name === 'quote' || name === 'export' || name === 'ask' || name === 'team';
+    var group = name === 'more' || name === 'support' || name === 'quote' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide';
     var prev = S.nav.cur;
-    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote' || prev === 'export' || prev === 'ask' || prev === 'team';
+    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote' || prev === 'export' || prev === 'ask' || prev === 'team' || prev === 'guide';
     if (group && !prevGroup) {
       S.nav.from = prev;
       S.nav.lead = prev === 'lead' && S.thread.id ? { id: S.thread.id, lead: S.thread.lead } : null;

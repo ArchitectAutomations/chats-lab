@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261110-0327-d95c3c58d";
+window.CV_BUILD = "20261110-0400-b896da88d";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -42,12 +42,13 @@ window.CV_CUSTOM = {
   timeZone: 'America/Toronto',
 
   // Features: true = on, false = off (an off feature is not shown at all, nowhere on the page).
-  // Left out = on. Tabs: followups, calendar, ask, quote, support, export, metrics. 'value' = the Lead value section of Metrics, 'forecast' = the Looking ahead section of Metrics (the database has its own switch, cv_config forecast_enabled). 'pastEvents' = the "Did these happen?" list at the top of Follow-ups (cv_config past_events_enabled). Parts of other screens:
+  // Left out = on. Tabs: followups, calendar, ask, quote, guide, support, export, metrics. 'value' = the Lead value section of Metrics, 'forecast' = the Looking ahead section of Metrics (the database has its own switch, cv_config forecast_enabled). 'pastEvents' = the "Did these happen?" list at the top of Follow-ups (cv_config past_events_enabled). Parts of other screens:
   // search (top of Leads), notes (on a lead's record), push ("Alerts on this phone" under More),
   // addLead (the "+ Add lead" button on Leads; the database has its own switch, cv_config add_lead_enabled).
   // ask (More > Ask your CRM: questions about your leads answered by AI, read only; the database has its own switch, cv_config ask_enabled).
   // support (More > Help & support: tell Kevin about a problem; the database has its own switch, cv_config support_enabled).
   // export (More > Download spreadsheet: all your leads as a file for Numbers, Excel or Google Sheets; the database has its own switch, cv_config export_enabled).
+  // guide (More > How to use the CRM, owner only: short steps for the everyday jobs; each section appears only when the features it describes are on, and it never names a feature that is off).
   // quoteSend (the "Send it to them" button on a lead's saved price). OFF unless exactly true; the database has its own switch, cv_config quote_send_enabled.
   // team (More > Team, owner only: add or remove the people who can read your leads and notes). OFF unless exactly true; leave false until Kevin rules.
   // noQuoteFilter (owner only): the "No quote" chip under the filter chips and the "No quote sent" tag on rows. Same rule as the "without a quote yet" count in Metrics.
@@ -56,7 +57,7 @@ window.CV_CUSTOM = {
   waitWarnHours: 24,
   // Days after which a saved price on a lead (not sent yet) says how old it is: 7–29, default 21, 0 = never. The server refuses to text a price older than 30 days.
   quoteAgeWarnDays: 21,
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: false, noQuoteFilter: true, quoteDraft: true },
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: false, noQuoteFilter: true, quoteDraft: true, guide: true },
 
   // Quote calculator pick-lists (More details). Leave a list out and that field stays a plain text box.
   // quoteOccasions: exactly the Occasion choices on the client's booking form, same words, same order.
@@ -77,10 +78,10 @@ window.CV_CUSTOM = {
   askStarters: ['How much did I book this month?', 'Who needs me right now?', "What's booked this weekend?", 'Where are my leads coming from?'],
 
   // Bottom bar and More: which tabs show, in this order (a tab whose feature is off is skipped).
-  // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar; 'ask', 'quote', 'support' and 'export' sit under More
+  // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar; 'ask', 'quote', 'guide', 'support' and 'export' sit under More
   // (More itself is always the last slot and also holds Alerts and Sign out).
-  tabs: ['list', 'followups', 'calendar', 'ask', 'quote', 'support', 'export', 'metrics', 'team'],
-  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', ask: 'Ask your CRM', quote: 'Quote calculator', support: 'Help & support', export: 'Download spreadsheet', team: 'Team' },
+  tabs: ['list', 'followups', 'calendar', 'ask', 'quote', 'guide', 'support', 'export', 'metrics', 'team'],
+  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet', team: 'Team' },
 
   // Status wording on chips, filter chips, the three buttons and the history lines.
   // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, booked, lost, opted_out.

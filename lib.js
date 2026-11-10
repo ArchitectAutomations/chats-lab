@@ -1264,7 +1264,7 @@
     if (t === null) return null;
     var days = Math.floor((nowDate(now).getTime() - t) / 86400000);
     if (days < limit) return null;
-    return { days: days, text: 'Priced ' + plural(days, 'day', 'days') + ' ago. Check it before you send it.' + (canSend ? ' It cannot be texted after 30 days.' : '') };
+    return { days: days, text: 'Priced ' + plural(days, 'day', 'days') + ' ago. ' + (canSend ? 'Check it before you send it. It cannot be texted after 30 days.' : 'Check it is still right before you use it.') };
   }
 
   // lead_detail.owner_quote -> what the lead page shows. null = nothing saved.
@@ -1410,7 +1410,7 @@
   /* ---------- feature switches (CV_CUSTOM.features) ---------- */
 
   // Every feature is on unless the client's settings say exactly false. Off = not shown at all.
-  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'forecast', 'pastEvents', 'push', 'addLead', 'support', 'export', 'ask'];
+  var FEATURES = ['followups', 'calendar', 'notes', 'search', 'quote', 'value', 'metrics', 'forecast', 'pastEvents', 'push', 'addLead', 'support', 'export', 'ask', 'guide'];
   function featureOn(features, key) {
     return !(features && typeof features === 'object' && features[key] === false);
   }
@@ -3003,10 +3003,10 @@ function renderPriceBlockSms(lineItems, total, currency) {
 
   // Which tabs sit in the bar and which live under More. `want` = CV_CUSTOM.tabs, `on(route)` = feature switch.
   // Leads is always on. Names the page does not know are ignored; an empty or unusable list means "everything on".
-  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Ask your CRM, Quote calculator, Help & support, Download spreadsheet (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
+  // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Ask your CRM, Quote calculator, How to use the CRM, Help & support, Download spreadsheet (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
   // slots counts the bar tabs plus the More slot; with fewer than 2 the page hides the bar.
   var BAR_TABS = ['list', 'followups', 'calendar', 'metrics'];
-  var MORE_TABS = ['ask', 'quote', 'support', 'export', 'team'];
+  var MORE_TABS = ['ask', 'quote', 'guide', 'support', 'export', 'team'];
   function tabPlan(want, on) {
     var isOn = typeof on === 'function' ? on : function () { return true; };
     var known = BAR_TABS.concat(MORE_TABS);
@@ -3019,6 +3019,149 @@ function renderPriceBlockSms(lineItems, total, currency) {
     if (!bar.length) bar = ['list'];
     var slots = bar.length + 1;
     return { bar: bar, more: more, slots: slots, showBar: slots >= 2 };
+  }
+
+  /* ---------- How to use the CRM (More): the guide's words and its filter ----------
+     Plain text only. Every section, step and question carries `f`, the flags it needs; it shows only when ALL of them are on
+     (guideView: `on(flag)` is the page's own feature check). A section left with no steps is dropped. Words in {braces} are the client's
+     own names, filled in here: {tab_<route>} = the tab / More label, {contacted} {booked} {lost} {needs} = the status words ({x_lc} lower case),
+     {lost_reasons} and {sources} = the pick-lists. The guide never names a person, and never mentions a feature that is not on. */
+  var GUIDE_FLAGS = ['followups', 'calendar', 'metrics', 'quote', 'export', 'ask', 'support', 'supportContact', 'supportNoContact', 'supportSend', 'supportNoSend', 'pastEvents', 'bulk',
+    'addLead', 'search', 'push', 'noQuoteFilter', 'quoteDraft', 'quoteAge', 'forecast', 'value'];
+  var GUIDE = {
+    lede: 'Short steps for the jobs you do most. Tap a heading to open it.',
+    quickstart: {
+      title: 'Your first day',
+      steps: [
+        'On {tab_list}, look at {needs} at the top. Tap a name to open the lead.',
+        'Tap Call, Text or Email to reach them. Then, under Change status, tap {contacted}.',
+        'After the event, under Change status, tap {booked} or {lost}. That keeps your records right.'
+      ]
+    },
+    sections: [
+      { id: 'needs', title: 'See who needs you', f: [], steps: [
+        'The {needs} list at the top of {tab_list} shows the newest people waiting for you and how long each has waited. The wait turns red and says overdue when it is too long.',
+        'Tap a name to open the lead, or the phone icon to call. See all, when it shows, lists everyone waiting; tap Back to leads to return.'
+      ] },
+      { id: 'reply', title: 'Reply to a lead', f: [], steps: [
+        'Open the lead and tap Call, Text or Email. Your phone opens its own Phone, Messages or Mail app.',
+        'Under Conversation you can read what was said. Tap Open full to read it all, then Close.',
+        'After you have reached them, under Change status tap {contacted}, then Mark as {contacted_lc}. Sometimes the box offers two buttons: Mark {contacted_lc} and send the follow-up, or Mark {contacted_lc}, no follow-up.'
+      ], note: 'You reply in your phone\'s own apps, not here. The Text button is hidden for anyone who opted out.' },
+      { id: 'outcome', title: 'Mark a lead {booked} or {lost}', f: [], steps: [
+        'Open the lead. Under Change status, tap {booked} or {lost}. A box opens.',
+        'For {booked}, check the Final price (it starts from the quote, if there is one). For {lost}, pick Why was it lost? ({lost_reasons}).',
+        'Tap Mark as {booked_lc} or Mark as {lost_lc} to confirm.'
+      ], note: 'Recording these, even for small jobs, keeps your records right.' },
+      { id: 'find', title: 'Find a lead', f: [], steps: [
+        'On {tab_list}, tap a button near the top to narrow the list: Open, {contacted}, {booked}, {lost} or All. The number on a button is how many leads are in it.',
+        { t: 'Or type a name, phone number or email in the search box at the top (Search name, phone or email).', f: ['search'] },
+        { t: 'The No quote button, on its own row below, lists open leads with no quote yet. Their rows say No quote sent.', f: ['noQuoteFilter'] },
+        { t: 'Open one and tap Price it in the quote calculator.', f: ['noQuoteFilter', 'quote'] },
+        'Tap a name to open the lead. At the bottom of a long list, tap the Show more button (it reads like Show 50 more).'
+      ], note: 'The {lost} button also holds people who opted out.' },
+      { id: 'past', title: 'Mark events that already happened', f: ['followups', 'pastEvents'], steps: [
+        'Tap {tab_followups}. Did these happen? lists events that have passed with no result recorded.',
+        'Tap Booked or Didn\'t book on each. A box asks you to confirm (and why, for Didn\'t book).'
+      ] },
+      { id: 'add', title: 'Add a lead yourself', f: ['addLead'], steps: [
+        'On {tab_list}, tap + Add lead, at the top right.',
+        'Fill in the Name and Phone (10 digits), pick Where they came from ({sources}), then any event details you know. Tick Already talked to them if you have.',
+        'Tap Add lead.'
+      ], note: 'No automatic texts go to leads you add. You contact them yourself.' },
+      { id: 'quote', title: 'Make a quote', f: ['quote'], steps: [
+        'Tap More, then {tab_quote}.',
+        'Fill in Number of guests, How many hours of service, Portable bar required? and Event city. More details (optional) holds the Event date, Occasion and Promo code.',
+        'Tap Get quote, then Copy quote to copy the price, or Start a new quote for the next one.',
+        'From a lead\'s Price it link, tap Add this quote to followed by the lead\'s name (for example Add this quote to Sam) to save the price on that lead.',
+        { t: 'If your phone closes the app while you are on this screen, open {tab_quote} again: your answers come back (Restored your unfinished quote), for up to 12 hours on the same phone.', f: ['quoteDraft'] },
+        { t: 'If you leave the screen yourself, the form is cleared. A form from a lead\'s Price it link comes back only if the app was closed on that screen: open the same lead\'s Price it link again.', f: ['quoteDraft'] },
+        { t: 'A saved price you never used shows how old it is after a few weeks, for example Priced 23 days ago. On the lead, tap Change this price in the quote calculator and work it out again.', f: ['quoteAge'] }
+      ], note: { t: 'Names and phone numbers are never kept.', f: ['quoteDraft'] } },
+      { id: 'calendar', title: 'Check your calendar', f: ['calendar'], steps: [
+        'Tap {tab_calendar}. This week and Later list the coming events, and the month grid shows booked ones. Switch on Include leads not booked yet to add the others.',
+        'Tap a day, then a lead, to open it.'
+      ] },
+      { id: 'metrics', title: 'See your numbers', f: ['metrics'], steps: [
+        'Tap {tab_metrics}. Scroll through sections such as Money booked, Money on the table, Close rate and Speed.',
+        { t: 'Lead value groups your open leads into price bands.', f: ['value'] },
+        { t: 'Looking ahead shows bookings by event month, your open quotes at full price, and a likely range once there is enough history.', f: ['forecast'] }
+      ], note: 'The numbers are only as good as your records. Mark leads {booked} or {lost}.' },
+      { id: 'ask', title: 'Ask your CRM', f: ['ask'], steps: [
+        'Tap More, then {tab_ask}. Tap a starter question, or type your own in the box at the bottom (Ask a question), then tap Ask.'
+      ], note: 'It only reads your leads. It never changes anything. Tap a lead name in an answer to open that lead.' },
+      { id: 'alerts', title: 'Turn on alerts on this phone', f: ['push'], steps: [
+        'On an iPhone, alerts only work when you open the app from your home screen icon.',
+        'Tap More, find Alerts on this phone, tap Turn on alerts and allow notifications. Once on, tap that line to find Send test alert and Turn off.'
+      ], note: 'Blocked? Open your phone\'s Settings, then Notifications, and allow this app.' },
+      { id: 'export', title: 'Download your leads', f: ['export'], steps: [
+        'Tap More, then {tab_export}.',
+        'Under Which leads, pick All, Open, {booked} or {lost}. Pick dates (optional) limits it by when the lead came in.',
+        'Tap Make spreadsheet, then Save file. It opens in Numbers, Excel or Google Sheets, one row per event.'
+      ] },
+      { id: 'support', title: 'Write down a help request', f: ['support'], steps: [
+        'Tap More, then {tab_support}. Under What is it?, pick Something\'s broken, A question or An idea.',
+        { t: 'Write Your message, then tap Send. We get it right away.', f: ['supportSend'] },
+        { t: 'Write Your message, then tap Save request. It is saved in this list only and nobody is told automatically yet, so use the Call or Text buttons at the top if it cannot wait.', f: ['supportNoSend', 'supportContact'] },
+        { t: 'Write Your message, then tap Save request. It is saved in this list only and nobody is told automatically yet, so contact us directly if it cannot wait.', f: ['supportNoSend', 'supportNoContact'] },
+        { t: 'If it cannot wait, the Call and Text buttons at the top reach us.', f: ['supportSend', 'supportContact'] },
+        'Your requests, further down, lists each one with its status.'
+      ], note: { t: 'Only use the Urgent switch for something that stops you working right now.', f: ['supportSend'] } },
+      { id: 'bulk', title: 'Clear out old leads in bulk', f: ['followups', 'pastEvents', 'bulk'], steps: [
+        'Tap {tab_followups}, then Clear old ones in bulk under Did these happen?',
+        'Pick a date under Event before. The box counts the old leads still open with an event before it. Leads with a text, a hand-over or a change in the last 14 days are left alone, and so are leads with more than one event date.',
+        'Tap the button that says, for example, Mark 97 leads {lost}. Nothing is texted to anyone; they are marked {lost} with the reason {old_lead}. Tap Cancel to back out.',
+        'Changed your mind? Tap Undo on the line at the top of {tab_followups} (7 days, latest bulk clear only).'
+      ] },
+      { id: 'install', title: 'Install and sign in', f: [], steps: [
+        'Open the app from its icon on your home screen. Not there yet? In Safari tap Share, then Add to Home Screen.',
+        'Sign in with your mobile number: tap Text me a code, type the 6-digit code, then tap Sign in.'
+      ] }
+    ],
+    faq: [
+      { q: 'I marked the wrong status. Can I change it?', a: 'Yes. On the lead, under Change status, tap the right one. Going back from {booked} or {lost} to {contacted} clears its price or reason. A lead that opted out is locked.', f: [] },
+      { q: 'Did I lose my quote?', a: 'If your phone closed the app while you were on the quote screen, open {tab_quote} again and your answers come back (up to 12 hours, on the same phone). If you left the screen yourself, the form is cleared: start the quote again.', f: ['quote', 'quoteDraft'] },
+      { q: 'How do I sign out?', a: 'Tap More, then Sign out.', f: [] }
+    ]
+  };
+  var GUIDE_TAB_NAMES = { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet' };
+
+  // The guide, filtered: { lede, quickstart: { title, steps } | null, sections: [{ id, title, steps, note }], faq: [{ q, a }] }.
+  // on(flag) = the page's own switch check; a flag the page does not answer true for counts as off. opts.tab(route) = the tab label (default: the built-in name).
+  function guideView(on, opts) {
+    var isOn = typeof on === 'function' ? on : function () { return false; };
+    var tabLabel = opts && typeof opts.tab === 'function' ? opts.tab : null;
+    function all(flags) { return (Array.isArray(flags) ? flags : []).every(function (f) { return GUIDE_FLAGS.indexOf(f) !== -1 && !!isOn(f); }); }
+    function listWords(rows) { return rows.length > 1 ? rows.slice(0, -1).join(', ') + ' or ' + rows[rows.length - 1] : rows.join(''); }
+    function words(text) {
+      var map = { contacted: statusInfo('contacted').label, booked: statusInfo('booked').label, lost: statusInfo('lost').label, needs: statusInfo('handed_off').label };
+      return String(text).replace(/\{([a-z_]+)\}/g, function (m, k) {
+        if (k === 'lost_reasons') return listWords(lostReasons().map(function (x) { return x.label; }));
+        if (k === 'old_lead') return lostReasonLabel('old_lead');
+        if (k === 'sources') return listWords(addLeadSources().map(function (x) { return x.label; }));
+        var tab = /^tab_([a-z]+)$/.exec(k);
+        if (tab) { var got = tabLabel ? tabLabel(tab[1]) : ''; return (typeof got === 'string' && got.trim()) || GUIDE_TAB_NAMES[tab[1]] || m; }
+        var lower = /^([a-z]+)_lc$/.exec(k);
+        if (lower && map[lower[1]]) return map[lower[1]].toLowerCase();
+        return map[k] || m;
+      });
+    }
+    function steps(list) {
+      return (Array.isArray(list) ? list : []).filter(function (x) { return typeof x === 'string' || (x && all(x.f)); })
+        .map(function (x) { return words(typeof x === 'string' ? x : x.t); });
+    }
+    var q = GUIDE.quickstart;
+    var out = { lede: GUIDE.lede, quickstart: { title: q.title, steps: steps(q.steps) }, sections: [], faq: [] };
+    GUIDE.sections.forEach(function (s) {
+      if (!all(s.f)) return;
+      var st = steps(s.steps);
+      if (!st.length) return;
+      var note = s.note && typeof s.note === 'object' ? (all(s.note.f) ? s.note.t : '') : (s.note || '');
+      out.sections.push({ id: s.id, title: words(s.title), steps: st, note: note ? words(note) : '' });
+    });
+    GUIDE.faq.forEach(function (x) { if (all(x.f)) out.faq.push({ q: words(x.q), a: words(x.a) }); });
+    if (!out.quickstart.steps.length) out.quickstart = null;
+    return out;
   }
 
   /* ---------- Help & support (session 3, round 2) ---------- */
@@ -3814,7 +3957,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   // Things a staff member never gets, whatever the config says (the server is the real gate; this keeps the page honest).
-  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team', 'noQuoteFilter', 'quoteDraft'];
+  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team', 'noQuoteFilter', 'quoteDraft', 'guide'];
 
   /* ---------- Team (More, owner only): the cv-team Edge Function (team/edge/cv-team) ---------- */
 
@@ -4186,6 +4329,10 @@ function renderPriceBlockSms(lineItems, total, currency) {
     headMoney: headMoney,
     wordsView: wordsView,
     tabPlan: tabPlan,
+    GUIDE: GUIDE,
+    GUIDE_FLAGS: GUIDE_FLAGS,
+    GUIDE_TAB_NAMES: GUIDE_TAB_NAMES,
+    guideView: guideView,
     diagScrub: diagScrub,
     diagPush: diagPush,
     diagCall: diagCall,

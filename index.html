@@ -375,6 +375,17 @@
     </form>
   </main>
 
+  <!-- How to use the CRM (More): short steps for the owner's everyday jobs. Built by renderGuide() from L.guideView (text only, textContent);
+       each section is a native details/summary, the quickstart open. Shown only when CV_CUSTOM.features.guide is on; never for staff. -->
+  <main class="screen guide-screen" id="screen-guide" hidden>
+    <div class="scroller" id="guide-scroll">
+      <div class="sp-wrap guide-wrap">
+        <p class="q-lede" id="guide-lede"></p>
+        <div class="guide-list" id="guide-body"></div>
+      </div>
+    </div>
+  </main>
+
   <!-- Help & support (More): tell Kevin about a problem, a question or an idea; the owner's own requests with their status.
        Shown only when CV_CUSTOM.features.support is on and the database says support is enabled. -->
   <main class="screen support-screen" id="screen-support" hidden>
