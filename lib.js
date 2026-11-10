@@ -141,7 +141,7 @@
      configure(window.CV_CUSTOM) applies the client's wording, money format and time zone.
      Anything left out keeps the default. Called once by app.js before the first render. */
 
-  var CUSTOM = { status: {}, tiers: {}, lost: {}, sources: {}, locale: 'en-CA', currency: 'CAD', waitWarnHours: 24 };
+  var CUSTOM = { status: {}, tiers: {}, lost: {}, sources: {}, locale: 'en-CA', currency: 'CAD', waitWarnHours: 24, quoteAgeWarnDays: 21 };
 
   function plainMap(o) {
     var out = {};
@@ -162,6 +162,10 @@
     CUSTOM.sources = plainMap(c.sourceLabels);
     var wh = Number(c.waitWarnHours);
     CUSTOM.waitWarnHours = isFinite(wh) && wh >= 1 && wh <= 720 ? wh : 24;
+    // Days after which a saved owner price gets an age warning on its card: 0 = off, 7 to 29 whole days, anything else = 21.
+    // (The server refuses to text a price older than 30 days, sql/023; the warning comes ahead of that.)
+    var qa = c.quoteAgeWarnDays === undefined || c.quoteAgeWarnDays === null || c.quoteAgeWarnDays === '' ? NaN : Number(c.quoteAgeWarnDays);
+    CUSTOM.quoteAgeWarnDays = qa === 0 ? 0 : (isFinite(qa) && Math.floor(qa) === qa && qa >= 7 && qa <= 29 ? qa : 21);
     CUSTOM.locale = typeof c.locale === 'string' && c.locale ? c.locale : 'en-CA';
     CUSTOM.currency = typeof c.currency === 'string' && /^[A-Za-z]{3}$/.test(c.currency) ? c.currency.toUpperCase() : 'CAD';
     var tz = typeof c.timeZone === 'string' && c.timeZone ? c.timeZone : 'America/Toronto';
@@ -314,7 +318,9 @@
   // The contacted / booked / lost chips reuse the status labels, so a client's wording carries through.
   // 'needs' has no chip: it is the full Needs-you list behind "See all" (round 4), remembered like a chip.
   var FILTER_KEYS = ['all', 'needs', 'open', 'contacted', 'booked', 'lost'];
-  var CHIP_KEYS = ['open', 'contacted', 'booked', 'lost', 'all'];
+  // 'noquote' (gap 1) is a sixth, page-counted chip shown only when it has leads: it is remembered like the others, so a saved 'noquote' is valid here
+  // and app.js falls back to 'open' when the chip is off or empty. It is not in FILTER_KEYS / filterCounts (the server counts those five).
+  var CHIP_KEYS = ['open', 'contacted', 'booked', 'lost', 'all', 'noquote'];
   // The five chips on Home, in display order. Open is the default. Contacted (round 4, Kevin 11-09) is the part of Open
   // he has already reached: status contacted (so never booked or lost).
   function filters() {
@@ -333,8 +339,40 @@
     return CHIP_KEYS.indexOf(key) !== -1;
   }
 
+  // Gap 1: an open lead the customer has not been quoted. The SAME rule as the Metrics count open_no_quote (sql/005: open = not booked / lost /
+  // opted out and opted_out false; no quote_total). A price the owner saved but has not sent (owner_price) does not change that: it is still "no quote sent".
+  // lead_list has no opted_out column, and a STOP from a hand-added (or booked / lost) lead keeps its status. The app therefore also gives the numbers
+  // lead_detail says opted out (setOptedOutPhones, the lookup Add lead uses), and those leads are never "no quote sent" (Metrics leaves them out too).
+  var OPTED_KEYS = {};
+  function setOptedOutPhones(phones) {
+    var next = {};
+    (Array.isArray(phones) ? phones : []).forEach(function (p) { var k = phoneKey(p); if (k) next[k] = true; });
+    var changed = Object.keys(next).sort().join(',') !== Object.keys(OPTED_KEYS).sort().join(',');
+    OPTED_KEYS = next;
+    return changed;
+  }
+  function noQuoteOpen(lead) {
+    if (!lead || statusGroup(lead.status) !== 'open' || isOptedOut(lead)) return false;
+    var k = phoneKey(lead.phone);
+    if (k && OPTED_KEYS[k]) return false;
+    return lead.quote_total === null || lead.quote_total === undefined || lead.quote_total === '';
+  }
+  // The "No quote sent" tag on a list row: owner only (a staff list has no prices, so every row would match), and only when the row
+  // has no money text of its own (a saved price already reads "$X not sent" there). opts: { staff: bool, hasMoney: bool }.
+  function noQuoteTag(lead, opts) {
+    var o = opts || {};
+    if (o.staff || o.hasMoney || !noQuoteOpen(lead)) return '';
+    return 'No quote sent';
+  }
+  function noQuoteCount(leads) {
+    return (Array.isArray(leads) ? leads : []).filter(noQuoteOpen).length;
+  }
+  // The sixth chip: label "No quote", count from noQuoteCount (page side, over the rows loaded).
+  function noQuoteChip() { return { key: 'noquote', label: 'No quote' }; }
+
   function matchesFilter(lead, key) {
     var st = String((lead && lead.status) || '').toLowerCase();
+    if (key === 'noquote') return noQuoteOpen(lead);
     if (key === 'needs') return st === 'handed_off';
     if (key === 'contacted') return st === 'contacted';
     if (key === 'open' || key === 'booked' || key === 'lost') return statusGroup(st) === key;
@@ -401,6 +439,11 @@
     }
     if (noConsent(lead)) return q;
     return q + " They won't get the next follow-up text.";
+  }
+
+  // The hint under the Final price box of the Booked sheet. Only a price that was really filled in from the quote says so; an empty box says nothing.
+  function bookedPriceHint(prefilled) {
+    return String(prefilled === null || prefilled === undefined ? '' : prefilled).trim() ? 'From the quote. Change it if the price differs.' : '';
   }
 
   // 022: the sheet's two buttons when a lead with no quote could really get the day-5 text (both facts come from the server, lead_detail).
@@ -1211,6 +1254,19 @@
   // The states the server lets the owner price again from (sql/023 cv_add_lead_quote; unknown since crm-fix-final N4).
   var OWNER_REPRICE_STATES = { saved: true, failed: true, unknown: true };
 
+  // Gap 3: a saved price that has sat for CV_CUSTOM.quoteAgeWarnDays or more (21 by default, 0 = off). added_at is when it was saved or
+  // last re-priced (a little later than the day it was worked out, so the warning leans late, never early). Only an unsent price (saved / failed)
+  // and only when the server gave no refusal of its own (that text already speaks). -> { days, text } | null.
+  function ownerQuoteAge(o, state, block, canSend, now) {
+    var limit = CUSTOM.quoteAgeWarnDays;
+    if (!limit || block || (state !== 'saved' && state !== 'failed') || o.sent_at) return null;
+    var t = timeOf(o.added_at);
+    if (t === null) return null;
+    var days = Math.floor((nowDate(now).getTime() - t) / 86400000);
+    if (days < limit) return null;
+    return { days: days, text: 'Priced ' + plural(days, 'day', 'days') + ' ago. Check it before you send it.' + (canSend ? ' It cannot be texted after 30 days.' : '') };
+  }
+
   // lead_detail.owner_quote -> what the lead page shows. null = nothing saved.
   function ownerQuoteView(lead, canSend, now) {
     var o = lead && lead.owner_quote;
@@ -1236,7 +1292,7 @@
       : state === 'sending' ? 'It may already have gone out. Check the conversation.'
       : o.earlier_maybe_sent === true ? 'An earlier text with a price may have gone out. Check the conversation before sending.' : '';
     return {
-      state: state, sent: state === 'sent' || resend, status: status, count: count,
+      state: state, sent: state === 'sent' || resend, status: status, count: count, age: ownerQuoteAge(o, state, block, canSend, now),
       total: fmtMoney(o.total), items: items,
       // the Subtotal / Travel fee / Total rows to draw ('' = left out): quoteSums, so delivery is never counted twice (review r3)
       subtotal: ownerSums.subtotal, travel: ownerSums.travel, totalRow: ownerSums.total,
@@ -1786,6 +1842,68 @@
       else body.promo_code = promo;
     }
     return Object.keys(errors).length ? { ok: false, errors: errors } : { ok: true, body: body };
+  }
+
+  /* ---------- quote calculator draft (gap 2) ----------
+     The unfinished calculator form is kept in localStorage so an app the phone killed mid-quote does not lose it. It holds the form
+     fields and at most a lead id: NEVER a phone, a name, a message or a price. One key per signed-in user, 12 hours, removed on sign-out,
+     on Add / send and whenever the calculator is emptied (app.js clearQuote). It is restored as a plain draft with NO link to the lead. */
+
+  var QDRAFT_PREFIX = 'cv_qdraft_v1:';
+  var QDRAFT_TTL_MS = 12 * 3600000;
+  function quoteDraftKey(uid) {
+    var u = String(uid == null ? '' : uid);
+    return /^[A-Za-z0-9_-]{1,64}$/.test(u) ? QDRAFT_PREFIX + u : '';
+  }
+
+  // Keep only a field that is the right shape; anything else becomes empty. -> the eight calculator fields, all strings (bar_rental true / false / null).
+  function quoteDraftFields(f) {
+    f = f && typeof f === 'object' ? f : {};
+    var str = function (v) { return typeof v === 'string' || typeof v === 'number' ? String(v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim() : ''; };
+    var pick = function (v, ok) { var x = str(v); return x && ok(x) ? x : ''; };
+    return {
+      guests: pick(f.guests, function (x) { return /^\d{1,4}$/.test(x); }),
+      service_hours: pick(f.service_hours, function (x) { return QUOTE_HOURS.indexOf(x) !== -1; }),
+      bar_rental: f.bar_rental === true ? true : f.bar_rental === false ? false : null,
+      event_city: pick(f.event_city, function (x) { return PLACE_RE.test(x); }),
+      distance_km: pick(f.distance_km, function (x) { return /^\d{1,4}([.,]\d{1,3})?$/.test(x); }),
+      event_date: pick(f.event_date, isYmd),
+      occasion: pick(f.occasion, function (x) { return OCCASION_RE.test(x); }),
+      promo_code: pick(f.promo_code, function (x) { return PROMO_CODE_RE.test(x.toLowerCase()); }).toLowerCase()
+    };
+  }
+  function quoteDraftBlank(f) {
+    var c = quoteDraftFields(f);
+    return !c.guests && !c.service_hours && c.bar_rental === null && !c.event_city && !c.distance_km && !c.event_date && !c.occasion && !c.promo_code;
+  }
+
+  // form (app.js qForm()) + the lead it was made from (an id or null) -> the string to store, or '' when the form is empty (nothing to keep).
+  // A draft made from a lead's "Price it" holds the lead id and NOT the city / area: that comes from the lead (it can be a street address), so on restore
+  // it is worked out from the lead again. A plain calculator draft keeps the city the owner typed.
+  function quoteDraftPack(form, leadId, now) {
+    var lead = isUuid(leadId) ? String(leadId).toLowerCase() : null;
+    var f = quoteDraftFields(form);
+    if (lead) f.event_city = '';
+    if (quoteDraftBlank(f)) return '';
+    return JSON.stringify({ v: 1, t: nowDate(now).getTime(), f: f, lead: lead });
+  }
+
+  // The stored string -> { pre, lead } for qFill (keys guests / hours / bar / area / km / date / occasion / promo), or null: junk, the wrong shape,
+  // older than 12 hours, from the future, or nothing left after the checks. Unknown keys are dropped.
+  function quoteDraftRead(raw, now) {
+    if (typeof raw !== 'string' || !raw || raw.length > 2000) return null;
+    var o;
+    try { o = JSON.parse(raw); } catch (e) { return null; }
+    if (!o || typeof o !== 'object' || Array.isArray(o) || o.v !== 1 || typeof o.t !== 'number' || !isFinite(o.t)) return null;
+    var age = nowDate(now).getTime() - o.t;
+    if (age > QDRAFT_TTL_MS || age < -300000) return null;
+    if (!o.f || typeof o.f !== 'object' || quoteDraftBlank(o.f)) return null;
+    var c = quoteDraftFields(o.f);
+    var lead = isUuid(o.lead) ? String(o.lead).toLowerCase() : null;
+    if (lead) c.event_city = '';
+    if (quoteDraftBlank(c)) return null;
+    return { lead: lead,
+      pre: { guests: c.guests, hours: c.service_hours, bar: c.bar_rental, area: c.event_city, km: c.distance_km, date: c.event_date, occasion: c.occasion, promo: c.promo_code } };
   }
 
   /* ---------- quote calculator pick-lists (CV_CUSTOM.quoteOccasions / quotePromos) ----------
@@ -2626,6 +2744,9 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // line's number is that part's count); late = the red cue, past CV_CUSTOM.waitWarnHours (24 h by default, so all three agree).
   // A row with no known time is neither fresh nor overDay.
   var NEEDS_FRESH_HOURS = 24;
+  // The pill on a See-all row handed over in the last 24 hours: the same words the normal list uses for these leads ("Needs you"),
+  // plus how recent. Never the bare word "New", which is also a real status.
+  function needsFreshPill() { return statusInfo('handed_off').label + ' \u00b7 last ' + NEEDS_FRESH_HOURS + ' h'; }
   // The block shows the newest 3 as one-line rows (name, how long, a call button; review r4 item 3), about 52 px each, so the
   // block and the filter chips both fit the first screen at 320x568. The full cards are in "See all".
   var NEEDS_SHOW = 3;
@@ -2679,7 +2800,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var every = Array.isArray(all) ? all : list;
     function part(key) { return function (r) { return !!r && (key === 'fresh' ? !!r.fresh : key === 'older' ? !!r.overDay : !r.fresh && !r.overDay); }; }
     return [
-      { key: 'fresh', label: 'New: last 24 hours' },
+      { key: 'fresh', label: statusInfo('handed_off').label + ': last ' + NEEDS_FRESH_HOURS + ' hours' },   // the pill's words, never the bare status word "New"
       { key: 'older', label: 'Waiting over a day' },
       { key: 'unknown', label: 'Time not known' }
     ].map(function (s) {
@@ -3183,8 +3304,10 @@ function renderPriceBlockSms(lineItems, total, currency) {
 
   // '#/' | '' -> list; '#/lead/<uuid>' -> thread; '#/<tab>' -> that tab when it is in `tabs`
   // (none when no list is given); anything else -> list.
+  // '#/needs' -> { name: 'list', needs: true }: the full Needs-you list ("See all") has its own history entry, so Back returns to the list.
   function parseRoute(hash, tabs) {
     var h = String(hash || '');
+    if (/^#\/needs\/?$/.test(h)) return { name: 'list', needs: true };
     var m = /^#\/lead\/([^/?#]+)\/?$/.exec(h);
     if (m && isUuid(m[1])) return { name: 'lead', id: m[1].toLowerCase() };
     var t = /^#\/([a-z][a-z0-9-]*)\/?$/.exec(h);
@@ -3578,19 +3701,53 @@ function renderPriceBlockSms(lineItems, total, currency) {
 
   // The 200 envelope -> what the bubble shows. `nameFor(id)` may give the page's own name for a lead it has loaded (else the server's name is used).
   // Unknown piece types are dropped; a lead piece needs a real uuid; nothing here is HTML.
+  // Two wording fixes, in the page and only in these exact spots (the answer on the server is unchanged):
+  //  - a full date after "in" reads "on" ("in Thursday, December 17, 2026" -> "on ..."): only the word right before a date figure;
+  //  - exactly 1 before a plural noun from this short list reads singular ("1 leads are" -> "1 lead is"). 0 and 2+ are left as written.
+  var ASK_ONE_NOUNS = /^(\s*)(leads|events|quotes|texts|bookings|customers|weddings|messages|guests)(?![\w'’])/i;   // not a possessive ("1 weddings' totals")
+  var ASK_ONE_VERBS = { are: 'is', were: 'was', have: 'has', "aren't": "isn't", "weren't": "wasn't", "haven't": "hasn't" };
+  function askSingular(txt) {
+    var m = ASK_ONE_NOUNS.exec(txt);
+    if (!m) return txt;
+    var noun = m[2].slice(0, -1);
+    var rest = txt.slice(m[0].length);
+    var v = /^(\s+)(are|were|have|aren['’]t|weren['’]t|haven['’]t)(?![\w'’])/i.exec(rest);
+    if (v) {
+      var apos = /['’]/.exec(v[2]);
+      var w = ASK_ONE_VERBS[v[2].toLowerCase().replace(/’/, "'")];
+      if (apos && apos[0] === '’') w = w.replace("'", '’');
+      if (v[2].charAt(0) === v[2].charAt(0).toUpperCase()) w = w.charAt(0).toUpperCase() + w.slice(1);
+      rest = v[1] + w + rest.slice(v[0].length);
+    }
+    return m[1] + noun + rest;
+  }
+  // "in" before a date reads "on" ("in Thursday..." -> "on Thu, ..."), but not when "in" belongs to a verb ("Check in <date>", "Log in <date>").
+  var ASK_PHRASAL_IN = /\b(check|checks|checked|checking|log|logs|logged|logging|sign|signs|signed|signing|fill|fills|filled|filling|turn|turns|turned|drop|drops|dropped|come|comes|came|stay|stays|stayed|move|moves|moved|opt|opts|opted|call|calls|called|get|gets|got|rsvp)\s+in\s*$/i;
   function askView(res, nameFor, now) {
     var r = res && typeof res === 'object' ? res : {};
     var status = ASK_STATUSES.indexOf(r.status) !== -1 ? r.status : 'invalid';
     var parts = [];
+    var oneBefore = false;   // the figure just pushed was exactly 1 (count / guests)
     (Array.isArray(r.segments) ? r.segments : []).slice(0, 80).forEach(function (s) {
       if (!s || typeof s !== 'object') return;
+      var afterOne = oneBefore;
+      oneBefore = false;
       if (s.t === 'text') {
         var txt = String(s.v === null || s.v === undefined ? '' : s.v).replace(/[\u0000-\u0008\u000b-\u001f\u007f‪-‮⁦-⁩]/g, '');
+        if (txt && afterOne) txt = askSingular(txt);
         if (txt) parts.push({ t: 'text', v: txt });
       } else if (s.t === 'fig') {
         // Free text from the database (city, occasion, hours, a quote line) is quoted plain text, never styled like a computed figure.
         if (s.kind === 'text') { var q = askPlain(s.v); parts.push(q ? { t: 'quote', v: q } : { t: 'fig', v: '—' }); }
-        else parts.push({ t: 'fig', v: askFigure(s.kind, s.v, now) });
+        else {
+          var shown = askFigure(s.kind, s.v, now);
+          if (s.kind === 'date' && shown !== '—') {
+            var prev = parts[parts.length - 1];
+            if (prev && prev.t === 'text' && /(^|\s)in\s*$/i.test(prev.v) && !ASK_PHRASAL_IN.test(prev.v)) prev.v = prev.v.replace(/(^|\s)(in)(\s*)$/i, function (_m, a, w, z) { return a + (w === 'IN' ? 'ON' : w.charAt(0) === 'I' ? 'On' : 'on') + z; });
+          }
+          if ((s.kind === 'count' || s.kind === 'guests') && s.v !== null && s.v !== '' && typeof s.v !== 'boolean' && Number(s.v) === 1) oneBefore = true;
+          parts.push({ t: 'fig', v: shown });
+        }
       } else if (s.t === 'lead' && isUuid(s.id)) {
         var id = s.id.toLowerCase();
         var own = typeof nameFor === 'function' ? askPlain(nameFor(id)) : '';
@@ -3657,7 +3814,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   // Things a staff member never gets, whatever the config says (the server is the real gate; this keeps the page honest).
-  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team'];
+  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team', 'noQuoteFilter', 'quoteDraft'];
 
   /* ---------- Team (More, owner only): the cv-team Edge Function (team/edge/cv-team) ---------- */
 
@@ -3836,6 +3993,19 @@ function renderPriceBlockSms(lineItems, total, currency) {
     matchesFilter: matchesFilter,
     filterLeads: filterLeads,
     filterCounts: filterCounts,
+    noQuoteOpen: noQuoteOpen,
+    setOptedOutPhones: setOptedOutPhones,
+    noQuoteTag: noQuoteTag,
+    noQuoteCount: noQuoteCount,
+    noQuoteChip: noQuoteChip,
+    bookedPriceHint: bookedPriceHint,
+    needsFreshPill: needsFreshPill,
+    quoteDraftKey: quoteDraftKey,
+    quoteDraftPack: quoteDraftPack,
+    quoteDraftRead: quoteDraftRead,
+    quoteDraftBlank: quoteDraftBlank,
+    QDRAFT_PREFIX: QDRAFT_PREFIX,
+    QDRAFT_TTL_MS: QDRAFT_TTL_MS,
     actions: actions,
     confirmText: confirmText,
     canSetStatus: canSetStatus,

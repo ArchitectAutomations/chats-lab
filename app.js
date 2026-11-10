@@ -139,11 +139,11 @@
     calDay: $('cal-day'), calDayTitle: $('cal-day-title'), calDayList: $('cal-day-list'), calDayEmpty: $('cal-day-empty'), calErr: $('cal-error'),
     recNotes: $('rec-notes'), notesList: $('notes-list'), noteText: $('note-text'), noteCount: $('note-count'), noteErr: $('note-error'), noteSave: $('note-save'),
     stripNote: $('strip-note'), hStatus: $('h-status'),
-    priceBox: $('price-box'), price: $('price'), reasonBox: $('reason-box'), reasonChips: $('reason-chips'), reasonOther: $('reason-other'),
+    priceBox: $('price-box'), price: $('price'), priceHint: $('price-hint'), reasonBox: $('reason-box'), reasonChips: $('reason-chips'), reasonOther: $('reason-other'),
     reasonNote: $('reason-note'), confirmErr: $('confirm-error'),
     qAddBox: $('q-add-box'), qAdd: $('q-add'), qAddNote: $('q-add-note'), qAddErr: $('q-add-err'),
     recMyQuote: $('rec-myquote'), mqStatus: $('mq-status'), mqBody: $('mq-body'), mqNote: $('mq-note'), mqSend: $('mq-send'), mqResend: $('mq-resend'), mqErr: $('mq-error'),
-    quote: $('screen-quote'), qForm: $('q-form'), qStale: $('q-stale'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
+    quote: $('screen-quote'), qForm: $('q-form'), qStale: $('q-stale'), qRestored: $('q-restored'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
     qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qOccasionPick: $('q-occasion-pick'), qPromoPick: $('q-promo-pick'), qPromoGives: $('q-promo-gives'), qMore: $('q-more'),
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
     qCopy: $('q-copy'), qNew: $('q-new'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
@@ -166,7 +166,7 @@
     formPhone: $('form-phone'), phone: $('phone'), phoneErr: $('phone-error'), btnSend: $('btn-send'),
     formCode: $('form-code'), code: $('code'), codePhone: $('code-phone'), codeErr: $('code-error'), codeNote: $('code-note'),
     btnVerify: $('btn-verify'), btnResend: $('btn-resend'), btnChange: $('btn-change'), configErr: $('config-error'),
-    listScroll: $('list-scroll'), filters: $('filters'), listLoading: $('list-loading'), leadList: $('lead-list'),
+    listScroll: $('list-scroll'), filters: $('filters'), filtersExtra: $('filters-extra'), listLoading: $('list-loading'), leadList: $('lead-list'),
     listEmpty: $('list-empty'), filterEmpty: $('filter-empty'), listErr: $('list-error'),
     needsMore: $('needs-more'), needsLate: $('needs-late'), listHead: $('list-head'), listHeadTitle: $('list-head-title'), listBack: $('list-back'), listTrunc: $('list-trunc'), listMore: $('list-more'),
     bulk: $('bulk'), bulkDate: $('bulk-date'), bulkHead: $('bulk-head'), bulkSample: $('bulk-sample'), bulkMore: $('bulk-more'), bulkNote: $('bulk-note'),
@@ -232,6 +232,10 @@
     noteBusy: false,
     quote: { busy: false, seq: 0, view: null, req: null, raw: null, pending: null, fromLead: null, backTo: null, pre: null, added: false, adding: false, refused: false },
     quoteSendBusy: false,
+    optedPhones: [], optedAt: 0, optedBusy: false,   // numbers that opted out (lead_detail), for Add lead and the No-quote rule
+    needsDepth: 0,       // history.length right after See all pushed #/needs (0 = it did not; Back to leads then replaces instead of going back)
+    uid: '',             // the signed-in user's id (calculator draft key only); '' until known
+    overDayPending: false, // "N waiting over a day" was tapped: scroll the See-all list to that part once it is drawn
     phone: null,
     resendTimer: null,
     resendAt: 0,
@@ -871,6 +875,7 @@
       S.listError = '';
       renderBadge();
       renderLeadScreens();
+      refreshOptedPhones();
     }).catch(function (e) {
       if (n !== S.seq.list) return;
       if (!S.listLoaded) {
@@ -880,6 +885,19 @@
       maybeRecheckAccess(e);
       retryLater();
     });
+  }
+
+  // The numbers that texted STOP (lead_list cannot say; a hand-added lead keeps its status). Only the No-quote chip and tag need them: one lookup,
+  // at most once a minute while the list refreshes; a failed lookup keeps what was known.
+  function refreshOptedPhones() {
+    if (!noQuoteOn() || !S.api || typeof S.api.optedOutPhones !== 'function' || S.optedBusy || Date.now() - S.optedAt < 60000) return;
+    S.optedBusy = true;
+    Promise.resolve().then(function () { return S.api.optedOutPhones(); }).then(function (rows) {
+      if (!S.signedIn) return;
+      S.optedPhones = Array.isArray(rows) ? rows : [];
+      S.optedAt = Date.now();
+      if (L.setOptedOutPhones(S.optedPhones)) renderLeadScreens();
+    }).catch(function () { /* keep what was known */ }).then(function () { S.optedBusy = false; });
   }
 
   function refreshThread() {
@@ -910,36 +928,49 @@
     open: 'No open leads right now.',
     contacted: 'No contacted leads right now.',
     booked: 'No booked leads yet.',
-    lost: 'No lost leads.'
+    lost: 'No lost leads.',
+    noquote: 'Every open lead has a quote.'
   };
+
+  // Gap 1: the "No quote" chip and the "No quote sent" row tag. Owner only (a staff list has no prices), per-client switch
+  // features.noQuoteFilter, and the rule is the Metrics one (L.noQuoteOpen). The chip shows only while it has leads in it.
+  function noQuoteOn() { return !isStaff() && feature('noQuoteFilter'); }
+  function noQuoteShown() { return noQuoteOn() && L.noQuoteCount(S.leads) > 0; }
 
   // Round 4: five chips (Open / Contacted / Booked / Lost / All), count over label so all five fit at 320 px. Counts from the
   // server when it gave them (right past what the page fetched), else from the rows here.
   function pickFilter(key) {
     if (S.filter === key) return;
-    if (key !== 'needs') S.chip = key;
+    S.chip = key;
     S.filter = key;
     S.shown[key] = L.LIST_PAGE;
-    store('set', FILTER_KEY, key === 'needs' ? S.chip : key);   // review r4 item 6: "See all" is never remembered across reloads
+    store('set', FILTER_KEY, key);   // a chip only: "See all" is a route (#/needs), never remembered across reloads
     renderList();
     el.listScroll.scrollTop = 0;
     S.listTop = 0;
   }
 
+  function filterButton(f, counts) {
+    var b = make('button', 'filter' + (f.key === 'noquote' ? ' filter-extra' : ''));
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(S.filter === f.key));
+    if (S.listLoaded) b.appendChild(make('span', 'filter-count', counts[f.key].toLocaleString('en-CA')));
+    b.appendChild(make('span', 'filter-label', f.label));
+    b.setAttribute('aria-label', f.label + (S.listLoaded ? ', ' + counts[f.key] : '') + (f.key === 'lost' ? ', includes people who opted out' : ''));
+    b.addEventListener('click', function () { pickFilter(f.key); });
+    return b;
+  }
+
   function renderFilters() {
     var counts = L.homeCounts(S.leads, undefined, S.counts);
     var frag = document.createDocumentFragment();
-    L.filters().forEach(function (f) {
-      var b = make('button', 'filter');
-      b.type = 'button';
-      b.setAttribute('aria-pressed', String(S.filter === f.key));
-      if (S.listLoaded) b.appendChild(make('span', 'filter-count', counts[f.key].toLocaleString('en-CA')));
-      b.appendChild(make('span', 'filter-label', f.label));
-      b.setAttribute('aria-label', f.label + (S.listLoaded ? ', ' + counts[f.key] : '') + (f.key === 'lost' ? ', includes people who opted out' : ''));
-      b.addEventListener('click', function () { pickFilter(f.key); });
-      frag.appendChild(b);
-    });
+    L.filters().forEach(function (f) { frag.appendChild(filterButton(f, counts)); });
     el.filters.replaceChildren(frag);
+    // The "No quote" chip has its own row under the five (they must stay on one line at 320 px); only with the switch on and leads in it.
+    var extra = S.listLoaded && noQuoteShown();
+    if (extra) { counts.noquote = L.noQuoteCount(S.leads); el.filtersExtra.replaceChildren(filterButton(L.noQuoteChip(), counts)); }
+    else el.filtersExtra.replaceChildren();
+    show(el.filtersExtra, extra);
   }
 
   // One waiting lead: the shared row (last text + wait cue, "New" when handed over in the last 24 hours) and a Call icon
@@ -1008,9 +1039,27 @@
 
   // "N waiting over a day": the full list, opened at the first lead waiting more than a day (the "Waiting over a day" part, whose
   // count is the line's number), with enough rows drawn to reach it.
-  function openOverDay() {
+  // Both "See all" and this line go to the route #/needs (its own history entry); the list is drawn by route() -> showList, which then calls revealOverDay.
+  function openSeeAll(overDay) {
+    S.overDayPending = !!overDay;
+    if (location.hash === '#/needs') { if (overDay) revealOverDay(); return; }
+    location.hash = '#/needs';
+    try { S.needsDepth = history.length; } catch (e) { S.needsDepth = 0; }   // remembered so leaving can step back instead of pushing another entry
+  }
+  // "Back to leads" and the Leads tab while See all is open. When See all itself pushed the entry and nothing was pushed since, step back
+  // (the phone's Back then never reopens See all); otherwise (a deep link, a reload, a lead opened in between) replace the entry.
+  function leaveSeeAll() {
+    var back = false;
+    try { back = S.needsDepth > 0 && history.length === S.needsDepth && location.hash === '#/needs'; } catch (e) { back = false; }
+    S.needsDepth = 0;
+    if (back) history.back(); else location.replace('#/');
+  }
+  function openOverDay() { openSeeAll(true); }
+
+  function revealOverDay() {
+    S.overDayPending = false;
+    if (S.filter !== 'needs') return;
     var od = L.needsOverDay(L.needsYou(S.leads), 0);
-    pickFilter('needs');
     if (od.index >= L.LIST_PAGE) { S.shown.needs = Math.ceil((od.index + 1) / L.LIST_PAGE) * L.LIST_PAGE; renderList(); }
     var t = el.leadList.querySelector ? el.leadList.querySelector('[data-overday]') : null;
     if (!t) return;
@@ -1030,6 +1079,8 @@
     }
     show(el.listLoading, false);
     setText(el.listErr, '');
+    // The No-quote chip is gone (switch off, or its last lead got a quote): the list goes back to Open instead of showing an empty hidden chip.
+    if (S.filter === 'noquote' && !noQuoteShown()) { S.filter = 'open'; S.chip = 'open'; store('set', FILTER_KEY, 'open'); renderFilters(); }
     var needsMode = S.filter === 'needs';
     var view = L.homeView(S.leads, S.filter);
     var leads = view.rest;
@@ -1082,6 +1133,8 @@
     a.appendChild(top);
     a.appendChild(make('span', 'row-job', v.job));
     if (L.isManual(lead)) a.appendChild(make('span', 'row-tag', isStaff() ? 'Added by hand' : 'Added by you'));
+    var nq = noQuoteOn() ? L.noQuoteTag(lead, { staff: isStaff(), hasMoney: !!v.money }) : '';
+    if (nq) a.appendChild(make('span', 'row-tag', nq));
     if (opts.needs && v.said) a.appendChild(make('span', 'row-said', v.said)); // text only, never markup
     (opts.lines || []).forEach(function (ln) {
       if (!ln) return;
@@ -1092,7 +1145,7 @@
     if (!opts.quiet) {
       var foot = make('span', 'row-foot');
       if (opts.needs) {
-        if (opts.fresh) foot.appendChild(make('span', 'row-new', 'New'));
+        if (opts.fresh) foot.appendChild(make('span', 'row-new', L.needsFreshPill()));
         if (v.wait) foot.appendChild(waitNode(v.wait));
       } else {
         foot.appendChild(chipNode(v.chip));
@@ -1298,6 +1351,8 @@
     // Round 4: back from a lead = the same chip, the same rows shown and the same place in the list.
     var top = S.listTop;
     if (top > 0) { el.listScroll.scrollTop = top; requestAnimationFrame(function () { if (S.screen === 'list') el.listScroll.scrollTop = top; }); }
+    else if (!S.overDayPending) el.listScroll.scrollTop = 0;   // a fresh See all (or the chips again) opens at its top
+    if (S.overDayPending) revealOverDay();
     refreshList();
     if (searchActive()) runSearch();
   }
@@ -1429,10 +1484,93 @@
     if (on) el.qSubmit.setAttribute('aria-busy', 'true'); else el.qSubmit.removeAttribute('aria-busy');
   }
 
+  /* ---------- calculator draft (gap 2) ----------
+     The unfinished form survives the phone killing the app: localStorage (sessionStorage is not kept for a home-screen app), one key per
+     signed-in user (L.quoteDraftKey), 12 hours. Only the form fields and at most a lead id (L.quoteDraftPack): no phone, name or price.
+     Cleared on sign-out, on send, on Add to lead and wherever the calculator is emptied. Restored with NO link to the lead. Never touched in staff mode.
+     Switch: CV_CUSTOM.features.quoteDraft. Every storage access is inside try/catch: blocked storage just means no draft. */
+  var QD = { timer: null, owned: false };   // owned: this page wrote or restored the stored draft, so leaving the calculator may remove it
+  function qDraftKey() { return S.uid ? L.quoteDraftKey(S.uid) : ''; }
+  function qDraftOn() { return !isStaff() && feature('quoteDraft') && !!qDraftKey() && ACCESS.state === 'ready'; }
+  function qDraftSave() {
+    QD.timer = null;
+    if (!qDraftOn() || S.screen !== 'quote' || S.quote.added) return;   // a quote already on its lead is not a draft any more
+    var raw = L.quoteDraftPack(qForm(), S.quote.fromLead && S.quote.fromLead.id, Date.now());
+    try { if (raw) localStorage.setItem(qDraftKey(), raw); else localStorage.removeItem(qDraftKey()); QD.owned = true; } catch (e) { /* storage blocked or full: no draft */ }
+  }
+  function qDraftSchedule() {
+    if (!qDraftOn() || S.quote.added) return;
+    clearTimeout(QD.timer);
+    QD.timer = setTimeout(qDraftSave, 400);
+  }
+  function qDraftFlush() { if (QD.timer) { clearTimeout(QD.timer); qDraftSave(); } }
+  // force: Add and send (the draft is spent). Without it (the calculator was emptied or left) a draft this page never touched stays:
+  // it may belong to a lead whose "Price it" has not been opened yet.
+  function qDraftClear(force) {
+    clearTimeout(QD.timer); QD.timer = null;
+    if (!force && !QD.owned) return;
+    QD.owned = false;
+    var key = qDraftKey();
+    try { if (key) localStorage.removeItem(key); } catch (e) { /* ignore */ }
+  }
+  // Sign-out / access gone: every draft this browser holds for any user.
+  function qDraftClearAll() {
+    clearTimeout(QD.timer); QD.timer = null; QD.owned = false;
+    try {
+      var drop = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(L.QDRAFT_PREFIX) === 0) drop.push(k);
+      }
+      drop.forEach(function (k) { localStorage.removeItem(k); });
+    } catch (e) { /* ignore */ }
+  }
+  // On page load: every draft key of every user that is past its 12 hours (or is not a draft at all) goes.
+  function qDraftSweep() {
+    try {
+      var drop = [], now = Date.now();
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(L.QDRAFT_PREFIX) === 0 && !L.quoteDraftRead(localStorage.getItem(k), now)) drop.push(k);
+      }
+      drop.forEach(function (k) { localStorage.removeItem(k); });
+    } catch (e) { /* ignore */ }
+  }
+  // Opening the calculator. pre = the lead's prefill when it was opened from a lead's "Price it" (else none).
+  // From lead X: a draft made for X is laid over the lead's own answers (the city always comes from the lead). A draft for another lead is left alone.
+  // Plain calculator, empty: only a draft with NO lead is put back. Never a link to a lead; never a price. A draft that is old or junk is removed.
+  function qDraftRestore(pre) {
+    if (!S.uid || isStaff()) return;
+    if (!feature('quoteDraft')) { qDraftClear(true); return; }   // switch off: inert, and an old draft goes
+    var lead = pre && pre.fromLead && pre.fromLead.id ? String(pre.fromLead.id).toLowerCase() : null;
+    if (!qDraftOn() || S.quote.view) return;
+    if (!lead && !L.quoteDraftBlank(qForm())) return;
+    var raw = null;
+    try { raw = localStorage.getItem(qDraftKey()); } catch (e) { return; }
+    if (!raw) return;
+    var d = L.quoteDraftRead(raw, Date.now());
+    if (!d) { qDraftClear(true); return; }
+    if (lead) {
+      if (d.lead !== lead) return;
+      var merged = {};
+      Object.keys(pre).forEach(function (k) { merged[k] = pre[k]; });
+      Object.keys(d.pre).forEach(function (k) { if (d.pre[k] !== '' && d.pre[k] !== null) merged[k] = d.pre[k]; });
+      qFill(merged);
+      setText(el.qRestored, 'Restored your unfinished quote for this lead. Tap Get quote for the price.');
+    } else {
+      if (d.lead) return;   // made for a lead: only that lead's "Price it" gets it back
+      qFill(d.pre);
+      setText(el.qRestored, 'Restored your unfinished quote. Tap Get quote for the price.');
+    }
+    QD.owned = true;
+  }
+
   // The ONE place that empties the calculator: every field, the result, the "Copied" line and the errors.
   // Called when the owner leaves the screen, on "Start a new quote" and on sign-out. Not called on backgrounding or re-render.
   // An unsaved quote made from a lead asks first (setScreen, newQuote). Bumping S.quote.seq makes a late answer to a request sent before this point be ignored.
   function clearQuote() {
+    qDraftClear();
+    setText(el.qRestored, '');
     S.quote = { busy: false, seq: S.quote.seq + 1, view: null, req: null, raw: null, pending: null, fromLead: null, backTo: null, pre: null, added: false, adding: false, refused: false };
     el.qForm.reset(); qSetOccasion(''); qPromoHint();
     qBusy(false); qFieldErrors({}); setText(el.qErr, ''); setText(el.qStale, ''); show(el.qKmBox, false);
@@ -1462,6 +1600,7 @@
     qClearFieldError(e && e.target);
     setText(el.qErr, '');
     if (q.adding) return;
+    qDraftSchedule();
     if (q.busy) {
       if (qSameAnswers(q.pending)) return;
       q.seq++;             // the answer on its way is for the old values
@@ -1627,6 +1766,7 @@
       if (q !== S.quote || run !== q.addRun) { showToast(said); return; }   // left, started over or tried again while it saved: say so, change nothing
       q.added = true;
       q.adding = false;
+      qDraftClear(true);   // it is on the lead now: nothing left to keep
       setText(el.qAddErr, '');
       renderQuoteAdd();
       showToast(said);
@@ -1681,6 +1821,7 @@
     if (q.busy || q.adding) return;
     setText(el.qErr, '');
     setText(el.qStale, '');
+    setText(el.qRestored, '');
     var r = L.quoteRequest(qForm());
     if (!r.ok && r.errors.occasion && QP.occasions) r.errors.occasion = "That occasion can't be used in a quote. Pick one from the list.";
     if (!r.ok) {
@@ -1758,8 +1899,9 @@
     S.quotePrefill = null;
     if (pre) { S.quote.fromLead = pre.fromLead || null; S.quote.backTo = pre.backTo || null; S.quote.pre = pre; }
     buildQuotePickers();   // the lists are re-read each time: a promo that ended overnight drops out
-    if (pre) qFill(pre);
+    if (pre) { qFill(pre); qDraftRestore(pre); }
     else if (S.quote.view && !qSameAnswers(S.quote.req)) qDropPrice();   // back on the calculator: a promo dropped from the list changes the answers
+    else if (!S.quote.view) qDraftRestore(null);
     qTypeChanged();
     qBackBar();
     renderQuoteResult();
@@ -3482,7 +3624,10 @@
     // Staff never enter a price: no field at all (the owner adds it afterwards).
     var priced = booked && !isStaff();
     show(el.priceBox, priced);
-    if (priced) { el.price.value = L.amountInput(L.effectiveTotal(lead)); el.price.removeAttribute('aria-invalid'); }
+    if (priced) {
+      el.price.value = L.amountInput(L.effectiveTotal(lead)); el.price.removeAttribute('aria-invalid');
+      setText(el.priceHint, L.bookedPriceHint(el.price.value));   // "From the quote" only when a price really was filled in from one
+    }
     show(el.reasonBox, lost);
     if (lost) {
       var checked = el.reasonChips.querySelectorAll('input');
@@ -3831,7 +3976,7 @@
       frag.appendChild(sums);
     }
     el.mqBody.replaceChildren(frag);
-    setText(el.mqNote, q.note);
+    setText(el.mqNote, [q.note, q.age && q.age.text].filter(Boolean).join(' '));   // gap 3: how old the saved price is, in the same muted line
     show(el.mqSend, q.canSend);
     el.mqSend.textContent = q.sendLabel;
     show(el.mqResend, q.canResend);
@@ -3872,6 +4017,7 @@
     setText(el.mqErr, '');
     renderMyQuote(S.thread.lead);
     Promise.resolve().then(function () { return S.api.quoteSend({ lead_id: id, hash: c.hash, resend: c.resend, expected_count: c.count, expected_total: c.total }); }).then(function () {
+      qDraftClear(true);
       if (id === S.thread.id) setText(el.mqErr, '');
     }).catch(function (e) {
       if (id === S.thread.id) setText(el.mqErr, L.quoteSendError(e));
@@ -4174,6 +4320,22 @@
 
   /* ---------- routing ---------- */
 
+  // The full Needs-you list ("See all") is the route #/needs, so the phone's Back returns to the Leads list and the Leads tab leaves it.
+  // The page's filter follows the hash: #/needs shows it; any other list route (the Leads tab, "Back to leads") shows the chip again.
+  // Coming back from a lead keeps the list and its place, because S.filter was not touched while the lead was open.
+  function syncNeedsRoute(needs) {
+    if (needs && S.filter !== 'needs') {
+      S.filter = 'needs'; S.shown.needs = L.LIST_PAGE; S.listTop = 0;
+    } else if (!needs && S.filter === 'needs') {
+      var k = S.chip && S.chip !== 'needs' ? S.chip : 'open';
+      S.needsDepth = 0;
+      S.filter = k; S.shown[k] = L.LIST_PAGE; S.listTop = 0;
+      store('set', FILTER_KEY, k);
+    }
+  }
+  // Where "back to the list" goes: See all when that is what was open.
+  function listHref() { return S.tab && S.tab.route === 'list' && S.filter === 'needs' ? '#/needs' : (S.tab ? S.tab.href : '#/'); }
+
   function route() {
     var r = L.parseRoute(location.hash, TAB_ROUTES);
     if (!S.signedIn) {
@@ -4188,6 +4350,7 @@
       if (r.name === 'list' && L.isUuid(target)) { location.replace('#/lead/' + target); return; }
     }
     trackNav(r.name);
+    if (r.name === 'list') syncNeedsRoute(!!r.needs);
     if (r.name === 'lead') {
       // Coming back from the calculator to the lead it was opened from: Back on the lead goes where it went before (not to the calculator's More tab).
       var from = S.screen === 'quote' ? S.quote.backTo : null;
@@ -4243,6 +4406,7 @@
 
   // Nothing of a lead stays in memory or in the page once access is gone.
   function clearLeadData() {
+    qDraftClearAll();
     clearTimeout(S.refreshTimer);
     S.seq.list++; S.seq.thread++; S.seq.followups++;
     S.leads = []; S.listLoaded = false; S.listError = ''; S.counts = null; S.shown = {}; S.listTop = 0;
@@ -4300,6 +4464,10 @@
 
   function beginSession() {
     S.signedIn = true;
+    // Who is signed in: only the calculator draft is keyed by it. Unknown until this answers = no draft is read or written.
+    Promise.resolve().then(function () { return S.base && S.base.getSession(); }).then(function (sess) {
+      if (S.signedIn) S.uid = sess && sess.user && typeof sess.user.id === 'string' ? sess.user.id : '';
+    }).catch(function () { /* no id: no draft */ });
     checkAccess();
   }
 
@@ -4359,6 +4527,7 @@
     clearQuote();
     S.cal = null; S.showPossible = false;
     clearLeadData();
+    S.uid = ''; S.optedPhones = []; S.optedAt = 0; L.setOptedOutPhones([]);
     el.fuBody.replaceChildren();
     renderBadge(); renderNeeds([]);
     el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.metricsBody.replaceChildren();
@@ -4624,7 +4793,7 @@
     // Back: from a lead record to the tab it was opened from; from a tool under More to More.
     el.back.addEventListener('click', function () {
       if (S.screen === 'quote' && S.quote.backTo) { location.hash = '#/lead/' + encodeURIComponent(S.quote.backTo.id); return; }
-      location.hash = S.screen === 'thread' ? S.tab.href : navFor('more').href;
+      location.hash = S.screen === 'thread' ? listHref() : navFor('more').href;
     });
 
     el.alertsSum.addEventListener('click', function () { P.open = !P.open; renderPush(); });
@@ -4638,9 +4807,14 @@
 
     // Status actions
     // Home lists (round 4): the full Needs-you list, back to the chips, and "Show more".
-    el.needsMore.addEventListener('click', function () { pickFilter('needs'); });
+    el.needsMore.addEventListener('click', function () { openSeeAll(false); });
     el.needsLate.addEventListener('click', openOverDay);
-    el.listBack.addEventListener('click', function () { pickFilter(S.chip && S.chip !== 'needs' ? S.chip : 'open'); });
+    el.listBack.addEventListener('click', leaveSeeAll);
+    // The Leads tab while See all is open leaves it the same way (an ordinary link everywhere else).
+    el.tabbarList.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('a.tab') : null;
+      if (a && a.getAttribute('data-route') === 'list' && location.hash === '#/needs') { e.preventDefault(); leaveSeeAll(); }
+    });
     el.listMore.addEventListener('click', function () {
       S.shown[S.filter] = Math.max(L.LIST_PAGE, S.shown[S.filter] || 0) + L.LIST_PAGE;
       renderList();
@@ -4780,9 +4954,11 @@
 
     // Phones background tabs and drop sockets: catch up the moment the page is back.
     document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') qDraftFlush();   // the phone may kill the app next: write the draft now, not in 400 ms
       if (document.visibilityState === 'visible' && S.signedIn && ACCESS.state === 'error') { checkAccess(); return; }
       if (document.visibilityState === 'visible' && S.signedIn) { scheduleRefresh(0); if (S.screen === 'support') refreshSupportList(); }
     });
+    window.addEventListener('pagehide', qDraftFlush);
     window.addEventListener('online', function () { if (S.signedIn && ACCESS.state === 'error') checkAccess(); else if (S.signedIn) scheduleRefresh(0); });
 
     // Safety net if Realtime is down, and keeps "2 min ago" honest.
@@ -4814,7 +4990,7 @@
 
   function restorePrefs() {
     var f = store('get', FILTER_KEY);
-    S.filter = L.isFilterKey(f) ? f : 'open';
+    S.filter = L.isFilterKey(f) && (f !== 'noquote' || noQuoteOn()) ? f : 'open';
     S.chip = S.filter === 'needs' ? 'open' : S.filter;
     S.showPossible = store('get', POSSIBLE_KEY) === '1';
   }
@@ -4836,6 +5012,7 @@
     show(el.searchWrap, HAS_SEARCH);
     applyAppName();
     restorePrefs();
+    qDraftSweep();
     bindEvents();
     if (!MOCK && (configMissing() || !window.supabase)) {
       showSignin();

@@ -105,7 +105,7 @@
 }
 /* Focus + links INSIDE a sand surface sit on sand: use the dark purple. (A row or card's own ring
    is drawn outside it, on green, so it keeps the light purple.) */
-.rec-card, .sheet, .alerts { --link: var(--accent-strong); --focus: var(--accent-strong); }
+.rec-card, .sheet, .alerts, .fc-note { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* .fc-note: the forecast's cream card (its "Review them" link was 1.44:1 in the light green-surface purple) */
 .sheet, .field { color-scheme: light; }
 
 * { box-sizing: border-box; }
@@ -446,6 +446,9 @@ a { color: var(--link); }
   border-radius: var(--r-md); border: 1.5px solid var(--muted-on-primary); background: transparent;
   font-size: 13px; font-weight: 600; color: var(--on-primary); white-space: nowrap; line-height: 1.15;
 }
+/* Gap 1: the "No quote" chip has its own row (#filters-extra) under the five, so the five stay on one line at 320 px (they never wrap). */
+.filters-extra { padding-top: 0; }
+.filter.filter-extra { flex: 0 0 auto; flex-direction: row; gap: 8px; min-height: 40px; padding: 4px 14px; border-radius: var(--r-pill); }
 .filter-count { font-variant-numeric: tabular-nums; color: var(--on-primary); font-weight: 750; font-size: var(--fs-md); }
 .filter-label { color: var(--muted-on-primary); }
 .filter[aria-pressed="true"] { background: var(--action); border-color: var(--action); color: var(--on-accent); }
@@ -473,6 +476,9 @@ a { color: var(--link); }
   background: var(--accent-tint); color: var(--accent-ink); font-size: var(--fs-xs); font-weight: 750;
 }
 .lead-row.is-needs .row-foot { justify-content: flex-start; }
+/* D5: the pill is longer now ("Needs you · last 24 h"): it never breaks in two; the wait cue drops under it when the line is full. */
+.lead-row.is-needs.has-call .row-foot { flex-wrap: wrap; }
+.row-new { white-space: nowrap; }
 .filter-note { max-width: var(--content); margin: 0 auto; padding: 0 calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-2) calc(var(--gutter) + env(safe-area-inset-left)); color: var(--muted-on-primary); font-size: var(--fs-sm); }
 
 /* ---------- thread: status actions (on the sand strip) ---------- */
@@ -660,9 +666,14 @@ a { color: var(--link); }
 .bulk-meta { font-size: var(--fs-sm); color: var(--muted-on-secondary); }
 .sheet .sheet-note#bulk-head { font-weight: 650; }
 .sheet.sheet-bulk { max-height: 94vh; max-height: 94dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
-.sheet.sheet-bulk #bulk-yes { background: transparent; color: var(--on-secondary); border-color: var(--on-secondary); }
-.sheet.sheet-bulk #bulk-yes:active { background: var(--secondary-deep); }
+/* The confirm is a solid forest-green button (clear, but never purple: this one changes many leads). Mark and Cancel are pinned to the foot of the
+   sheet, so they are on screen at 375x667 whatever the preview list holds; only the content above them scrolls (same footer as the Add lead sheet). */
+.sheet.sheet-bulk #bulk-yes { background: var(--on-secondary); color: var(--secondary); border-color: var(--on-secondary); margin-top: 12px; }
+.sheet.sheet-bulk #bulk-yes:active { background: var(--primary-deep); }
 .sheet.sheet-bulk #bulk-yes[disabled] { opacity: 0.5; }
+.sheet-bulk .sheet-body { padding-bottom: 0; }
+.sheet-bulk .sheet-actions { position: sticky; bottom: 0; margin: 12px calc(-1 * (var(--gutter) + 4px)) 0; padding: 0 calc(var(--gutter) + 4px) calc(8px + env(safe-area-inset-bottom)); background: var(--secondary); box-shadow: 0 -1px 0 var(--secondary-deep); }
+.sheet-bulk .sheet-actions .btn.quiet { margin-top: 2px; }
 .fc-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 650; color: var(--link); text-decoration: underline; cursor: pointer; min-height: 24px; }
 
 /* ---------- search (Leads, on green) ---------- */
@@ -823,6 +834,7 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .q-new { display: block; margin: 22px auto 0; min-height: 44px; padding: 0 12px; background: none; border: 0; color: var(--link); font: inherit; font-size: var(--fs-sm); text-decoration: underline; text-underline-offset: 2px; }
 .q-new:disabled { opacity: .5; }
 .q-stale { margin: 14px 0 0; }
+.q-restored { margin: 0 0 var(--sp-3); font-weight: 650; }
 
 /* Alerts on this phone (More tab). A sand card; same panel and logic as before. */
 .alerts { margin: 0 0 var(--sp-3); padding: var(--sp-4); border-radius: var(--r-lg); background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card); }
