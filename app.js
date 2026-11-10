@@ -30,7 +30,7 @@
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
     setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test',
-    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
+    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', exportConfig: 'cv_config', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
   };
   function trackApi(api) {
     Object.keys(API_NAMES).forEach(function (k) {
@@ -150,14 +150,14 @@
     reasonNote: $('reason-note'), confirmErr: $('confirm-error'),
     qAddBox: $('q-add-box'), qAdd: $('q-add'), qAddNote: $('q-add-note'), qAddErr: $('q-add-err'),
     recMyQuote: $('rec-myquote'), mqStatus: $('mq-status'), mqBody: $('mq-body'), mqNote: $('mq-note'), mqSend: $('mq-send'), mqResend: $('mq-resend'), mqErr: $('mq-error'),
-    quote: $('screen-quote'), qForm: $('q-form'), qStale: $('q-stale'), qRestored: $('q-restored'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
+    quote: $('screen-quote'), qForm: $('q-form'), qStale: $('q-stale'), qRestored: $('q-restored'), qPromoEnded: $('q-promo-ended'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
     qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qOccasionPick: $('q-occasion-pick'), qPromoPick: $('q-promo-pick'), qPromoGives: $('q-promo-gives'), qMore: $('q-more'),
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
     qCopy: $('q-copy'), qNew: $('q-new'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
     askScreen: $('screen-ask'), askScroll: $('ask-scroll'), askThread: $('ask-thread'), askStarters: $('ask-starters'), askForm: $('ask-form'), askInput: $('ask-input'),
     askSend: $('ask-send'), askCount: $('ask-count'),
     exportScreen: $('screen-export'), exGroup: $('ex-group'), exDates: $('ex-dates'), exFrom: $('ex-from'), exTo: $('ex-to'), exMake: $('ex-make'),
-    exStatus: $('ex-status'), exSave: $('ex-save'), exHint: $('ex-hint'), exError: $('ex-error'),
+    exStatus: $('ex-status'), exOff: $('ex-off'), exSave: $('ex-save'), exHint: $('ex-hint'), exError: $('ex-error'),
     teamScreen: $('screen-team'), tmOff: $('tm-off'), tmForm: $('tm-form'), tmName: $('tm-name'), tmPhone: $('tm-phone'), tmErrName: $('tm-err-name'), tmErrPhone: $('tm-err-phone'),
     tmFull: $('tm-full'), tmError: $('tm-error'), tmAdd: $('tm-add'), tmDone: $('tm-done'), tmLink: $('tm-link'), tmCopy: $('tm-copy'), tmCopyMsg: $('tm-copy-msg'),
     tmListLoading: $('tm-list-loading'), tmList: $('tm-list'), tmListEmpty: $('tm-list-empty'), tmListError: $('tm-list-error'), tmReload: $('tm-reload'), tmRowMsg: $('tm-row-msg'),
@@ -232,7 +232,7 @@
     pastErr: '',
     pastLatest: null,    // newest in-flight cv_past_events fetch (older ones wait for it)
     pastScroll: false,   // 'Review them' link: scroll to the section once it is drawn
-    pastLimit: 50,       // Did these happen?: rows asked for (50 more per "Show more", up to 200)
+    pastLimit: 10,       // Did these happen?: rows asked for (D2: 10 first, then 50 more per "Show more", up to 200)
     bulk: { open: false, date: '', view: null, seq: 0, busy: false, err: '', done: '', undo: null },  // clear old leads in bulk (round 4)
     search: { q: '', rows: null, error: '', seq: 0, timer: null },  // memory only: never URL / storage
     cal: null,           // { y, m, sel } month on screen and picked day
@@ -265,7 +265,7 @@
     team: { view: null, listErr: '', listSeq: 0, addBusy: false, busy: {}, confirmPhone: '', confirmName: '', loading: false },  // Team: memory only
     support: { cfg: null, cfgState: 'idle', key: null, busy: false, removeLead: false, rows: null, listErr: false, listSeq: 0, cfgSeq: 0 },
     ask: { cfg: null, cfgState: 'idle', cfgSeq: 0, cfgPromise: null, items: [], questions: [], busy: false, seq: 0, waitTimer: null },  // Ask your CRM: memory only, never stored
-    exp: { busy: false, seq: 0, prepared: null },  // spreadsheet download: the file made by tap 1, kept in memory for tap 2
+    exp: { busy: false, seq: 0, prepared: null, on: null, cfgSeq: 0 },  // spreadsheet download: the file made by tap 1, kept in memory for tap 2
     actionButtons: {}
   };
 
@@ -566,7 +566,7 @@
       deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
       forecast: function () { return client.rpc('cv_forecast').then(ok); },
-      pastEvents: function (limit) { return client.rpc('cv_past_events', { p_limit: limit || 50 }).then(ok); },
+      pastEvents: function (limit) { return client.rpc('cv_past_events', { p_limit: limit || 10 }).then(ok); },
       // sql/025: clear old leads in bulk (owner only). Errors keep their { message, details } for L.bulkErrorText.
       bulkPreview: function (before) { return client.rpc('cv_bulk_lost_preview', { p_before: before || null }).then(ok); },
       // review r4 item 1: the fingerprint of the exact set the preview showed; the server refuses 'changed' when it differs.
@@ -585,6 +585,8 @@
       supportList: function () { return client.rpc('cv_support_list').then(ok); },
       // Spreadsheet download (owner-only RPC, sql/013): rows only; labels and CSV are built in lib.js.
       exportLeads: function (args) { return client.rpc('cv_export_leads', args).then(ok); },
+      // D10: the database's own switch (cv_config export_enabled; the owner can read cv_config). -> { value } or null when there is no row.
+      exportConfig: function () { return client.from('cv_config').select('value').eq('key', 'export_enabled').maybeSingle().then(ok); },
       // Round 4: in pages like the lead list (a busy owner can have more than 1,000 rows here too), up to L.LIST_CAP. Review r4
       // item 7: keyset on lead_id (due_at is worked out from now(), so it is no key). A full page ends inside some lead's rows, so
       // that lead's rows are dropped and read again, whole, by the next page (lead_id >= it). A lead has a few rows at most.
@@ -1119,7 +1121,7 @@
         });
       });
     } else {
-      pg.rows.forEach(function (lead) { frag.appendChild(leadRow(lead)); });
+      pg.rows.forEach(function (lead) { frag.appendChild(leadRow(lead, { mainList: true })); });   // G1: the only place the "No quote sent" tag shows
     }
     el.leadList.replaceChildren(frag);
     el.listMore.textContent = pg.moreText;
@@ -1130,7 +1132,8 @@
 
   // THE lead row (Home, search, Calendar day, Lead value, Follow-ups): name and one price on top, date and guests,
   // then status chip and "last text 15 min ago". opts.needs = Needs-you card (no chip, last text + wait line);
-  // opts.lines = extra plain lines under the job line (Follow-ups); opts.quiet = no status chip / time (sent history).
+  // opts.lines = extra plain lines under the job line (Follow-ups); opts.quiet = no status chip / time (sent history);
+  // opts.mainList = this is the main list (or its No quote filter): only there does a row carry the "No quote sent" tag (G1).
   // Returns an <li>; its first child is the link.
   function leadRow(lead, opts) {
     opts = opts || {};
@@ -1144,7 +1147,7 @@
     a.appendChild(top);
     a.appendChild(make('span', 'row-job', v.job));
     if (L.isManual(lead)) a.appendChild(make('span', 'row-tag', isStaff() ? 'Added by hand' : 'Added by you'));
-    var nq = noQuoteOn() ? L.noQuoteTag(lead, { staff: isStaff(), hasMoney: !!v.money }) : '';
+    var nq = noQuoteOn() ? L.noQuoteTag(lead, { staff: isStaff(), hasMoney: !!v.money, mainList: !!opts.mainList }) : '';
     if (nq) a.appendChild(make('span', 'row-tag', nq));
     if (opts.needs && v.said) a.appendChild(make('span', 'row-said', v.said)); // text only, never markup
     (opts.lines || []).forEach(function (ln) {
@@ -1568,12 +1571,20 @@
       Object.keys(d.pre).forEach(function (k) { if (d.pre[k] !== '' && d.pre[k] !== null) merged[k] = d.pre[k]; });
       qFill(merged);
       setText(el.qRestored, 'Restored your unfinished quote for this lead. Tap Get quote for the price.');
+      qDraftPromoEnded(d.pre.promo);
     } else {
       if (d.lead) return;   // made for a lead: only that lead's "Price it" gets it back
       qFill(d.pre);
       setText(el.qRestored, 'Restored your unfinished quote. Tap Get quote for the price.');
+      qDraftPromoEnded(d.pre.promo);
     }
     QD.owned = true;
+  }
+
+  // G7: a restored draft whose promo has ended (its `to` date in CV_CUSTOM.quotePromos): qFill already left the Promo code empty, so say why,
+  // above Get quote. Nothing for a code that is unlisted, not started, or a text-box client.
+  function qDraftPromoEnded(code) {
+    setText(el.qPromoEnded, code ? L.promoEndedNote(custom, code) : '');
   }
 
   // The ONE place that empties the calculator: every field, the result, the "Copied" line and the errors.
@@ -1582,6 +1593,7 @@
   function clearQuote() {
     qDraftClear();
     setText(el.qRestored, '');
+    setText(el.qPromoEnded, '');
     S.quote = { busy: false, seq: S.quote.seq + 1, view: null, req: null, raw: null, pending: null, fromLead: null, backTo: null, pre: null, added: false, adding: false, refused: false };
     el.qForm.reset(); qSetOccasion(''); qPromoHint();
     qBusy(false); qFieldErrors({}); setText(el.qErr, ''); setText(el.qStale, ''); show(el.qKmBox, false);
@@ -1610,6 +1622,7 @@
     var q = S.quote;
     qClearFieldError(e && e.target);
     setText(el.qErr, '');
+    if (e && e.target === el.qPromo) setText(el.qPromoEnded, '');   // G7: the owner picked a promo, the old note is spent
     if (q.adding) return;
     qDraftSchedule();
     if (q.busy) {
@@ -1833,6 +1846,7 @@
     setText(el.qErr, '');
     setText(el.qStale, '');
     setText(el.qRestored, '');
+    setText(el.qPromoEnded, '');
     var r = L.quoteRequest(qForm());
     if (!r.ok && r.errors.occasion && QP.occasions) r.errors.occasion = "That occasion can't be used in a quote. Pick one from the list.";
     if (!r.ok) {
@@ -1984,7 +1998,7 @@
 
   function setExportBusy(on) {
     S.exp.busy = on;
-    el.exMake.disabled = on;
+    el.exMake.disabled = on || S.exp.on === false;
     el.exMake.classList.toggle('is-busy', on);
   }
 
@@ -2001,7 +2015,7 @@
   }
 
   function makeExport() {
-    if (S.exp.busy) return;
+    if (S.exp.busy || S.exp.on === false) return;
     var r = L.exportArgs(exportGroup(), el.exFrom.value, el.exTo.value);
     clearPrepared();
     if (!r.ok) { setText(el.exError, r.error); return; }
@@ -2030,7 +2044,10 @@
       show(el.exSave, true);
     }, function (err) {
       if (n !== S.exp.seq) return;
-      setText(el.exError, L.exportErrorText(err));
+      var msg = L.exportErrorText(err);
+      // The server says export is off: remember it, so the off line (and the guide's off step) show without another read.
+      if (msg === L.EXPORT_OFF_TEXT) { S.exp.on = false; S.exp.cfgSeq++; renderExportOff(); if (S.screen === 'guide') renderGuide(); return; }
+      setText(el.exError, msg);
     }).then(function () { if (n === S.exp.seq) setExportBusy(false); });
   }
 
@@ -2060,9 +2077,32 @@
     });
   }
 
+  // D10: when the database's export switch is off, the screen says so the moment it opens (it used to wait for a failed Make spreadsheet).
+  // S.exp.on: true / false = the last answer, null = not known (a failed read forgets a remembered off and says nothing; the server still refuses a download that is off).
+  function renderExportOff() {
+    setText(el.exOff, S.exp.on === false ? L.EXPORT_OFF_TEXT : '');
+    el.exMake.disabled = S.exp.busy || S.exp.on === false;
+  }
+  function exportCfgOn() { return feature('export') && !isStaff() && !!S.api && typeof S.api.exportConfig === 'function'; }
+  function loadExportConfig() {
+    var x = S.exp;
+    if (!exportCfgOn()) return Promise.resolve();
+    var seq = ++x.cfgSeq;
+    return Promise.resolve().then(function () { return S.api.exportConfig(); }).then(function (row) {
+      if (seq !== x.cfgSeq || !S.signedIn) return;
+      x.on = L.exportConfigView(row).enabled;
+    }, function () { if (seq === x.cfgSeq) x.on = null; /* a failed read is not an answer: forget any remembered "off", the server decides */ }).then(function () {
+      if (seq !== x.cfgSeq) return;
+      if (S.screen === 'export') renderExportOff();
+      else if (S.screen === 'guide') renderGuide();
+    });
+  }
+
   function showExport() {
     S.thread.id = null;
     setScreen('export');
+    renderExportOff();
+    loadExportConfig();
   }
 
   /* ---------- How to use the CRM (More) ----------
@@ -2093,6 +2133,8 @@
       case 'push': return HAS_PUSH && L.pushState(pushEnv()) !== 'hidden';
       case 'noQuoteFilter': return noQuoteOn();
       case 'quoteDraft': return feature('quoteDraft');
+      case 'quotePromoEnds': return feature('quoteDraft') && L.quotePromosEnd(custom);
+      case 'exportOff': return guideFlag('export') && !!S.exp && S.exp.on === false;   // D10: only once the database has said off
       case 'quoteAge': return feature('quote') && Number(custom.quoteAgeWarnDays) !== 0;
       case 'forecast': return feature('forecast') && !!L.forecastView(S.forecast);
       case 'value': return feature('value');
@@ -2151,7 +2193,7 @@
     // The database's say-so for Ask / Help and the forecast arrive on their own; draw again when they land (a section never shows before it is known to be on).
     var again = function () { if (S.screen === 'guide') renderGuide(); };
     var sp = S.support;
-    Promise.all([loadAskConfig(), sp.cfgState === 'ready' ? null : loadSupportConfig(), refreshForecast(), refreshPastEvents()]).then(again, again);
+    Promise.all([loadAskConfig(), sp.cfgState === 'ready' ? null : loadSupportConfig(), refreshForecast(), refreshPastEvents(), loadExportConfig()]).then(again, again);
   }
 
   /* ---------- Ask your CRM (More) ----------
@@ -3004,6 +3046,17 @@
     h.id = 'fu-past-h'; h.tabIndex = -1; h.setAttribute('data-pe', 'head');
     h.appendChild(make('span', 'pe-count', String(v.total)));
     sec.appendChild(h);
+    // D2: "N passed events. Clear old ones in bulk": N is the server's total, the link opens the bulk sheet (owner only, like the button below).
+    var top = make('p', 'fu-rule pe-top-line', v.topLine);
+    top.setAttribute('data-pe', 'topline');
+    if (bulkOn()) {
+      top.appendChild(document.createTextNode(' '));
+      var tl = make('button', 'fc-link pe-top-link', v.bulkLink);
+      tl.type = 'button';
+      tl.addEventListener('click', openBulk);
+      top.appendChild(tl);
+    }
+    sec.appendChild(top);
     sec.appendChild(make('p', 'fu-rule pe-rule', 'These events have passed. Mark what happened.'));
     if (S.pastErr) { var er = make('p', 'error pe-err', S.pastErr); er.setAttribute('role', 'alert'); sec.appendChild(er); }
     var ul = make('ul', 'fu-list pe-list');
@@ -3154,7 +3207,7 @@
       S.bulk.undo = r && r.batch_id ? { batchId: r.batch_id, count: Number(r.marked) || 0, at: r.at, text: L.bulkUndoLine(r.marked, r.at) || S.bulk.done } : null;
       closeBulk();
       showToast(S.bulk.done);
-      S.pastLimit = 50;
+      S.pastLimit = 10;
       if (S.screen === 'followups') renderFollowUps();
       return bulkSettle();
     }, function (e) {
@@ -4577,6 +4630,7 @@
     loadBrand();
     loadPush();
     loadSupportConfig();
+    loadExportConfig();
     route();
   }
 
@@ -4637,7 +4691,8 @@
     S.leads = []; S.listLoaded = false; S.listError = '';
     S.thread = emptyThread();
     S.filter = 'open'; S.chip = 'open'; S.pending = null; S.tab = NAV[0];
-    S.counts = null; S.shown = {}; S.listTop = 0; S.pastLimit = 50;
+    S.counts = null; S.shown = {}; S.listTop = 0; S.pastLimit = 10;
+    S.exp.cfgSeq++; S.exp.on = null;
     S.bulk = { open: false, date: '', view: null, seq: S.bulk.seq + 1, busy: false, err: '', done: '', undo: null };
     S.seq.metrics++; S.seq.forecast++; S.seq.pastEvents++; S.pastEvents = null; S.pastBusy = ''; S.pastErr = ''; S.pastScroll = false; S.forecast = null; S.metrics = null; S.metricsError = '';
     S.seq.followups++; S.followUps = null; S.followUpsError = '';

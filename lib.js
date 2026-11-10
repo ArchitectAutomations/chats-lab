@@ -390,10 +390,12 @@
     return lead.quote_total === null || lead.quote_total === undefined || lead.quote_total === '';
   }
   // The "No quote sent" tag on a list row: owner only (a staff list has no prices, so every row would match), and only when the row
-  // has no money text of its own (a saved price already reads "$X not sent" there). opts: { staff: bool, hasMoney: bool }.
+  // has no money text of its own (a saved price already reads "$X not sent" there).
+  // G1 (Kevin 11-10): the tag is for the MAIN LIST (and its No quote filter) only. Search, Calendar, Follow-ups, See all and the Needs-you
+  // cards ask without opts.mainList and get nothing. opts: { staff, hasMoney, mainList }.
   function noQuoteTag(lead, opts) {
     var o = opts || {};
-    if (o.staff || o.hasMoney || !noQuoteOpen(lead)) return '';
+    if (o.mainList !== true || o.staff || o.hasMoney || !noQuoteOpen(lead)) return '';
     return 'No quote sent';
   }
   function noQuoteCount(leads) {
@@ -1087,14 +1089,16 @@
 
   /* ---------- Did these happen? (cv_past_events, sql/016) ---------- */
 
+  var PE_FIRST = 10;  // D2 (Kevin 11-10): the first call asks for 10 rows (p_limit 10); "Show more" then adds PE_SHOW at a time
   var PE_SHOW = 50;
   var PE_MAX = 200;   // cv_past_events clamps p_limit to 200
   // The cv_past_events() JSON -> what the section shows, or null when it must stay hidden (no data, switched off, nothing to review).
   // Names are plain text; the database sends no phone, email, address or messages, and none is read here.
-  // limit (round 4): how many the owner has asked to see, 50 at a time ("Show more") up to 200; canMore = another page exists.
+  // limit (round 4, D2): how many the owner has asked to see: 10 to start, then 50 more per "Show more" up to 200; canMore = another page exists.
+  // topLine / bulkLink (D2): the line at the top of the section, "N passed events." + the link that opens the bulk-clear sheet.
   function pastEventsView(res, limit) {
     if (!res || typeof res !== 'object' || res.enabled === false || !Array.isArray(res.items)) return null;
-    var lim = Math.min(PE_MAX, Math.max(PE_SHOW, Math.floor(Number(limit) || 0)));
+    var lim = Math.min(PE_MAX, Math.max(PE_FIRST, Math.floor(Number(limit) || 0)));
     var items = [];
     res.items.slice(0, lim).forEach(function (it) {
       if (!it || !isUuid(it.lead_id)) return;
@@ -1113,6 +1117,7 @@
     if (total === null || total < items.length) total = items.length;
     var canMore = total > items.length && items.length >= lim && lim < PE_MAX;
     return { total: total, items: items, more: total - items.length, limit: lim, canMore: canMore,
+      topLine: plural(total, 'passed event', 'passed events') + '.', bulkLink: 'Clear old ones in bulk',
       nextLimit: Math.min(PE_MAX, lim + PE_SHOW),
       moreBtn: canMore ? moreLabel(Math.min(PE_SHOW, total - items.length, PE_MAX - lim), total - items.length) : '',
       moreText: (total - items.length) + ' more. They appear here as you mark these.' };
@@ -1991,6 +1996,20 @@
     if (!all) return null;
     var td = today(now).ymd;
     return all.filter(function (e) { return (!e.from || td >= e.from) && (!e.to || td < e.to); });
+  }
+  // G7 (Kevin 11-10): a promo from a restored draft whose end date (`to`, the first day it no longer works) has passed in the client's
+  // time zone -> "That promo has ended." '' for anything else (no list, unknown code, not started yet, no end date, still running).
+  var PROMO_ENDED_TEXT = 'That promo has ended.';
+  function promoEndedNote(c, code, now) {
+    var all = quotePromoList(c);
+    var k = String(code == null ? '' : code).trim().toLowerCase();
+    if (!all || !k) return '';
+    var e = all.filter(function (x) { return x.code === k; })[0];
+    return e && e.to && today(now).ymd >= e.to ? PROMO_ENDED_TEXT : '';
+  }
+  // Is any listed promo given an end date? (The guide only talks about an ended promo for a client that has one.)
+  function quotePromosEnd(c) {
+    return (quotePromoList(c) || []).some(function (e) { return !!e.to; });
   }
   // What the picker says under the choice: what it gives, then which event dates it covers.
   function promoGives(e) {
@@ -3071,7 +3090,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
      own names, filled in here: {tab_<route>} = the tab / More label, {contacted} {booked} {lost} {needs} = the status words ({x_lc} lower case),
      {lost_reasons} and {sources} = the pick-lists. The guide never names a person, and never mentions a feature that is not on. */
   var GUIDE_FLAGS = ['followups', 'calendar', 'metrics', 'quote', 'export', 'ask', 'support', 'supportContact', 'supportNoContact', 'supportSend', 'supportNoSend', 'pastEvents', 'bulk',
-    'addLead', 'search', 'push', 'noQuoteFilter', 'quoteDraft', 'quoteAge', 'forecast', 'value'];
+    'addLead', 'search', 'push', 'noQuoteFilter', 'quoteDraft', 'quoteAge', 'forecast', 'value', 'quotePromoEnds', 'exportOff'];
   var GUIDE = {
     lede: 'Short steps for the jobs you do most. Tap a heading to open it.',
     quickstart: {
@@ -3079,7 +3098,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       steps: [
         'On {tab_list}, look at {needs} at the top. Tap a name to open the lead.',
         'Tap Call, Text or Email to reach them. Then, under Change status, tap {contacted}.',
-        'After the event, under Change status, tap {booked} or {lost}. That keeps your records right.'
+        'After the event, under Change status, tap {booked} or {lost}.'
       ]
     },
     sections: [
@@ -3100,7 +3119,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       { id: 'find', title: 'Find a lead', f: [], steps: [
         'On {tab_list}, tap a button near the top to narrow the list: Open, {contacted}, {booked}, {lost} or All. The number on a button counts its leads.',
         { t: 'Or type a name, phone number or email in the search box at the top (Search name, phone or email).', f: ['search'] },
-        { t: 'The No quote button, on its own row below, lists open leads with no quote yet. Their rows say No quote sent.', f: ['noQuoteFilter'] },
+        { t: 'The No quote button lists open leads with no quote yet. Their rows say No quote sent (this list only).', f: ['noQuoteFilter'] },
         { t: 'Open one and tap Price it in the quote calculator.', f: ['noQuoteFilter', 'quote'] },
         'At the end of longer lists, tap Show more (it reads like Show 50 more) for the next leads, or Back to top.'
       ], note: 'The {lost} button also holds people who opted out.' },
@@ -3116,11 +3135,12 @@ function renderPriceBlockSms(lineItems, total, currency) {
       { id: 'quote', title: 'Make a quote', f: ['quote'], steps: [
         'Tap More, then {tab_quote}.',
         'Fill in Number of guests, How many hours of service, Portable bar required? and Event city. More details (optional) holds the Event date, Occasion and Promo code.',
-        'Tap Get quote, then Copy quote to copy the price, or Start a new quote for the next one.',
-        'From a lead\'s Price it link, tap Add this quote to followed by the lead\'s name (for example Add this quote to Sam) to save the price there.',
-        { t: 'If your phone closes the app on this screen, open {tab_quote} again: your answers come back (Restored your unfinished quote) for up to 12 hours, on the same phone.', f: ['quoteDraft'] },
+        'Tap Get quote, then Copy quote, or Start a new quote for the next one.',
+        'From a lead\'s Price it link, tap Add this quote to followed by the lead\'s name to save the price there.',
+        { t: 'If your phone closes the app on this screen, open {tab_quote} again: your answers come back (Restored your unfinished quote) for up to 12 hours.', f: ['quoteDraft'] },
+        { t: 'If a saved promo has ended, the quote says so and leaves the promo blank.', f: ['quoteDraft', 'quotePromoEnds'] },
         { t: 'If you leave the screen yourself, the form is cleared. A form from a lead\'s Price it link comes back only if the app was closed on that screen: open that Price it link again.', f: ['quoteDraft'] },
-        { t: 'A saved price you never used shows how old it is after a few weeks, for example Priced 23 days ago. On the lead, tap Change this price in the quote calculator and work it out again.', f: ['quoteAge'] }
+        { t: 'A saved price you never used shows how old it is after a few weeks (Priced 23 days ago). On the lead, tap Change this price in the quote calculator and work it out again.', f: ['quoteAge'] }
       ], note: { t: 'Names and phone numbers are never kept.', f: ['quoteDraft'] } },
       { id: 'calendar', title: 'Check your calendar', f: ['calendar'], steps: [
         'Tap {tab_calendar}. This week and Later list coming events; the month grid shows booked ones. Switch on Include leads not booked yet to add the rest.',
@@ -3141,7 +3161,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
       { id: 'export', title: 'Download your leads', f: ['export'], steps: [
         'Tap More, then {tab_export}.',
         'Under Which leads, pick All, Open, {booked} or {lost}. Pick dates (optional) limits it by when the lead came in.',
-        'Tap Make spreadsheet, then Save file. It opens in Numbers, Excel or Google Sheets, one row per event.'
+        'Tap Make spreadsheet, then Save file. It opens in Numbers, Excel or Google Sheets, one row per event.',
+        { t: 'If the screen says the download is off, ask for it to be turned on.', f: ['exportOff'] }
       ] },
       { id: 'support', title: 'Write down a help request', f: ['support'], steps: [
         'Tap More, then {tab_support}. Under What is it?, pick Something\'s broken, A question or An idea.',
@@ -3152,7 +3173,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
         'Your requests, further down, lists each one with its status.'
       ], note: { t: 'Only use the Urgent switch for something that stops you working right now.', f: ['supportSend'] } },
       { id: 'bulk', title: 'Clear out old leads in bulk', f: ['followups', 'pastEvents', 'bulk'], steps: [
-        'Tap {tab_followups}, then Clear old ones in bulk under Did these happen?',
+        'Tap {tab_followups}, then Clear old ones in bulk, on the top line of Did these happen?',
         'Pick a date under Event before. The box counts the open leads with an event before it. Leads with a text, a hand-over or a change in the last 14 days are left alone, and so are leads with more than one event date.',
         'Tap the button that says, for example, Mark 97 leads {lost}. Nothing is texted to anyone; they are marked {lost} with the reason {old_lead}. Tap Cancel to back out.',
         'Changed your mind? Tap Undo on the line at the top of {tab_followups} (7 days, latest bulk clear only).'
@@ -3164,7 +3185,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     ],
     faq: [
       { q: 'I marked the wrong status. Can I change it?', a: 'Yes. On the lead, under Change status, tap the right one. Going back from {booked} or {lost} to {contacted} clears its price or reason. A lead that opted out is locked.', f: [] },
-      { q: 'Did I lose my quote?', a: 'If your phone closed the app while you were on the quote screen, open {tab_quote} again: your answers come back. If you left the screen yourself, the form is cleared.', f: ['quote', 'quoteDraft'] },
+      { q: 'Did I lose my quote?', a: 'If your phone closed the app while you were on the quote screen, open {tab_quote} again and your answers come back. If you left the screen yourself, the form is cleared.', f: ['quote', 'quoteDraft'] },
       { q: 'How do I sign out?', a: 'Tap More, then Sign out.', f: [] }
     ]
   };
@@ -3751,6 +3772,14 @@ function renderPriceBlockSms(lineItems, total, currency) {
     return { text: fmt(got) + (got === 1 ? ' lead ready.' : ' leads ready.'), canSave: true, name: name };
   }
 
+  // D10 (Kevin 11-10): export_enabled is a cv_config row, 'true' = on; anything else or a missing row = off (the same rule cv_export_leads uses).
+  // row = { key, value } or null -> { enabled, offText }. A read that FAILED is not an answer: the caller leaves the screen as it was.
+  var EXPORT_OFF_TEXT = 'Spreadsheet download is turned off. Ask Kevin.';
+  function exportConfigView(row) {
+    var on = !!row && typeof row === 'object' && row.value === 'true';
+    return { enabled: on, offText: on ? '' : EXPORT_OFF_TEXT };
+  }
+
   function exportErrorText(err) {
     var e = err && typeof err === 'object' ? err : {};
     var msg = String(e.message || e.error || (typeof err === 'string' ? err : '')).trim().toLowerCase();
@@ -3761,7 +3790,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     if (!word && (e.status === 401 || e.code === 'PGRST301' || /jwt/.test(msg))) return SESSION_RAN_OUT;
     var why = m && m[2] ? String(m[2]).trim().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_') : det;
     if (word === 'not_owner') return 'You’re signed out. Sign in again.';
-    if (word === 'not_allowed') return 'Spreadsheet download is turned off. Ask Kevin.';
+    if (word === 'not_allowed') return EXPORT_OFF_TEXT;
     if (word === 'bad_input' && why === 'dates_range') return 'Pick a real date between 2000 and 2100.';
     if (word === 'bad_input') return why === 'dates' ? 'The end date is before the start date.' : 'Something in the choices isn’t right. Try again.';
     return 'Couldn’t make the file. Check your connection and try again.';
@@ -4185,6 +4214,9 @@ function renderPriceBlockSms(lineItems, total, currency) {
     noQuoteTag: noQuoteTag,
     noQuoteCount: noQuoteCount,
     noQuoteChip: noQuoteChip,
+    promoEndedNote: promoEndedNote,
+    quotePromosEnd: quotePromosEnd,
+    PROMO_ENDED_TEXT: PROMO_ENDED_TEXT,
     bookedPriceHint: bookedPriceHint,
     needsFreshPill: needsFreshPill,
     quoteDraftKey: quoteDraftKey,
@@ -4412,6 +4444,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
     exportArgs: exportArgs,
     exportResult: exportResult,
     exportErrorText: exportErrorText,
+    exportConfigView: exportConfigView,
+    EXPORT_OFF_TEXT: EXPORT_OFF_TEXT,
     ASK_MAX_DEFAULT: ASK_MAX_DEFAULT,
     ASK_FALLBACK: ASK_FALLBACK,
     askConfigView: askConfigView,
