@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261109-2342-8ec0d7a7d";
+window.CV_BUILD = "20261110-0115-f3fb9d58d";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -92,7 +92,8 @@ window.CV_CUSTOM = {
 
   // Reason chips on the "Mark as lost" sheet (also used in history lines and Metrics).
   // Keys are fixed (they are what the database stores): price, date_taken, no_reply, went_elsewhere, other.
-  lostReasons: { price: 'Price', date_taken: 'Date taken', no_reply: 'No reply', went_elsewhere: 'Went elsewhere', other: 'Other' },
+  // old_lead is the bulk clear's own reason (sql/026): shown on chips, history, Metrics, the spreadsheet; never a chip on the sheet.
+  lostReasons: { price: 'Price', date_taken: 'Date taken', no_reply: 'No reply', went_elsewhere: 'Went elsewhere', other: 'Other', old_lead: 'Old lead' },
 
   // Where a lead you add by hand came from (the four chips on "+ Add lead", and the source line on the record).
   // Keys are fixed (they are what the database stores): instagram, phone_call, referral, other.

@@ -1045,7 +1045,7 @@
 
   /* ---------- clear old leads in bulk (round 4, sql/025 cv_bulk_lost*) ---------- */
 
-  var BULK_NOTE = 'Old lead, not followed up';
+  var BULK_REASON_KEY = 'old_lead';   // sql/026: the reason cv_bulk_lost writes (no note)
   // The date box's first value: the 1st of last month ("mark everything before October as Lost").
   function bulkDefaultDate(now) {
     var t = today(now), p = shiftMonth(t.y, t.m, -1);
@@ -1081,7 +1081,7 @@
       left: bulkLeftText(res.left_recent, res.left_more_dates),
       headline: !before ? '' : n === 0 ? 'No open leads have an event before ' + before + '.'
         : plural(n, 'lead', 'leads') + ' with an event before ' + before + ' will be marked ' + statusInfo('lost').label + '.',
-      note: n > 0 && !tooMany ? 'No texts are sent. Reason: Other, "' + BULK_NOTE + '". Booked, lost, opted-out and future events are left alone. You can undo this.' : '',
+      note: n > 0 && !tooMany ? 'No texts are sent. Reason: ' + lostReasonLabel(BULK_REASON_KEY) + '. Booked, lost, opted-out and future events are left alone. You can undo this.' : '',
       capText: tooMany ? 'That is more than ' + cap.toLocaleString('en-CA') + ' at once. Pick an earlier date and clear them in steps.' : '',
       confirm: n > 0 && !tooMany && fp ? 'Mark ' + plural(n, 'lead', 'leads') + ' ' + statusInfo('lost').label : '',
       undo: u ? { batchId: u.batch_id, count: Math.floor(num(u.can_undo)), at: u.at, text: bulkUndoLine(u.marked, u.at, now) } : null
@@ -2214,6 +2214,10 @@ function renderPriceBlockSms(lineItems, total, currency) {
     { key: 'went_elsewhere', label: 'Went elsewhere' },
     { key: 'other', label: 'Other' }
   ];
+  // sql/026: the bulk clear's own reason. Shown wherever a reason is shown (chip, history, Metrics, spreadsheet, Ask), never
+  // offered on the Lost sheet (owner or staff): cv_set_lead_status refuses it; only cv_bulk_lost writes it.
+  var BULK_REASON = { key: BULK_REASON_KEY, label: 'Old lead' };
+  var ALL_LOST_REASONS = LOST_REASONS.concat([BULK_REASON]);
   var LOST_NOTE_MAX = 500;
   var AMOUNT_MAX = 100000;
 
@@ -2224,8 +2228,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
   function lostReasonLabel(key) {
     var k = String(key || '').toLowerCase();
     if (!k) return '';
-    var r = lostReasons().filter(function (x) { return x.key === k; })[0];
-    return r ? r.label : humanize(k);
+    var r = ALL_LOST_REASONS.filter(function (x) { return x.key === k; })[0];
+    return r ? CUSTOM.lost[r.key] || r.label : humanize(k);
   }
 
   // Money typed by the owner -> { ok, value } (dollars, 2 decimals max) or { ok: false, error }.
@@ -3536,7 +3540,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     if (!k) return '';
     if (STATUS[k] || CUSTOM.status[k]) return statusInfo(k).label;
     if (k === 'high' || k === 'medium' || k === 'low' || k === 'none') return CUSTOM.tiers[k] || TIERS.filter(function (t) { return t.key === k; })[0].label;
-    if (LOST_REASONS.some(function (r) { return r.key === k; })) return lostReasonLabel(k);
+    if (ALL_LOST_REASONS.some(function (r) { return r.key === k; })) return lostReasonLabel(k);
     if (Object.prototype.hasOwnProperty.call(ASK_SOURCES, k)) return ASK_SOURCES[k];
     if (k.indexOf('manual:') === 0) return 'Added by you · ' + manualSourceLabel(k.slice(7));
     if (Object.prototype.hasOwnProperty.call(ASK_KINDS, k)) return ASK_KINDS[k];
@@ -3997,7 +4001,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     listTruncNote: listTruncNote,
     keysetAfter: keysetAfter,
     leadIndex: leadIndex,
-    BULK_NOTE: BULK_NOTE,
+    BULK_REASON_KEY: BULK_REASON_KEY,
     bulkDefaultDate: bulkDefaultDate,
     bulkPreviewView: bulkPreviewView,
     bulkErrorText: bulkErrorText,
