@@ -174,7 +174,7 @@
     formPhone: $('form-phone'), phone: $('phone'), phoneErr: $('phone-error'), btnSend: $('btn-send'),
     formCode: $('form-code'), code: $('code'), codePhone: $('code-phone'), codeErr: $('code-error'), codeNote: $('code-note'),
     btnVerify: $('btn-verify'), btnResend: $('btn-resend'), btnChange: $('btn-change'), configErr: $('config-error'),
-    listScroll: $('list-scroll'), filters: $('filters'), filtersExtra: $('filters-extra'), listLoading: $('list-loading'), leadList: $('lead-list'),
+    listScroll: $('list-scroll'), filters: $('filters'), filtersExtra: $('filters-extra'), lostParts: $('lost-parts'), listLoading: $('list-loading'), leadList: $('lead-list'),
     listEmpty: $('list-empty'), filterEmpty: $('filter-empty'), listErr: $('list-error'),
     needsMore: $('needs-more'), needsLate: $('needs-late'), listHead: $('list-head'), listHeadTitle: $('list-head-title'), listBack: $('list-back'), listTrunc: $('list-trunc'), listMore: $('list-more'), listTop: $('list-top'),
     bulk: $('bulk'), bulkDate: $('bulk-date'), bulkHead: $('bulk-head'), bulkSample: $('bulk-sample'), bulkMore: $('bulk-more'), bulkNote: $('bulk-note'),
@@ -213,6 +213,7 @@
     signedIn: false,
     leads: [],
     counts: null,        // cv_list_counts (sql/025) from the last refresh; null = count the rows the page has
+    lostPart: 'real',    // D3: which part of the Lost chip is showing (real | old | optout); owner only
     shown: {},           // list key -> rows drawn so far ("Show more", round 4); kept while the page is open
     listTop: 0,          // the list's scroll position when a lead was opened, put back on return
     listLoaded: false,
@@ -967,7 +968,7 @@
     b.setAttribute('aria-pressed', String(S.filter === f.key));
     if (S.listLoaded) b.appendChild(make('span', 'filter-count', counts[f.key].toLocaleString('en-CA')));
     b.appendChild(make('span', 'filter-label', f.label));
-    b.setAttribute('aria-label', f.label + (S.listLoaded ? ', ' + counts[f.key] : '') + (f.key === 'lost' ? ', includes people who opted out' : ''));
+    b.setAttribute('aria-label', f.label + (S.listLoaded ? ', ' + counts[f.key] : '') + (f.key === 'lost' ? ', includes old leads and people who opted out' : ''));
     b.addEventListener('click', function () { pickFilter(f.key); });
     return b;
   }
@@ -982,6 +983,37 @@
     if (extra) { counts.noquote = L.noQuoteCount(S.leads); el.filtersExtra.replaceChildren(filterButton(L.noQuoteChip(), counts)); }
     else el.filtersExtra.replaceChildren();
     show(el.filtersExtra, extra);
+    renderLostParts();
+  }
+
+  // D3 (Kevin 11-10): under the Lost chip, a toggle Lost / Old lead / Opted out. Owner only (staff have no server counts and keep the one Lost
+  // list). Counts are the server's (cv_list_counts lost_real / lost_old / lost_optout) past what the page fetched, else the rows here.
+  function pickLostPart(key) {
+    if (S.lostPart === key) return;
+    S.lostPart = key;
+    S.shown.lost = L.LIST_PAGE;
+    renderList();
+    el.listScroll.scrollTop = 0;
+    S.listTop = 0;
+  }
+  function lostPartsOn() { return !isStaff() && S.filter === 'lost' && S.listLoaded; }
+  function renderLostParts() {
+    var on = lostPartsOn();
+    if (!on) { el.lostParts.replaceChildren(); show(el.lostParts, false); return; }
+    var counts = L.lostCounts(S.leads, S.counts);
+    var frag = document.createDocumentFragment();
+    L.lostParts().forEach(function (p) {
+      var b = make('button', 'filter filter-extra');
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(S.lostPart === p.key));
+      b.appendChild(make('span', 'filter-count', counts[p.key].toLocaleString('en-CA')));
+      b.appendChild(make('span', 'filter-label', p.label));
+      b.setAttribute('aria-label', p.label + ', ' + counts[p.key]);
+      b.addEventListener('click', function () { pickLostPart(p.key); });
+      frag.appendChild(b);
+    });
+    el.lostParts.replaceChildren(frag);
+    show(el.lostParts, true);
   }
 
   // One waiting lead: the shared row (last text + wait cue, "New" when handed over in the last 24 hours) and a Call icon
@@ -1093,15 +1125,16 @@
     // The No-quote chip is gone (switch off, or its last lead got a quote): the list goes back to Open instead of showing an empty hidden chip.
     if (S.filter === 'noquote' && !noQuoteShown()) { S.filter = 'open'; S.chip = 'open'; store('set', FILTER_KEY, 'open'); renderFilters(); }
     var needsMode = S.filter === 'needs';
-    var view = L.homeView(S.leads, S.filter);
+    var view = L.homeView(S.leads, S.filter, undefined, lostPartsOn() ? S.lostPart : null);
     var leads = view.rest;
     renderNeeds(view.needs, view.needsAll.length, view.needsAll);
     show(el.listHead, needsMode);
     if (needsMode) el.listHeadTitle.textContent = L.statusInfo('handed_off').label + ': ' + view.needsAll.length + ', newest first';
     show(el.listEmpty, S.leads.length === 0);
-    var none = needsMode ? 'Nobody is waiting on you right now.' : (FILTER_EMPTY[S.filter] || 'No leads here.');
+    var none = needsMode ? 'Nobody is waiting on you right now.' : (lostPartsOn() ? L.LOST_PART_EMPTY[S.lostPart] : FILTER_EMPTY[S.filter]) || 'No leads here.';
     setText(el.filterEmpty, S.leads.length > 0 && leads.length === 0 ? none : '');
-    setText(el.filterNote, S.filter === 'lost' && S.leads.length > 0 ? 'Includes people who opted out.' : '');
+    // D3: with the toggle showing (owner) each part says what it is; staff, who have no toggle, keep the one line.
+    setText(el.filterNote, S.filter === 'lost' && S.leads.length > 0 && !lostPartsOn() ? 'Includes people who opted out.' : '');
     setText(el.listTrunc, L.listTruncNote(S.leads.length, S.counts && S.counts.all));
     var pg = L.listPage(needsMode ? view.needsAll : leads, S.shown[S.filter]);
     show(el.leadList, pg.rows.length > 0);
@@ -3183,7 +3216,8 @@
     el.bulkSample.replaceChildren(frag);
     show(el.bulkSample, !!(v && v.sample.length));
     setText(el.bulkMore, v && v.sample.length && v.sampleMore > 0 ? 'and ' + v.sampleMore.toLocaleString('en-CA') + ' more' : '');
-    setText(el.bulkNote, v ? (v.capText || [v.left, v.note].filter(Boolean).join(' ')) : '');
+    // v.stopLine = "Includes N who texted STOP." (028 F3): isolated, so it comes out in one place if Kevin rules STOP leads out of the bulk clear.
+    setText(el.bulkNote, v ? (v.capText || [v.stopLine, v.left, v.note].filter(Boolean).join(' ')) : '');
     setText(el.bulkErr, S.bulk.err);
     el.bulkYes.textContent = S.bulk.busy ? 'Saving…' : (v && v.confirm ? v.confirm : 'Mark as ' + L.statusInfo('lost').label);
     el.bulkYes.disabled = !!S.bulk.busy || !(v && v.confirm);
@@ -3688,12 +3722,13 @@
   }
 
   // The owner: every button still ahead. Staff: open leads only, and only the buttons whose switch is on.
-  function actionsAheadFor(current) { return isStaff() ? L.staffActionsAhead(current, ACCESS.perms) : L.actionsAhead(current); }
-  // The status that decides the buttons: the owner's includes the opted-out flag; staff keep the plain status.
+  // A1 (Kevin 11-10): the owner (asOwner true) may mark a lead who texted STOP; staff are locked out of one exactly as before.
+  function actionsAheadFor(current) { return isStaff() ? L.staffActionsAhead(current, ACCESS.perms) : L.actionsAhead(current, true); }
+  // The status that decides the buttons: the plain status, for the owner and for staff.
   function actionsKeyFor(lead) { return isStaff() ? String((lead && lead.status) || '').toLowerCase() : L.actionsKey(lead); }
   function actionsNoteFor(current) {
     var c = String(current || '').toLowerCase();
-    return isStaff() ? L.staffActionsNote(c, ACCESS.perms) : L.actionsNote(c);
+    return isStaff() ? L.staffActionsNote(c, ACCESS.perms) : L.actionsNote(c, true);
   }
 
   function renderActions() {
@@ -3708,7 +3743,7 @@
       var isCurrent = current === a.status;
       var busy = S.pending === a.status;
       b.hidden = !!lead && !showAll && ahead.indexOf(a.status) === -1 && !busy;
-      b.disabled = !lead || !L.canSetStatus(current, a.status) || !!S.pending;
+      b.disabled = !lead || !L.canSetStatus(current, a.status, !isStaff()) || !!S.pending;
       b.classList.toggle('is-current', isCurrent);
       if (isCurrent) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
       b.classList.toggle('is-busy', busy);
@@ -4023,7 +4058,7 @@
     if (phone && tel) { el.recPhone.textContent = phone; el.recPhone.href = tel; show(el.recPhone, true); }
     else { el.recPhone.textContent = ''; el.recPhone.removeAttribute('href'); show(el.recPhone, false); }
     show(el.recPhoneRow, !!(phone && tel));
-    var actions = L.contactActions(lead, custom.contactActions);
+    var actions = L.contactActions(lead, custom.contactActions, { staff: isStaff() });
     var frag = document.createDocumentFragment();
     actions.forEach(function (a) {
       var link = make('a', 'contact-btn contact-' + a.key);
@@ -4034,7 +4069,8 @@
     });
     el.contactActions.replaceChildren(frag);
     show(el.contactActions, actions.length > 0);
-    setText(el.contactNote, L.isOptedOut(lead) ? 'Texting is off because this person opted out. Calling and email still work.' : '');
+    // B2 (Kevin 11-10): the owner may still text them from his own phone; staff keep the old line (their Text button stays off).
+    setText(el.contactNote, L.isOptedOut(lead) ? (isStaff() ? 'Texting is off because this person opted out. Calling and email still work.' : L.STOP_PERSONAL_TEXT) : '');
     show(el.recContact, actions.length > 0 || L.isOptedOut(lead));
   }
 
@@ -4244,7 +4280,9 @@
     var lead = S.thread.lead;
     if (!lead) return;
     // A booked lead's date and price are already in the job line below: no second sentence (C4).
-    var t = L.statusGroup(lead.status) === 'booked' ? '' : L.nextAction(lead, undefined, L.pendingNudge(S.followUps, S.thread.id));
+    var t = L.statusGroup(lead.status) === 'booked' ? '' : L.nextAction(lead, undefined, L.pendingNudge(S.followUps, S.thread.id), { owner: !isStaff() });
+    if (!isStaff() && L.stopNextLine(lead)) t = L.stopNextLine(lead);   // B2: a hand-added STOP lead waiting on the owner reads "Call or text them yourself."
+
     if (el.recNext.textContent !== t || el.recNext.hidden !== !t) setText(el.recNext, t);
   }
 
@@ -4284,6 +4322,7 @@
     fillSource(lead);
     setText(el.recNoauto, L.noAutoLine(lead));
     show(el.recHead, true);
+    el.optoutBanner.textContent = L.stopBanner(isStaff());   // B2: the owner may still text them; the system will not
     show(el.optoutBanner, L.isOptedOut(lead));
     renderContact(lead);
     renderEmail(lead);
@@ -4291,7 +4330,7 @@
     var lostNote = String(lead.status || '').toLowerCase() === 'lost' ? String(lead.lost_note || '').trim() : '';
     setText(el.stripNote, lostNote ? 'Why: ' + lostNote : '');
     var statusKey = actionsKeyFor(lead);
-    setText(el.hStatus, isStaff() && actionsNoteFor(statusKey) && !actionsAheadFor(statusKey).length ? 'Status locked' : L.statusHeading(statusKey));
+    setText(el.hStatus, isStaff() && actionsNoteFor(statusKey) && !actionsAheadFor(statusKey).length ? 'Status locked' : L.statusHeading(statusKey, !isStaff()));
     renderActions();
     renderHistory();
     // The card is only there while there is something to do or say: buttons ahead, a lost note, or a locked-status note.
@@ -4580,7 +4619,7 @@
     qDraftClearAll();
     clearTimeout(S.refreshTimer);
     S.seq.list++; S.seq.thread++; S.seq.followups++;
-    S.leads = []; S.listLoaded = false; S.listError = ''; S.counts = null; S.shown = {}; S.listTop = 0;
+    S.leads = []; S.listLoaded = false; S.listError = ''; S.counts = null; S.shown = {}; S.lostPart = 'real'; S.listTop = 0;
     S.bulk = { open: false, date: '', view: null, seq: S.bulk.seq + 1, busy: false, err: '', done: '', undo: null };
     S.thread = emptyThread(); S.followUps = null; S.followUpsError = '';
     clearSearch();

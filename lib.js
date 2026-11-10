@@ -432,13 +432,29 @@
     });
   }
 
-  // A lead who never agreed to automatic texts (added by hand): auto_texts false, or a manual source
-  // (lead_list has no auto_texts column). The server never texts these leads on its own.
+  // A lead who never agreed to automatic texts (added by hand): auto_texts false. The server never texts these leads on its own.
+  // R2 (B6): lead_list and lead_detail both carry auto_texts now, so it decides whenever it is there: a hand-added lead that a website form
+  // for the same date upgraded has auto_texts true and is treated like a form lead. Only a read with no auto_texts at all (an older server)
+  // falls back to the source.
   function noConsent(lead) {
     if (!lead) return false;
+    if (lead.auto_texts === true) return false;
     if (lead.auto_texts === false) return true;
-    return lead.source === 'manual' && lead.auto_texts !== true;
+    return lead.source === 'manual';
   }
+
+  // A1 / B2 (Kevin 11-10): the lines about a lead who texted STOP. They say the same thing wherever they show.
+  var STOP_NO_FOLLOWUP = "They texted STOP, so they won't get a follow-up text.";
+  // B2 (chair, 11-10): the red banner on the record. STOP only stops AUTOMATIC texts; the owner may still text them himself, so his banner says what the system does.
+  // Staff keep the old words. The record's "next" line for a STOP lead who waits on the owner is never empty (owner only).
+  var STOP_BANNER_OWNER = 'They texted STOP: the system sends them nothing.';
+  var STOP_BANNER_STAFF = 'Do not text: this person opted out.';
+  function stopBanner(staff) { return staff ? STOP_BANNER_STAFF : STOP_BANNER_OWNER; }
+  // Same rule as Needs you (waitsOnOwner): only a STOP lead that really waits on the owner (a hand-added one), never a form lead with just the flag.
+  function stopNextLine(lead) {
+    return waitsOnOwner(lead) && isOptedOut(lead) ? 'Call or text them yourself.' : '';
+  }
+  var STOP_PERSONAL_TEXT = 'They texted STOP to your business number. Texts from your own phone are up to you.';
 
   // WF3 needs the event date to be on or after the day it runs, and marked now it runs at the first 10 am at least 5 days away.
   // WF3 counts 120 real hours (not calendar days), so the clock change in Toronto can move its run day; count the same way.
@@ -457,6 +473,12 @@
     if (ACTION_STATUSES.indexOf(status) === -1) return '';
     var lc = function (st) { return statusInfo(st).label.toLowerCase(); };
     var q = 'Mark ' + who + ' as ' + lc(status) + '?';
+    // A1 (Kevin 11-10): a lead who texted STOP can be marked Contacted by the owner; the sheet says plainly that no follow-up goes to them. Before the
+    // booked / lost line (which it adds to) and the no-consent line (the STOP fact matters more to the owner).
+    if (status === 'contacted' && isOptedOut(lead)) {
+      var gone = lead.status === 'booked' || lead.status === 'lost' ? ' The ' + lc(lead.status) + (lead.status === 'booked' ? ' price' : ' reason') + ' will be cleared.' : '';
+      return q + gone + ' ' + STOP_NO_FOLLOWUP;
+    }
     if (plain) return q; // no promise about texts: used where the page cannot tell which leads get follow-ups
     // 021: moving a booked or lost lead back uses up the day-5 text and removes what was recorded (sql/021), so the sheet says both. Before the no-consent line: an added lead has a price to lose too.
     if (status === 'contacted' && lead && (lead.status === 'booked' || lead.status === 'lost')) {
@@ -464,7 +486,7 @@
     }
     if (status === 'contacted' && noConsent(lead)) return q + ' No automatic texts go to leads you added.';
     if (status === 'contacted') {
-      if (lead && (lead.opted_out === true || followupMissesEvent(lead.event_date, now))) return q + ' No follow-up text will go out.';
+      if (lead && followupMissesEvent(lead.event_date, now)) return q + ' No follow-up text will go out.';
       // Contacted or texted before: its one follow-up may be used up, and the page cannot see that. Promise nothing.
       if (lead && (lead.contacted_at || lead.nudge_sent_at)) return q;
       // 022: the server's own answer (lead_detail.followup_possible) beats the promise below; absent (older read, staff) = as before.
@@ -480,52 +502,64 @@
     return String(prefilled === null || prefilled === undefined ? '' : prefilled).trim() ? 'From the quote. Change it if the price differs.' : '';
   }
 
-  // 022: the sheet's two buttons when a lead with no quote could really get the day-5 text (both facts come from the server, lead_detail).
-  // The note describes WF3's actual text (F016_FOLLOWUP_TEMPLATE): it never names a quote or a price.
+  // 022 + R2 (B5, Kevin 11-10 "C"): the sheet's two buttons on Contacted whenever the server says the lead could really get the day-5 text
+  // (lead_detail.followup_possible === true): form and text-first leads, quoted or not. Never for a lead who texted STOP (A1: the sheet says so
+  // instead, see confirmText) and never for a hand-added lead with no consent (the server says followup_possible false for both; the checks are
+  // belt and braces). The FIRST button (send) is today's behaviour for a quoted lead.
+  // The notes describe WF3's actual text (F016_FOLLOWUP_TEMPLATE): it never names a quote or a price.
   // null = no choice: the usual sheet and the usual single button.
+  var FOLLOWUP_TEXT_NOTE = "If you send the follow-up, they get one text in 5 days saying you reached out and asking if they'd still like to go ahead. It doesn't mention a quote or a price.";
   function followupChoice(name, status, lead) {
     if (status !== 'contacted' || !lead) return null;
-    if (lead.quote_received !== false || lead.followup_possible !== true) return null;
+    if (lead.followup_possible !== true || isOptedOut(lead) || noConsent(lead)) return null;
     var who = String(name || '').trim() || 'This lead';
     var lc = statusInfo('contacted').label.toLowerCase();
+    var note = lead.quote_received === true
+      ? who + ' already has a quote. ' + FOLLOWUP_TEXT_NOTE + " Choose no follow-up if you'd rather chase them yourself."
+      : lead.quote_received === false
+        ? who + " hasn't received a quote yet. " + FOLLOWUP_TEXT_NOTE
+        : FOLLOWUP_TEXT_NOTE.charAt(0).toUpperCase() + FOLLOWUP_TEXT_NOTE.slice(1);
     return {
       text: 'Mark ' + (String(name || '').trim() || 'this lead') + ' as ' + lc + '?',
-      note: who + " hasn't received a quote yet. If you send the follow-up, they get one text in 5 days saying you reached out and asking if they'd still like to go ahead. It doesn't mention a quote or a price.",
+      note: note,
       send: 'Mark ' + lc + ' and send the follow-up',
       none: 'Mark ' + lc + ', no follow-up'
     };
   }
 
-  // Can the page offer this change? Mirrors cv_set_lead_status (sql/021): the current status again is a no-op;
-  // won / dormant / opted-out leads are locked; everything else is open to the owner, including going back from
-  // booked or lost to contacted. Staff have their own stricter rules (staffActionsAhead, cv_set_lead_status).
+  // Can the page offer this change? Mirrors cv_set_lead_status (sql/021, 028): the current status again is a no-op;
+  // won / dormant leads are locked for everyone; a lead who texted STOP (status opted_out) is locked for staff but open to the OWNER (A1,
+  // Kevin 11-10), so the owner's callers pass asOwner = true; everything else is open to the owner, including going back from
+  // booked or lost to contacted. Staff have their own stricter rules (staffActionsAhead, cv_set_lead_status). Leaving asOwner out = the
+  // locked answer, so a caller that forgets it can only ever offer less.
   var LOCKED = { won: 1, dormant: 1, opted_out: 1 };
-  function canSetStatus(current, target) {
+  var OWNER_OPEN = { opted_out: 1 };
+  function canSetStatus(current, target, asOwner) {
     var c = String(current || '').toLowerCase();
     if (!target || c === target) return false;
-    if (LOCKED[c]) return false;
+    if (LOCKED[c] && !(asOwner === true && OWNER_OPEN[c])) return false;
     return true;
   }
 
-  // The status that decides the owner's buttons. The server locks a lead whose number opted out (the flag) whatever its
-  // status says, except one the owner added by hand (011). Staff keep reading the plain status (staffActionsAhead).
+  // The status that decides the owner's buttons: the plain status. (Before R2 the opted-out flag locked the buttons; the owner may now
+  // mark a lead who texted STOP, so the flag no longer changes them.) Staff keep reading the plain status (staffActionsAhead).
   function actionsKey(lead) {
-    var c = String((lead && lead.status) || '').toLowerCase();
-    return lead && lead.opted_out === true && lead.source !== 'manual' ? 'opted_out' : c;
+    return String((lead && lead.status) || '').toLowerCase();
   }
 
-  // One plain line under the buttons when the page can't change this lead at all.
-  function actionsNote(current) {
+  // One plain line under the buttons when the page can't change this lead at all. Staff (asOwner not true) are still locked out of a lead who
+  // texted STOP; the owner is not (A1).
+  function actionsNote(current, asOwner) {
     var c = String(current || '').toLowerCase();
-    if (c === 'opted_out') return 'This lead opted out of texts, so their status is locked.';
+    if (c === 'opted_out' && asOwner !== true) return 'This lead opted out of texts, so their status is locked.';
     if (c === 'won' || c === 'dormant') return 'This lead is closed, so its status is locked.';
     return '';
   }
 
   // Heading of the status card: plain when the page can't change this lead at all ("Status locked").
-  function statusHeading(current) {
+  function statusHeading(current, asOwner) {
     var c = String(current || '').toLowerCase();
-    return actionsNote(c) && !actionsAhead(c).length ? 'Status locked' : 'Change status';
+    return actionsNote(c, asOwner) && !actionsAhead(c, asOwner).length ? 'Status locked' : 'Change status';
   }
 
   // Postgres exceptions raised by cv_set_lead_status -> plain words.
@@ -548,6 +582,11 @@
     bad_followup: 'Pick one of the two follow-up choices.',
     followup_only_with_contacted: 'Pick one of the two follow-up choices.'
   };
+  // 028 (A1): a stale page asked to send the follow-up to a lead who texted STOP. Nothing was saved; the page refetches after this.
+  // The status word is the client's own (statusInfo), not hard-coded.
+  function stopRefusalText() {
+    return 'They texted STOP, so no follow-up text can be sent to them. The page is up to date now: tap ' + statusInfo('contacted').label + ' again and it will save without one.';
+  }
 
   // Staff-only refusals from cv_set_lead_status (sql/018): plain words.
   var STAFF_ERRORS = {
@@ -564,6 +603,7 @@
     if (m) {
       if (m[1] === 'bad_input') {
         var why = String(m[2] || (err && err.details) || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
+        if (why === 'opted_out_no_followup') return stopRefusalText();
         return BAD_INPUT[why] || 'Check the price or the reason and try again.';
       }
       if (m[1] === 'not_owner' && role === 'staff') return 'The owner has switched this off for your account.';
@@ -594,7 +634,7 @@
   };
 
   // lead_history.no_followup (sql/022): why a page Contacted took the day-5 text away.
-  var NO_FOLLOWUP_HISTORY = { chosen: 'No follow-up text (you chose)', no_quote: 'No follow-up text (no quote sent)' };
+  var NO_FOLLOWUP_HISTORY = { chosen: 'No follow-up text (you chose)', no_quote: 'No follow-up text (no quote sent)', opted_out: 'No follow-up text (they texted STOP)' };
   function historyLine(h, now) {
     if (!h) return '';
     var a = String(h.action || '').toLowerCase();
@@ -761,16 +801,18 @@
     return !!lead && (lead.opted_out === true || String(lead.status || '').toLowerCase() === 'opted_out');
   }
 
-  // Call / Text / Email buttons in the client's order. Text is left out for an opted-out lead.
+  // Call / Text / Email buttons in the client's order. B2 (Kevin 11-10): the OWNER's Text button shows for every lead, a lead who texted STOP
+  // included (it opens the owner's own Messages app; nothing automatic is sent). Staff keep the old rule (opts.staff): no Text for an opted-out lead.
   var CONTACT_DEFAULT = ['call', 'text', 'email'];
-  function contactActions(lead, order) {
+  function contactActions(lead, order, opts) {
+    var staff = !!(opts && opts.staff);
     var want = Array.isArray(order) && order.length ? order : CONTACT_DEFAULT;
     var out = [];
     want.forEach(function (k) {
       if (out.some(function (a) { return a.key === k; })) return;
       var href = null, label = '';
       if (k === 'call') { href = telHref(lead && lead.phone); label = 'Call'; }
-      else if (k === 'text') { if (isOptedOut(lead)) return; href = smsHref(lead && lead.phone); label = 'Text'; }
+      else if (k === 'text') { if (staff && isOptedOut(lead)) return; href = smsHref(lead && lead.phone); label = 'Text'; }
       else if (k === 'email') { href = mailtoHref(lead && lead.email); label = 'Email'; }
       if (href) out.push({ key: k, label: label, href: href });
     });
@@ -816,8 +858,10 @@
 
   // One plain line under the name: what is happening and what the owner can do.
   // `nudge` (optional) is the lead's pending auto_nudge row from follow_ups: its exact due time wins.
-  function nextAction(lead, now, nudge) {
-    if (!lead || isOptedOut(lead)) return '';
+  // opts.owner (R2, A1): the owner may mark a lead who texted STOP, so once marked it reads like any lead. Only status opted_out (nothing marked
+  // yet) stays empty for him. Staff (no opts) keep the old empty line for every STOP lead.
+  function nextAction(lead, now, nudge, opts) {
+    if (!lead || (opts && opts.owner === true ? String(lead.status || '').toLowerCase() === 'opted_out' : isOptedOut(lead))) return '';
     var st = String(lead.status || '').toLowerCase();
     if (noConsent(lead)) nudge = null;
     if (nudge && !isClosed(st) && realDate(nudge.due_at) && !realDate(nudge.sent_at)) {
@@ -1144,6 +1188,13 @@
     return [r ? plural(r, 'recent one', 'recent ones') + ' left alone (a text, a hand-over or a change in the last 14 days).' : '',
       m ? plural(m, 'lead', 'leads') + ' with more than one event date left alone.' : ''].filter(Boolean).join(' ');
   }
+  // 028 (review F3): "Includes N who texted STOP." The server counts the leads it would mark that have the STOP flag (texted_stop). Kevin has not yet
+  // ruled whether STOP leads stay in the bulk clear: THIS FUNCTION AND bulkPreviewView's `stopLine` are the whole page side, so ruling them out is
+  // one deletion here (the server stops counting them with its own change).
+  function bulkStopLine(res) {
+    var n = Math.floor(num(res && res.texted_stop) || 0);
+    return n > 0 ? 'Includes ' + n.toLocaleString('en-CA') + ' who texted STOP.' : '';
+  }
   // cv_bulk_lost_preview JSON -> what the sheet says, or null (switched off / no answer). Names are plain text.
   // fingerprint = the exact set shown (review r4 item 1): no fingerprint, no Mark button.
   function bulkPreviewView(res, now) {
@@ -1159,9 +1210,10 @@
     return {
       count: n, cap: cap, tooMany: tooMany, fingerprint: fp, sample: sample, sampleMore: Math.max(0, n - sample.length),
       left: bulkLeftText(res.left_recent, res.left_more_dates),
+      stopLine: n > 0 && !tooMany ? bulkStopLine(res) : '',
       headline: !before ? '' : n === 0 ? 'No open leads have an event before ' + before + '.'
         : plural(n, 'lead', 'leads') + ' with an event before ' + before + ' will be marked ' + statusInfo('lost').label + '.',
-      note: n > 0 && !tooMany ? 'No texts are sent. Reason: ' + lostReasonLabel(BULK_REASON_KEY) + '. Booked, lost, opted-out and future events are left alone. You can undo this.' : '',
+      note: n > 0 && !tooMany ? 'No texts are sent. Reason: ' + lostReasonLabel(BULK_REASON_KEY) + '. Booked, lost and future events are left alone. You can undo this.' : '',
       capText: tooMany ? 'That is more than ' + cap.toLocaleString('en-CA') + ' at once. Pick an earlier date and clear them in steps.' : '',
       confirm: n > 0 && !tooMany && fp ? 'Mark ' + plural(n, 'lead', 'leads') + ' ' + statusInfo('lost').label : '',
       undo: u ? { batchId: u.batch_id, count: Math.floor(num(u.can_undo)), at: u.at, text: bulkUndoLine(u.marked, u.at, now) } : null
@@ -1699,7 +1751,9 @@
     var form = formNameBit(lead, opts);
     if (src === 'manual') {
       var l = manualSourceLabel(lead.manual_source);
-      return l ? 'From: added by you (' + l + ')' : 'From: added by you';
+      // B6 (Kevin 11-10): a website form for the same date upgraded it (auto_texts true): the story says so.
+      var then = lead.auto_texts === true ? ', then website form' : '';
+      return l ? 'From: added by you (' + l + ')' + then : 'From: added by you' + then;
     }
     if (src === 'tally_form') return form ? 'From: website form (' + form + ')' : 'From: website form';
     if (src === 'sms_inbound') return form ? 'From: texted in, then website form (' + form + ')' : 'From: texted in';
@@ -1714,7 +1768,7 @@
   }
   var NO_AUTO_TEXT = 'No automatic texts: you contact them yourself.';
   // 022: after the owner's "no follow-up" (or none sent and no quote) the record says plainly that no text will go.
-  var NO_FOLLOWUP_LINE = { chosen: 'No follow-up text will go out: you chose not to send one.', no_quote: 'No follow-up text will go out: no quote was sent.' };
+  var NO_FOLLOWUP_LINE = { chosen: 'No follow-up text will go out: you chose not to send one.', no_quote: 'No follow-up text will go out: no quote was sent.', opted_out: 'No follow-up text will go out: they texted STOP.' };
   function noAutoLine(lead) {
     if (!lead) return '';
     if (lead.auto_texts === false) return NO_AUTO_TEXT;
@@ -2789,7 +2843,9 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   // Leads waiting on the owner, NEWEST first (round 4: at 100+ waiting, new ones must not land at the bottom; unknown time last).
-  // Opted-out leads never show. Each row: { lead, since, waiting, late, fresh, overDay }. The time is status_at (when it was handed
+  // A lead who texted STOP does not wait on the owner, EXCEPT one the owner added by hand (B2, Kevin 11-10: he may still call or text them from
+  // his own phone), exactly cv_list_counts.needs: status handed_off and (not opted out, or source manual). lead_list has no opted_out column, so
+  // on list rows the flag is simply unknown (not true) and this reads the status and the source. Each row: { lead, since, waiting, late, fresh, overDay }. The time is status_at (when it was handed
   // over), else last activity. ONE threshold (review r4b): fresh = handed over in the last 24 hours (NEEDS_FRESH_HOURS, the "New"
   // part of See all); overDay = waiting more than that (the "Waiting over a day" part and the "N waiting over a day" line, so the
   // line's number is that part's count); late = the red cue, past CV_CUSTOM.waitWarnHours (24 h by default, so all three agree).
@@ -2801,11 +2857,12 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // The block shows the newest 3 as one-line rows (name, how long, a call button; review r4 item 3), about 52 px each, so the
   // block and the filter chips both fit the first screen at 320x568. The full cards are in "See all".
   var NEEDS_SHOW = 3;
+  function waitsOnOwner(l) {
+    return !!l && String(l.status || '').toLowerCase() === 'handed_off' && (l.opted_out !== true || l.source === 'manual');
+  }
   function needsYou(leads, now) {
     var t = nowDate(now).getTime();
-    var rows = (Array.isArray(leads) ? leads : []).filter(function (l) {
-      return l && String(l.status || '').toLowerCase() === 'handed_off' && !isOptedOut(l);
-    }).map(function (l) {
+    var rows = (Array.isArray(leads) ? leads : []).filter(waitsOnOwner).map(function (l) {
       var since = realDate(l.status_at) ? l.status_at : (realDate(l.last_activity_at) ? l.last_activity_at : (realDate(l.created_at) ? l.created_at : null));
       var at = timeOf(since);
       return { lead: l, since: since, waiting: waitingFor(since, now), late: waitLate(since, now),
@@ -2824,11 +2881,47 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // Home (round 4): { needs: the newest NEEDS_SHOW waiting rows for the block, needsAll: every waiting row, rest: the leads under
   // the chip }. A waiting lead is ALSO in Open and All (Kevin 11-09: it must populate the open leads), marked by its wait cue.
   // key 'needs' = "See all": rest is every waiting lead, newest first, and the block steps aside (needs: []).
-  function homeView(leads, key, now) {
+  // lostPart (optional, D3): under the Lost chip, only that part of it ('real' | 'old' | 'optout'); anything else = the whole chip.
+  function homeView(leads, key, now, lostPart) {
     var all = needsYou(leads, now);
     if (key === 'needs') return { needs: [], needsAll: all, rest: all.map(function (r) { return r.lead; }) };
-    return { needs: all.slice(0, NEEDS_SHOW), needsAll: all, rest: filterLeads(leads, key) };
+    var rest = filterLeads(leads, key);
+    if (key === 'lost' && LOST_PART_KEYS.indexOf(lostPart) !== -1) rest = rest.filter(function (l) { return lostPartOf(l) === lostPart; });
+    return { needs: all.slice(0, NEEDS_SHOW), needsAll: all, rest: rest };
   }
+
+  // D3 (Kevin 11-10): under the Lost chip a toggle "Lost / Old lead / Opted out". Which part a lead is in is cv_list_counts' own rule (sql/028):
+  //   optout = status opted_out (not marked since), old = status lost with lost_reason old_lead, real = the rest of the lost group (lost, dormant).
+  // Precedence: a lead who texted STOP and was cleared as Old lead is under Old lead (its status is lost; lead_list has no STOP column, and the
+  // lead page still says they texted STOP). lost_real + lost_old + lost_optout = the Lost chip's count.
+  var LOST_PART_KEYS = ['real', 'old', 'optout'];
+  function lostPartOf(lead) {
+    if (!lead) return null;
+    var st = String(lead.status || '').toLowerCase();
+    if (statusGroup(st) !== 'lost') return null;
+    if (st === 'opted_out') return 'optout';
+    if (st === 'lost' && lead.lost_reason === 'old_lead') return 'old';
+    return 'real';
+  }
+  // The three toggle buttons, in order. The first is the Lost chip's own word (a client's wording carries through).
+  function lostParts() {
+    return [
+      { key: 'real', label: statusInfo('lost').label },
+      { key: 'old', label: lostReasonLabel('old_lead') },
+      { key: 'optout', label: statusInfo('opted_out').label }
+    ];
+  }
+  // Counts for the toggle: the server's (cv_list_counts, past what the page fetched) when all three are good numbers, else the rows here.
+  function lostCounts(leads, server) {
+    var ok = server && typeof server === 'object' && ['lost_real', 'lost_old', 'lost_optout'].every(function (k) {
+      var v = server[k]; return typeof v === 'number' && v >= 0 && Math.floor(v) === v;
+    });
+    if (ok) return { real: server.lost_real, old: server.lost_old, optout: server.lost_optout };
+    var out = { real: 0, old: 0, optout: 0 };
+    (Array.isArray(leads) ? leads : []).forEach(function (l) { var k = lostPartOf(l); if (k) out[k]++; });
+    return out;
+  }
+  var LOST_PART_EMPTY = { real: 'No lost leads.', old: 'No old leads.', optout: 'Nobody has opted out.' };
 
   // Chip counts. The page's own count of the rows it has, unless the server's (cv_list_counts, sql/025) is given: those stay right
   // past what the page fetched. A server count with a missing or bad number is not used at all.
@@ -2964,7 +3057,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var chipLabel = statusChip(lead).label;
     if (statusGroup(st) === 'booked') chipLabel = info.label;
     var money = statusGroup(st) === 'booked' && toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : quotedOrOwnerMoney(lead);
-    var needs = st === 'handed_off' && !isOptedOut(lead);
+    var needs = waitsOnOwner(lead);
     var since = realDate(lead.status_at) ? lead.status_at : null; // never guess a wait from other times
     var lastText = realDate(lead.last_in_at) ? 'Last text ' + fmtAgoOn(lead.last_in_at, now) : '';
     return {
@@ -2980,9 +3073,9 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   // The status buttons still ahead of this lead (the current one and anything not allowed are left out).
-  function actionsAhead(current) {
+  function actionsAhead(current, asOwner) {
     var cur = String(current || '').toLowerCase();
-    return actions().filter(function (a) { return canSetStatus(cur, a.status); }).map(function (a) { return a.status; });
+    return actions().filter(function (a) { return canSetStatus(cur, a.status, asOwner); }).map(function (a) { return a.status; });
   }
 
   /* ---------- UI round 3: calendar agenda, follow-up groups, Metrics sections ---------- */
@@ -3109,8 +3202,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
       { id: 'reply', title: 'Reply to a lead', f: [], steps: [
         'Open the lead and tap Call, Text or Email. Your phone opens its own Phone, Messages or Mail app.',
         'Under Conversation you can read what was said. Tap Open full to read it all, then Close.',
-        'After you have reached them, under Change status tap {contacted}, then Mark as {contacted_lc}. Sometimes the box offers two buttons: Mark {contacted_lc} and send the follow-up, or Mark {contacted_lc}, no follow-up.'
-      ], note: 'You reply in your phone\'s own apps, not here. The Text button is hidden for anyone who opted out.' },
+        'After you have reached them, under Change status tap {contacted}, then Mark as {contacted_lc}. Sometimes the box offers two buttons: Mark {contacted_lc} and send the follow-up, or Mark {contacted_lc}, no follow-up. If they texted STOP, no follow-up goes out.'
+      ], note: 'You reply in your phone\'s own apps, not here. Someone who texted STOP gets no automatic texts; you can still call or text them.' },
       { id: 'outcome', title: 'Mark a lead {booked} or {lost}', f: [], steps: [
         'Open the lead. Under Change status, tap {booked} or {lost}. A box opens.',
         'For {booked}, check the Final price (it starts from the quote, if there is one). For {lost}, pick Why was it lost? ({lost_reasons}).',
@@ -3122,7 +3215,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
         { t: 'The No quote button lists open leads with no quote yet. Their rows say No quote sent (this list only).', f: ['noQuoteFilter'] },
         { t: 'Open one and tap Price it in the quote calculator.', f: ['noQuoteFilter', 'quote'] },
         'At the end of longer lists, tap Show more (it reads like Show 50 more) for the next leads, or Back to top.'
-      ], note: 'The {lost} button also holds people who opted out.' },
+      ], note: 'The {lost} button has three parts: {lost}, {old_lead} or {opted_out}.' },
       { id: 'past', title: 'Mark events that already happened', f: ['followups', 'pastEvents'], steps: [
         'Tap {tab_followups}. Did these happen? lists events that have passed with no result recorded.',
         'Tap Booked or Didn\'t book on each. A box asks you to confirm (and why, for Didn\'t book).'
@@ -3131,7 +3224,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
         'On {tab_list}, tap + Add lead, at the top right.',
         'Fill in the Name and Phone (10 digits), pick Where they came from ({sources}), then any event details you know. Tick Already talked to them if so.',
         'Tap Add lead.'
-      ], note: 'No automatic texts go to leads you add. You contact them yourself.' },
+      ], note: 'No automatic texts go to leads you add, unless they later fill in your form. You contact them yourself.' },
       { id: 'quote', title: 'Make a quote', f: ['quote'], steps: [
         'Tap More, then {tab_quote}.',
         'Fill in Number of guests, How many hours of service, Portable bar required? and Event city. More details (optional) holds the Event date, Occasion and Promo code.',
@@ -3184,7 +3277,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       ] }
     ],
     faq: [
-      { q: 'I marked the wrong status. Can I change it?', a: 'Yes. On the lead, under Change status, tap the right one. Going back from {booked} or {lost} to {contacted} clears its price or reason. A lead that opted out is locked.', f: [] },
+      { q: 'I marked the wrong status. Can I change it?', a: 'Yes. On the lead, under Change status, tap the right one. Going back from {booked} or {lost} to {contacted} clears its price or reason. A lead who texted STOP can be marked too.', f: [] },
       { q: 'Did I lose my quote?', a: 'If your phone closed the app while you were on the quote screen, open {tab_quote} again and your answers come back. If you left the screen yourself, the form is cleared.', f: ['quote', 'quoteDraft'] },
       { q: 'How do I sign out?', a: 'Tap More, then Sign out.', f: [] }
     ]
@@ -3199,7 +3292,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     function all(flags) { return (Array.isArray(flags) ? flags : []).every(function (f) { return GUIDE_FLAGS.indexOf(f) !== -1 && !!isOn(f); }); }
     function listWords(rows) { return rows.length > 1 ? rows.slice(0, -1).join(', ') + ' or ' + rows[rows.length - 1] : rows.join(''); }
     function words(text) {
-      var map = { contacted: statusInfo('contacted').label, booked: statusInfo('booked').label, lost: statusInfo('lost').label, needs: statusInfo('handed_off').label };
+      var map = { contacted: statusInfo('contacted').label, booked: statusInfo('booked').label, lost: statusInfo('lost').label, needs: statusInfo('handed_off').label, opted_out: statusInfo('opted_out').label };
       return String(text).replace(/\{([a-z_]+)\}/g, function (m, k) {
         if (k === 'lost_reasons') return listWords(lostReasons().map(function (x) { return x.label; }));
         if (k === 'old_lead') return lostReasonLabel('old_lead');
@@ -3393,9 +3486,11 @@ function renderPriceBlockSms(lineItems, total, currency) {
   function supportConfigView(cfg) {
     var c = cfg && typeof cfg === 'object' ? cfg : {};
     var name = String(c.contact_name || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 20) || 'Kevin';
-    var phone = typeof c.contact_phone === 'string' && /^\+[1-9][0-9]{7,14}$/.test(c.contact_phone.trim()) ? c.contact_phone.trim() : '';
+    // B2 / B9 (R2): the Call and Text links use the same strict check as every other phone link (strictE164), so a number that is E.164-shaped but not a
+    // real one gives no buttons rather than a dead link.
+    var phone = typeof c.contact_phone === 'string' && /^\+[1-9][0-9]{7,14}$/.test(c.contact_phone.trim()) && strictE164(c.contact_phone) ? c.contact_phone.trim() : '';
     return { enabled: c.enabled === true, sendEnabled: c.send_enabled === true, name: name, phone: phone,
-      callHref: phone ? 'tel:' + phone : '', textHref: phone ? 'sms:' + phone : '' };
+      callHref: telHref(phone) || '', textHref: smsHref(phone) || '' };
   }
 
   // Form values -> RPC arguments, or { ok: false, error } with the server's own error words.
@@ -4379,6 +4474,17 @@ function renderPriceBlockSms(lineItems, total, currency) {
     rowView: rowView,
     actionsAhead: actionsAhead,
     needsYou: needsYou,
+    waitsOnOwner: waitsOnOwner,
+    noConsent: noConsent,
+    lostPartOf: lostPartOf,
+    lostParts: lostParts,
+    lostCounts: lostCounts,
+    LOST_PART_EMPTY: LOST_PART_EMPTY,
+    LOST_PART_KEYS: LOST_PART_KEYS,
+    STOP_NO_FOLLOWUP: STOP_NO_FOLLOWUP,
+    STOP_PERSONAL_TEXT: STOP_PERSONAL_TEXT,
+    stopBanner: stopBanner,
+    stopNextLine: stopNextLine,
     NEEDS_SHOW: NEEDS_SHOW,
     NEEDS_FRESH_HOURS: NEEDS_FRESH_HOURS,
     needsSections: needsSections,
@@ -4398,6 +4504,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     BULK_REASON_KEY: BULK_REASON_KEY,
     bulkDefaultDate: bulkDefaultDate,
     bulkPreviewView: bulkPreviewView,
+    bulkStopLine: bulkStopLine,
     bulkErrorText: bulkErrorText,
     bulkDoneText: bulkDoneText,
     bulkUndoneText: bulkUndoneText,

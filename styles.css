@@ -1148,3 +1148,7 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .guide-q { border-top: 1px solid var(--line); }
 .guide-q > summary { min-height: 48px; font-weight: 650; }
 .guide-q > p { margin: 0; padding: 0 var(--sp-4) 14px; font-size: var(--fs-md); line-height: 1.4; }
+
+/* R2 / D3: the Lost chip's toggle (Lost / Old lead / Opted out): three pills that wrap rather than overflow at 320 px. */
+.lost-parts { flex-wrap: wrap; }
+.lost-parts .filter.filter-extra { flex: 1 1 auto; padding: 4px 10px; gap: 6px; justify-content: center; }
