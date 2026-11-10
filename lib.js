@@ -235,6 +235,38 @@
     n = titleCase(n);   // the same casing as the name at the top of the record ("SAMPLE" -> "Sample", "maria" -> "Maria")
     return n.length > SENDER_MAX ? n.slice(0, SENDER_MAX - 1) + '\u2026' : n;
   }
+  // D5 (Kevin 11-10): the "Open full" window is titled "Conversation with Sam". No real name on file (nothing, or only the
+  // "Lead ending 1234" stand-in) = a plain "Conversation". Text only; the name is customer input, shown with textContent.
+  // Controls, soft hyphen, zero-width space, direction marks and bidi overrides/isolates, word joiners, byte-order mark. (ZWJ / ZWNJ stay: emoji and several scripts need them.)
+  var INVISIBLE_RE = /[\u0000-\u001f\u007f-\u009f­؜᠎​‎‏‪-‮⁠-⁯﻿]/g;
+  var NAME_TITLES = /^(dr|mr|mrs|ms)\.?$/i;
+  // The first real word of a name: invisible characters dropped, a leading Dr. / Mr. / Mrs. / Ms. skipped; '' when nothing readable is left.
+  function nameWord(raw) {
+    var words = String(raw == null ? '' : raw).split(/\s+/).map(function (w) { return w.replace(INVISIBLE_RE, ''); }).filter(Boolean);
+    while (words.length && NAME_TITLES.test(words[0])) words.shift();
+    var w = words[0] || '';
+    return /[\p{L}\p{N}]/u.test(w) ? w : '';
+  }
+  // Cut by what a person sees as one character (an emoji or an accented letter is never split); older browsers cut by code point.
+  function cutGraphemes(str, max) {
+    var parts;
+    try {
+      parts = typeof Intl !== 'undefined' && Intl.Segmenter ? Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(str), function (x) { return x.segment; }) : Array.from(str);
+    } catch (e) { parts = Array.from(str); }
+    return parts.length > max ? parts.slice(0, max - 1).join('') + '…' : str;
+  }
+  function convoTitle(lead) {
+    if (!lead) return 'Conversation';
+    var cands = [lead.first_name, lead.full_name, lead.display_name];
+    for (var i = 0; i < cands.length; i++) {
+      var raw = String(cands[i] == null ? '' : cands[i]).trim();
+      if (!raw) continue;
+      if (/^(Lead ending \d{4}|Unnamed lead)$/i.test(raw)) return 'Conversation';
+      var n = nameWord(raw);
+      if (n) return 'Conversation with ' + cutGraphemes(titleCase(n), SENDER_MAX);
+    }
+    return 'Conversation';
+  }
   function bubbleSender(m, lead) {
     if (!m) return '';
     if (m.audience === 'owner') return kindLabel(m.kind);   // the automatic texts to the owner: as before
@@ -1082,7 +1114,7 @@
     var canMore = total > items.length && items.length >= lim && lim < PE_MAX;
     return { total: total, items: items, more: total - items.length, limit: lim, canMore: canMore,
       nextLimit: Math.min(PE_MAX, lim + PE_SHOW),
-      moreBtn: canMore ? 'Show ' + Math.min(PE_SHOW, total - items.length, PE_MAX - lim) + ' more' : '',
+      moreBtn: canMore ? moreLabel(Math.min(PE_SHOW, total - items.length, PE_MAX - lim), total - items.length) : '',
       moreText: (total - items.length) + ' more. They appear here as you mark these.' };
   }
 
@@ -2833,14 +2865,26 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // Long lists (round 4): rows are drawn LIST_PAGE at a time with "Show more".
   // -> { rows: the first `shown` (at least one page), left: how many are not drawn, moreText }
   var LIST_PAGE = 50;
+  // D4 (Kevin 11-10): ONE "Show more" wording for every list. `btn` = how many the button adds, `left` = how many are not drawn yet.
+  // "Show 50 more (133 not shown)"; when the button adds everything that is left, the bracket would repeat itself, so it is dropped ("Show 30 more").
+  function moreLabel(btn, left) {
+    var b = Math.max(0, Math.floor(Number(btn) || 0)), n = Math.max(0, Math.floor(Number(left) || 0));
+    if (!b || !n) return '';
+    return 'Show ' + b + ' more' + (n !== b ? ' (' + n + ' not shown)' : '');
+  }
   function listPage(rows, shown) {
     var list = Array.isArray(rows) ? rows : [];
     var n = Math.max(LIST_PAGE, Math.floor(Number(shown) || 0));
     var page = list.slice(0, n);
     var left = list.length - page.length;
     return { rows: page, shown: page.length, left: left,
-      moreText: left > 0 ? 'Show ' + Math.min(LIST_PAGE, left) + ' more (' + left + ' not shown)' : '' };
+      moreText: moreLabel(Math.min(LIST_PAGE, left), left) };
   }
+
+  // D6 (Kevin 11-10): "Back to top" at the end of a long list. Long = this many rows drawn (about two screens on a phone).
+  var BACK_TOP_MIN = 20;
+  var BACK_TOP_LABEL = 'Back to top';
+  function showBackToTop(drawn) { return Math.floor(Number(drawn) || 0) >= BACK_TOP_MIN; }
 
   // The page reads lead_list LIST_FETCH rows at a time, up to LIST_CAP. Past that it says so honestly (search still finds anyone).
   var LIST_FETCH = 1000;
@@ -3040,7 +3084,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     },
     sections: [
       { id: 'needs', title: 'See who needs you', f: [], steps: [
-        'The {needs} list at the top of {tab_list} shows the newest people waiting for you and how long each has waited. The wait turns red and says overdue when it is too long.',
+        'The {needs} list at the top of {tab_list} shows the newest people waiting and how long each has waited. The wait turns red and says overdue when it runs long.',
         'Tap a name to open the lead, or the phone icon to call. See all, when it shows, lists everyone waiting; tap Back to leads to return.'
       ] },
       { id: 'reply', title: 'Reply to a lead', f: [], steps: [
@@ -3052,13 +3096,13 @@ function renderPriceBlockSms(lineItems, total, currency) {
         'Open the lead. Under Change status, tap {booked} or {lost}. A box opens.',
         'For {booked}, check the Final price (it starts from the quote, if there is one). For {lost}, pick Why was it lost? ({lost_reasons}).',
         'Tap Mark as {booked_lc} or Mark as {lost_lc} to confirm.'
-      ], note: 'Recording these, even for small jobs, keeps your records right.' },
+      ], note: 'Even small jobs count: it keeps your records right.' },
       { id: 'find', title: 'Find a lead', f: [], steps: [
-        'On {tab_list}, tap a button near the top to narrow the list: Open, {contacted}, {booked}, {lost} or All. The number on a button is how many leads are in it.',
+        'On {tab_list}, tap a button near the top to narrow the list: Open, {contacted}, {booked}, {lost} or All. The number on a button counts its leads.',
         { t: 'Or type a name, phone number or email in the search box at the top (Search name, phone or email).', f: ['search'] },
         { t: 'The No quote button, on its own row below, lists open leads with no quote yet. Their rows say No quote sent.', f: ['noQuoteFilter'] },
         { t: 'Open one and tap Price it in the quote calculator.', f: ['noQuoteFilter', 'quote'] },
-        'Tap a name to open the lead. At the bottom of a long list, tap the Show more button (it reads like Show 50 more).'
+        'At the end of longer lists, tap Show more (it reads like Show 50 more) for the next leads, or Back to top.'
       ], note: 'The {lost} button also holds people who opted out.' },
       { id: 'past', title: 'Mark events that already happened', f: ['followups', 'pastEvents'], steps: [
         'Tap {tab_followups}. Did these happen? lists events that have passed with no result recorded.',
@@ -3066,20 +3110,20 @@ function renderPriceBlockSms(lineItems, total, currency) {
       ] },
       { id: 'add', title: 'Add a lead yourself', f: ['addLead'], steps: [
         'On {tab_list}, tap + Add lead, at the top right.',
-        'Fill in the Name and Phone (10 digits), pick Where they came from ({sources}), then any event details you know. Tick Already talked to them if you have.',
+        'Fill in the Name and Phone (10 digits), pick Where they came from ({sources}), then any event details you know. Tick Already talked to them if so.',
         'Tap Add lead.'
       ], note: 'No automatic texts go to leads you add. You contact them yourself.' },
       { id: 'quote', title: 'Make a quote', f: ['quote'], steps: [
         'Tap More, then {tab_quote}.',
         'Fill in Number of guests, How many hours of service, Portable bar required? and Event city. More details (optional) holds the Event date, Occasion and Promo code.',
         'Tap Get quote, then Copy quote to copy the price, or Start a new quote for the next one.',
-        'From a lead\'s Price it link, tap Add this quote to followed by the lead\'s name (for example Add this quote to Sam) to save the price on that lead.',
-        { t: 'If your phone closes the app while you are on this screen, open {tab_quote} again: your answers come back (Restored your unfinished quote), for up to 12 hours on the same phone.', f: ['quoteDraft'] },
-        { t: 'If you leave the screen yourself, the form is cleared. A form from a lead\'s Price it link comes back only if the app was closed on that screen: open the same lead\'s Price it link again.', f: ['quoteDraft'] },
+        'From a lead\'s Price it link, tap Add this quote to followed by the lead\'s name (for example Add this quote to Sam) to save the price there.',
+        { t: 'If your phone closes the app on this screen, open {tab_quote} again: your answers come back (Restored your unfinished quote) for up to 12 hours, on the same phone.', f: ['quoteDraft'] },
+        { t: 'If you leave the screen yourself, the form is cleared. A form from a lead\'s Price it link comes back only if the app was closed on that screen: open that Price it link again.', f: ['quoteDraft'] },
         { t: 'A saved price you never used shows how old it is after a few weeks, for example Priced 23 days ago. On the lead, tap Change this price in the quote calculator and work it out again.', f: ['quoteAge'] }
       ], note: { t: 'Names and phone numbers are never kept.', f: ['quoteDraft'] } },
       { id: 'calendar', title: 'Check your calendar', f: ['calendar'], steps: [
-        'Tap {tab_calendar}. This week and Later list the coming events, and the month grid shows booked ones. Switch on Include leads not booked yet to add the others.',
+        'Tap {tab_calendar}. This week and Later list coming events; the month grid shows booked ones. Switch on Include leads not booked yet to add the rest.',
         'Tap a day, then a lead, to open it.'
       ] },
       { id: 'metrics', title: 'See your numbers', f: ['metrics'], steps: [
@@ -3088,8 +3132,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
         { t: 'Looking ahead shows bookings by event month, your open quotes at full price, and a likely range once there is enough history.', f: ['forecast'] }
       ], note: 'The numbers are only as good as your records. Mark leads {booked} or {lost}.' },
       { id: 'ask', title: 'Ask your CRM', f: ['ask'], steps: [
-        'Tap More, then {tab_ask}. Tap a starter question, or type your own in the box at the bottom (Ask a question), then tap Ask.'
-      ], note: 'It only reads your leads. It never changes anything. Tap a lead name in an answer to open that lead.' },
+        'Tap More, then {tab_ask}. Tap a starter question (they stay after each answer), or type your own in the box at the bottom (Ask a question), then tap Ask.'
+      ], note: 'It only reads your leads and never changes anything. Tap a lead name in an answer to open it.' },
       { id: 'alerts', title: 'Turn on alerts on this phone', f: ['push'], steps: [
         'On an iPhone, alerts only work when you open the app from your home screen icon.',
         'Tap More, find Alerts on this phone, tap Turn on alerts and allow notifications. Once on, tap that line to find Send test alert and Turn off.'
@@ -3109,7 +3153,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       ], note: { t: 'Only use the Urgent switch for something that stops you working right now.', f: ['supportSend'] } },
       { id: 'bulk', title: 'Clear out old leads in bulk', f: ['followups', 'pastEvents', 'bulk'], steps: [
         'Tap {tab_followups}, then Clear old ones in bulk under Did these happen?',
-        'Pick a date under Event before. The box counts the old leads still open with an event before it. Leads with a text, a hand-over or a change in the last 14 days are left alone, and so are leads with more than one event date.',
+        'Pick a date under Event before. The box counts the open leads with an event before it. Leads with a text, a hand-over or a change in the last 14 days are left alone, and so are leads with more than one event date.',
         'Tap the button that says, for example, Mark 97 leads {lost}. Nothing is texted to anyone; they are marked {lost} with the reason {old_lead}. Tap Cancel to back out.',
         'Changed your mind? Tap Undo on the line at the top of {tab_followups} (7 days, latest bulk clear only).'
       ] },
@@ -3120,7 +3164,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     ],
     faq: [
       { q: 'I marked the wrong status. Can I change it?', a: 'Yes. On the lead, under Change status, tap the right one. Going back from {booked} or {lost} to {contacted} clears its price or reason. A lead that opted out is locked.', f: [] },
-      { q: 'Did I lose my quote?', a: 'If your phone closed the app while you were on the quote screen, open {tab_quote} again and your answers come back (up to 12 hours, on the same phone). If you left the screen yourself, the form is cleared: start the quote again.', f: ['quote', 'quoteDraft'] },
+      { q: 'Did I lose my quote?', a: 'If your phone closed the app while you were on the quote screen, open {tab_quote} again: your answers come back. If you left the screen yourself, the form is cleared.', f: ['quote', 'quoteDraft'] },
       { q: 'How do I sign out?', a: 'Tap More, then Sign out.', f: [] }
     ]
   };
@@ -4308,6 +4352,11 @@ function renderPriceBlockSms(lineItems, total, currency) {
     needsSections: needsSections,
     needsMoreText: needsMoreText,
     LIST_PAGE: LIST_PAGE,
+    moreLabel: moreLabel,
+    BACK_TOP_MIN: BACK_TOP_MIN,
+    BACK_TOP_LABEL: BACK_TOP_LABEL,
+    showBackToTop: showBackToTop,
+    convoTitle: convoTitle,
     LIST_FETCH: LIST_FETCH,
     LIST_CAP: LIST_CAP,
     listPage: listPage,

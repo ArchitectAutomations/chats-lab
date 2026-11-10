@@ -464,6 +464,15 @@ a { color: var(--link); }
 .needs-more:active, .show-more:active, .list-back:active, .pe-bulk:active { background: var(--primary-deep); }
 .needs-more:focus-visible, .show-more:focus-visible, .list-back:focus-visible, .pe-bulk:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 #list-more { max-width: calc(var(--content) - 24px); width: calc(100% - 24px); margin: var(--sp-3) auto var(--sp-5); }
+/* D6: "Back to top" ends a long list: a quiet text button under Show more, same 44px tap size. */
+.back-top {
+  display: block; min-height: 44px; margin: var(--sp-2) auto var(--sp-5); padding: 0 var(--sp-4);
+  border: 0; border-radius: var(--r-pill); background: transparent; color: var(--muted-on-primary);
+  font: inherit; font-size: var(--fs-md); font-weight: 650; text-decoration: underline; cursor: pointer;
+}
+.back-top:active { background: var(--primary-deep); }
+.back-top:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+#list-more + .back-top { margin-top: 0; }
 .list-head {
   display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap;
   max-width: var(--content); margin: 0 auto; padding: var(--sp-2) calc(12px + env(safe-area-inset-right)) var(--sp-2) calc(12px + env(safe-area-inset-left));
@@ -1062,6 +1071,13 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
   background: transparent; border: 1.5px solid var(--muted-on-primary); color: var(--on-primary); font: inherit; font-size: var(--fs-md); font-weight: 650; text-align: left; cursor: pointer;
 }
 .ask-starter:active { background: var(--primary-raised); }
+.ask-starter:disabled { opacity: 0.5; cursor: default; }
+/* D7: after the first question the starters shrink to one scrolling row that stays at the bottom of the screen, under the answers. */
+.ask-starters.is-compact {
+  position: sticky; bottom: 0; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  margin: var(--sp-3) calc(var(--gutter) * -1) 0; padding: var(--sp-2) var(--gutter); background: var(--primary); border-top: 1px solid var(--line-on-primary);
+}
+.ask-starters.is-compact .ask-starter { flex: none; min-height: 44px; padding: 6px 14px; font-size: var(--fs-sm); white-space: nowrap; }
 .ask-starter:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .ask-composer { flex: none; background: var(--primary); border-top: 1px solid var(--line-on-primary); padding: var(--sp-2) calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-2) calc(var(--gutter) + env(safe-area-inset-left)); }
 .ask-composer-row { display: flex; align-items: flex-end; gap: var(--sp-2); max-width: var(--content); margin: 0 auto; }

@@ -176,7 +176,7 @@
     btnVerify: $('btn-verify'), btnResend: $('btn-resend'), btnChange: $('btn-change'), configErr: $('config-error'),
     listScroll: $('list-scroll'), filters: $('filters'), filtersExtra: $('filters-extra'), listLoading: $('list-loading'), leadList: $('lead-list'),
     listEmpty: $('list-empty'), filterEmpty: $('filter-empty'), listErr: $('list-error'),
-    needsMore: $('needs-more'), needsLate: $('needs-late'), listHead: $('list-head'), listHeadTitle: $('list-head-title'), listBack: $('list-back'), listTrunc: $('list-trunc'), listMore: $('list-more'),
+    needsMore: $('needs-more'), needsLate: $('needs-late'), listHead: $('list-head'), listHeadTitle: $('list-head-title'), listBack: $('list-back'), listTrunc: $('list-trunc'), listMore: $('list-more'), listTop: $('list-top'),
     bulk: $('bulk'), bulkDate: $('bulk-date'), bulkHead: $('bulk-head'), bulkSample: $('bulk-sample'), bulkMore: $('bulk-more'), bulkNote: $('bulk-note'),
     bulkErr: $('bulk-error'), bulkYes: $('bulk-yes'), bulkNo: $('bulk-no'),
     btnAdd: $('btn-add-lead'), toast: $('toast'),
@@ -193,7 +193,7 @@
     eventMoreBtn: $('event-more-btn'), recEmail: $('rec-email'), recPhoneRow: $('rec-phone-row'),
     recQuote: $('rec-quote'), quoteBody: $('quote-body'), recOthers: $('rec-others'), othersList: $('others-list'), recShared: $('rec-shared'), sharedList: $('shared-list'),
     convo: $('convo'), convoScroll: $('convo-scroll'),
-    convoOpen: $('convo-open'), convoFull: $('convo-full'), convoFullClose: $('convo-full-close'), convoFullScroll: $('convo-full-scroll'), fullThread: $('full-thread'), fullEmpty: $('full-empty'), fullSysFold: $('full-sys-fold'),
+    convoOpen: $('convo-open'), convoFull: $('convo-full'), convoFullH: $('convo-full-h'), convoFullClose: $('convo-full-close'), convoFullScroll: $('convo-full-scroll'), fullThread: $('full-thread'), fullEmpty: $('full-empty'), fullSysFold: $('full-sys-fold'),
     actions: $('actions'), actionsNote: $('actions-note'), actionErr: $('action-error'), history: $('history'), historyMore: $('history-more'),
     threadScroll: $('thread-scroll'), threadLoading: $('thread-loading'), threadBox: $('thread'), threadEmpty: $('thread-empty'),
     threadErr: $('thread-error'), pill: $('new-pill'),
@@ -1083,7 +1083,7 @@
       show(el.listLoading, !S.listError);
       setText(el.listErr, S.listError);
       renderNeeds([], 0, []);
-      show(el.listHead, false); show(el.listMore, false); setText(el.listTrunc, '');
+      show(el.listHead, false); show(el.listMore, false); show(el.listTop, false); setText(el.listTrunc, '');
       return;
     }
     show(el.listLoading, false);
@@ -1124,6 +1124,8 @@
     el.leadList.replaceChildren(frag);
     el.listMore.textContent = pg.moreText;
     show(el.listMore, !!pg.moreText);
+    // D6: a long list ends with "Back to top" (below Show more, so the two never cover each other).
+    show(el.listTop, L.showBackToTop(pg.rows.length));
   }
 
   // THE lead row (Home, search, Calendar day, Lead value, Follow-ups): name and one price on top, date and guests,
@@ -2243,16 +2245,18 @@
     });
   }
 
+  // D7 (Kevin 11-10): the starter questions stay after the first question. With no questions yet they sit big under the intro;
+  // once there are answers they become one compact strip that stays at the bottom of the screen, so a new answer is never pushed away.
   function renderAskStarters() {
-    var frag = document.createDocumentFragment();
-    if (!S.ask.items.length) {
-      L.askStarters(custom.askStarters).forEach(function (q) {
-        var btn = make('button', 'ask-starter', q);
-        btn.type = 'button';
-        btn.addEventListener('click', function () { el.askInput.value = q; submitAsk(); });
-        frag.appendChild(btn);
-      });
-    }
+    var a = S.ask, frag = document.createDocumentFragment(), compact = a.items.length > 0;
+    L.askStarters(custom.askStarters).forEach(function (q) {
+      var btn = make('button', 'ask-starter', q);
+      btn.type = 'button';
+      btn.disabled = !!a.busy;   // one question at a time: the starters wait while an answer is on its way
+      btn.addEventListener('click', function () { submitAsk(q); });
+      frag.appendChild(btn);
+    });
+    el.askStarters.classList.toggle('is-compact', compact);
     el.askStarters.replaceChildren(frag);
   }
 
@@ -2289,10 +2293,11 @@
     while (a.items.length > ASK_KEEP) a.items.shift();
   }
 
-  function submitAsk() {
-    var a = S.ask;
+  // `starter` = a tapped starter question: it asks that question and leaves whatever the owner typed in the box untouched.
+  function submitAsk(starter) {
+    var a = S.ask, own = typeof starter === 'string';
     if (a.busy || !askOn()) return;
-    var r = L.askRequest(el.askInput.value, a.questions, a.cfg.max);
+    var r = own ? L.askRequest(starter, a.questions, a.cfg.max) : L.askRequest(el.askInput.value, a.questions, a.cfg.max);
     if (!r.ok) {
       if (r.error) { a.items.push({ role: 'err', text: r.error }); renderAsk(); }
       return;
@@ -2316,7 +2321,7 @@
       if (n !== a.seq) return;
       wait.role = 'a'; wait.res = res; wait.text = '';
       a.questions.push(r.body.question); a.questions = a.questions.slice(-2);
-      el.askInput.value = '';
+      if (!own) el.askInput.value = '';
     }, function (err) {
       if (n !== a.seq) return;
       wait.role = 'err'; wait.text = L.askErrorText(err);  // the question stays in the box
@@ -2326,6 +2331,9 @@
       if (wait.node) { wait.node.remove(); wait.node = null; }
       a.busy = false;
       renderAsk();
+      // The tapped starter (or the disabled box) is gone: keep the keyboard / screen-reader place on the question box.
+      var ae = document.activeElement;
+      if (S.screen === 'ask' && (!ae || ae === document.body)) { try { el.askInput.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
     });
   }
 
@@ -3008,6 +3016,17 @@
       mb.addEventListener('click', function () { S.pastLimit = v.nextLimit; refreshPastEvents(); });
       sec.appendChild(mb);
     } else if (v.more > 0) sec.appendChild(make('p', 'fu-empty pe-more', v.moreText));
+    // D6: a long Did these happen? list ends with "Back to top" for this screen too.
+    if (L.showBackToTop(v.items.length)) {
+      var tb = make('button', 'back-top pe-top', L.BACK_TOP_LABEL);
+      tb.type = 'button';
+      tb.addEventListener('click', function () {
+        var sc = document.getElementById('fu-scroll');
+        if (sc) sc.scrollTop = 0;
+        try { h.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+      });
+      sec.appendChild(tb);
+    }
     if (bulkOn()) {
       var cb = make('button', 'pe-bulk', 'Clear old ones in bulk…');
       cb.type = 'button';
@@ -4317,6 +4336,7 @@
 
   function openFull() {
     if (fullOpen() || S.screen !== 'thread' || !S.signedIn || !S.thread.loaded) return;
+    el.convoFullH.textContent = L.convoTitle(S.thread.lead);   // D5: "Conversation with Sam" (plain "Conversation" with no name)
     if (typeof el.convoFull.showModal === 'function') el.convoFull.showModal();
     else el.convoFull.setAttribute('open', '');
     S.fullPushed = false;
@@ -4916,6 +4936,11 @@
     el.listMore.addEventListener('click', function () {
       S.shown[S.filter] = Math.max(L.LIST_PAGE, S.shown[S.filter] || 0) + L.LIST_PAGE;
       renderList();
+    });
+    el.listTop.addEventListener('click', function () {
+      el.listScroll.scrollTop = 0; S.listTop = 0;
+      var first = el.filters && el.filters.querySelector ? el.filters.querySelector('button') : null;   // keyboard focus follows the view
+      try { if (first) first.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
     });
     // Clear old leads in bulk (round 4)
     el.bulkYes.addEventListener('click', bulkConfirm);
