@@ -498,8 +498,11 @@
           <p class="rec-job" id="rec-job" hidden></p>
           <p class="rec-source" id="rec-source" hidden></p>
           <p class="rec-noauto" id="rec-noauto" hidden></p>
-          <a class="rec-phone" id="rec-phone" hidden></a>
-          <p class="rec-email" id="rec-email" hidden></p>
+          <!-- How to reach them: the same label / value grid as the Event card, so the record reads as one aligned form. -->
+          <dl class="rec-reach" id="rec-reach">
+            <div class="reach-row" id="rec-phone-row" hidden><dt>Phone</dt><dd><a class="rec-phone" id="rec-phone" hidden></a></dd></div>
+            <div class="reach-row"><dt>Email</dt><dd class="rec-email" id="rec-email" hidden></dd></div>
+          </dl>
         </header>
 
         <p class="stop-banner" id="optout-banner" role="note" hidden>Do not text: this person opted out.</p>
@@ -520,13 +523,10 @@
         <section class="rec-card" id="rec-event" aria-labelledby="h-event" hidden>
           <h3 class="rec-h" id="h-event">Event</h3>
           <dl class="facts" id="event-facts"></dl>
-          <button type="button" class="more-toggle" id="event-more-btn" aria-controls="event-more" aria-expanded="false" hidden>More details</button>
-          <div id="event-more" hidden>
-            <dl class="facts facts-more" id="event-facts-more"></dl>
-            <div class="words" id="event-words" hidden>
-              <h4 class="words-h">In their words</h4>
-              <p class="words-text" id="event-details"></p>
-            </div>
+          <div class="words" id="event-words" hidden>
+            <h4 class="words-h">In their words</h4>
+            <p class="words-text" id="event-details"></p>
+            <button type="button" class="more-toggle" id="event-more-btn" aria-controls="event-details" aria-expanded="false" hidden>Show all</button>
           </div>
         </section>
 
@@ -591,6 +591,11 @@
         <section class="rec-card" id="rec-others" aria-labelledby="h-others" hidden>
           <h3 class="rec-h" id="h-others">Other events from this person</h3>
           <ul class="others" id="others-list"></ul>
+        </section>
+
+        <!-- 024 + r3: someone else on this phone number (lead_detail.phone_shared): a small muted line, not a card. -->
+        <section class="rec-shared" id="rec-shared" aria-label="Someone else on this phone number" hidden>
+          <ul class="shared" id="shared-list"></ul>
         </section>
       </div>
     </div>

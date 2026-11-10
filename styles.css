@@ -282,14 +282,20 @@ a { color: var(--link); }
 .rec-status { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); margin-top: var(--sp-2); }
 .rec-status .chip { flex: none; }
 .rec-next { margin: 0; font-size: var(--fs-md); line-height: 1.4; color: var(--on-primary); flex: 1 1 12em; }
-.rec-job { margin: var(--sp-3) 0 0; font-size: var(--fs-lg); font-weight: 650; line-height: 1.35; color: var(--on-primary); font-variant-numeric: tabular-nums; }
-.rec-phone { display: inline-flex; align-items: center; min-height: 44px; margin-top: var(--sp-1); padding: 0 var(--sp-3); border-radius: var(--r-md); background: var(--primary-raised); color: var(--secondary); font-size: var(--fs-lg); font-weight: 600; font-variant-numeric: tabular-nums; text-decoration: none; }
-.rec-phone:active { background: var(--primary); }
-.rec-email { margin: var(--sp-1) 0 0; font-size: var(--fs-md); color: var(--on-primary); overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
-.rec-email-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--on-primary); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
-.rec-email-none { color: var(--muted-on-primary); }
+.rec-job { margin: var(--sp-3) 0 0; font-size: var(--fs-xl); font-weight: 700; line-height: 1.2; color: var(--on-primary); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+/* How to reach them (Kevin 11-09): a label / value grid under a hairline, the same shape as the Event card's facts.
+   The number is plain green-on-green text (Call below dials it): never purple, never a second button. */
+.rec-reach { display: grid; grid-template-columns: minmax(56px, max-content) minmax(0, 1fr); column-gap: var(--sp-4); align-items: center;
+  margin: var(--sp-3) 0 0; padding-top: var(--sp-2); border-top: 1px solid var(--line-on-primary); }
+.reach-row { display: contents; }
+.rec-reach dt { align-self: start; padding-top: 11px; color: var(--muted-on-primary); font-size: var(--fs-sm); }
+.rec-reach dd { margin: 0; min-width: 0; }
+.rec-phone { display: inline-flex; align-items: center; min-height: 40px; color: var(--on-primary); font-size: var(--fs-lg); font-weight: 650; font-variant-numeric: tabular-nums; text-decoration: none; letter-spacing: 0.01em; }
+.rec-phone:active { opacity: 0.7; }
+.rec-email { margin: 0; font-size: var(--fs-md); color: var(--on-primary); overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
+.rec-email-link { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 0; box-sizing: border-box; color: var(--on-primary); font-weight: 600; text-decoration: underline; text-decoration-color: var(--muted-on-primary); text-underline-offset: 3px; overflow-wrap: anywhere; }
+.rec-email-none { display: inline-flex; align-items: center; min-height: 40px; color: var(--muted-on-primary); }
 .more-toggle { display: inline-flex; align-items: center; min-height: 44px; margin: var(--sp-1) 0 0; padding: 0; background: transparent; border: 0; color: var(--link); font-size: var(--fs-md); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
-.facts-more { margin-top: 8px; }
 
 /* Do-not-text banner: the one place red is used, because it must not be missed (white on #9A2A14 = 7.73:1). */
 .stop-banner {
@@ -308,6 +314,8 @@ a { color: var(--link); }
 .facts dt { color: var(--muted); font-size: var(--fs-sm); padding-top: 1px; }
 .facts dd { margin: 0; font-size: var(--fs-md); min-width: 0; overflow-wrap: anywhere; }
 .fact-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--link); font-weight: 600; text-underline-offset: 2px; }
+/* inside the Event facts the link keeps its 44px tap height but sits on the same line as its label */
+.facts dd .fact-link { min-height: 0; padding: 12px 0; margin: -12px 0; }
 .fact-note { display: block; font-size: var(--fs-sm); color: var(--muted); }
 .fact-flag { display: block; margin-top: 2px; font-size: var(--fs-sm); font-weight: 700; color: var(--danger); }
 
@@ -355,6 +363,12 @@ a { color: var(--link); }
 .other-name { font-weight: 650; }
 .other-money { font-weight: 700; font-variant-numeric: tabular-nums; }
 .other-date { color: var(--muted); font-size: var(--fs-sm); }
+/* 024: another person on the same number: a plain line, tappable, not a list of this person's events */
+/* 024 + r3: someone else on this phone number: a small muted line under the cards, never an event card */
+.rec-shared { padding: 2px 4px 8px; }
+.shared { list-style: none; margin: 0; padding: 0; }
+.shared-line { padding: 4px 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45; overflow-wrap: anywhere; }
+.shared-name { color: inherit; text-decoration: underline; text-underline-offset: 3px; padding: 4px 0; }
 
 .convo { max-width: var(--content); margin: 0 auto; width: 100%; padding: var(--sp-1) 0 var(--sp-3); }
 .convo-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin: var(--sp-2) calc(12px + env(safe-area-inset-right)) var(--sp-2) calc(12px + env(safe-area-inset-left)); padding: 0 var(--sp-1); min-height: 44px; }
@@ -394,7 +408,10 @@ a { color: var(--link); }
 .row.in .bubble { background: var(--secondary); color: var(--on-secondary); border-bottom-left-radius: 6px; }
 .row.out .bubble { background: var(--primary-raised); color: var(--on-primary); border-bottom-right-radius: 6px; }
 .row.out.owner .bubble { background: transparent; color: var(--on-primary); border: 1.5px dashed var(--muted-on-primary); }
-.label { font-size: var(--fs-xs); font-weight: 700; margin: 0 0 2px; }
+.label { font-size: var(--fs-xs); font-weight: 700; margin: 0 0 2px; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.row.in .label { color: var(--muted-on-secondary); }
+/* a bubble from the same sender as the one above sits closer to it (its label is shared) */
+.row.cont { margin-top: -3px; }
 .row.out .label { color: var(--on-primary); }
 .row.out.owner .label { color: var(--muted-on-primary); }
 .text { white-space: pre-wrap; margin: 0; font-size: var(--fs-md); line-height: 1.4; }
@@ -859,8 +876,8 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .lead-row .row-tag { display: inline-flex; width: fit-content; }
 
 /* Record header: where the lead came from, and the no-automatic-texts line (muted, on green). */
-.rec-source { margin: var(--sp-1) 0 0; font-size: var(--fs-md); color: var(--on-primary); }
-.rec-source-noquote { font-weight: 650; }
+.rec-source { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); line-height: 1.4; color: var(--muted-on-primary); }
+.rec-source-noquote { font-weight: 650; color: var(--on-primary); }
 .rec-noauto { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); color: var(--muted-on-primary); }
 .rec-price { margin: 0 0 var(--sp-2); padding: 0 var(--sp-1); }
 .rec-price .fact-link { color: var(--link); }

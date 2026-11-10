@@ -210,12 +210,44 @@
     owner_alert_held: 'Alert held until morning',
     owner_confirm: 'Confirmation',
     owner_digest: 'Your 9 am text',
-    backfill: 'You'
+    backfill: 'Sent'
   };
 
   function kindLabel(kind) {
     if (Object.prototype.hasOwnProperty.call(KIND_LABELS, kind)) return KIND_LABELS[kind];
     return kind ? String(kind).replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }) : '';
+  }
+
+  // Kevin 11-09: who wrote each text, as a small label on the bubble. Customer texts carry the lead's first name ("Customer" when
+  // there is none). Every automatic text to the lead is "Assistant" (review r3 item 6). backfill = Twilio history of unknown origin,
+  // mostly automatic: "Sent", never "You". A quote text can be the intake quote or one the owner sent from the page: "Quote" says what
+  // it is without claiming who. Texts to the owner keep their kind label. The name is shown as text only (it is customer input).
+  var ASSISTANT_KINDS = { ai_reply: true, re_engage: true, handoff_ack: true, holding_reply: true, optout_confirm: true, followup_nudge: true };
+  var SENDER_MAX = 30;
+  function senderFirstName(lead) {
+    var n = lead ? (String(lead.first_name || '').trim() || String(lead.full_name || lead.display_name || '').trim()).split(/\s+/)[0] || '' : '';
+    n = n.replace(/[\u0000-\u001f\u007f]/g, '');
+    if (!n) return 'Customer';
+    n = titleCase(n);   // the same casing as the name at the top of the record ("SAMPLE" -> "Sample", "maria" -> "Maria")
+    return n.length > SENDER_MAX ? n.slice(0, SENDER_MAX - 1) + '\u2026' : n;
+  }
+  function bubbleSender(m, lead) {
+    if (!m) return '';
+    if (m.audience === 'owner') return kindLabel(m.kind);   // the automatic texts to the owner: as before
+    if (m.direction === 'in') return senderFirstName(lead);
+    if (ASSISTANT_KINDS[m.kind] === true) return 'Assistant';
+    if (m.kind === 'backfill') return 'Sent';
+    return kindLabel(m.kind) || 'Sent';
+  }
+  // One label per run: a bubble straight after one from the same sender, on the same day, shares the label above it ('').
+  function bubbleLabels(chat, lead) {
+    var prev = null, prevLabel = '';
+    return (Array.isArray(chat) ? chat : []).map(function (m) {
+      var label = bubbleSender(m, lead);
+      var shared = prev && label === prevLabel && sameDay(prev.at, m.at);
+      prev = m; prevLabel = label;
+      return shared ? '' : label;
+    });
   }
 
   var STATUS = {
@@ -716,9 +748,9 @@
       return ev ? statusInfo('booked').label + ' for ' + ev : statusInfo('booked').label;
     }
     if (st === 'lost') {
+      // the reason is in the status chip beside it ("Lost · Went elsewhere"): said once (review r3 item 7)
       var la = lead.lost_at || lead.status_at;
-      var why = lostReasonLabel(lead.lost_reason);
-      return 'Marked ' + lc('lost') + (la ? ' ' + fmtShortDate(la, now) : '') + (why ? ' \u2014 ' + why : '');
+      return 'Marked ' + lc('lost') + (la ? ' ' + fmtShortDate(la, now) : '');
     }
     if (st === 'handed_off') {
       var since = lead.status_at || lead.created_at;
@@ -766,7 +798,24 @@
     }).filter(Boolean);
   }
 
-  // Quote block: line items + subtotal / travel / total, or the "needs your review" state.
+  // The sums under a quote's lines, with no row that repeats one above it (Kevin 11-09, review r3 items 1 + 7). The engine puts
+  // delivery IN the line items (label "Delivery", amount = what is charged) and leaves it OUT of subtotal (Compute Quote:
+  // total = subtotal + travel_fee), so when a line carries it a Subtotal / Travel fee row would count it twice: none then. A travel fee
+  // that no line carries (an older stored shape) still shows Subtotal + Travel fee. No travel fee: the subtotal is the total again.
+  // One line, no discount, nothing added: that line IS the total, so no Total row. rawItems = the stored / engine line items.
+  var TRAVEL_LINE = /\b(delivery|travel)\b/i;
+  function quoteSums(rawItems, subtotal, travelFee, total) {
+    var items = (Array.isArray(rawItems) ? rawItems : []).filter(function (it) { return it && typeof it === 'object'; });
+    var inLines = items.some(function (it) { return TRAVEL_LINE.test(String(it.label || '')); });
+    var travel = !inLines && toCents(travelFee) !== null && toCents(travelFee) > 0;
+    var discounted = items.some(function (it) { var d = toCents(it.discount); return d !== null && d !== 0; });
+    var t = toCents(total);
+    var oneLine = items.length === 1 && !discounted && !travel && t !== null && toCents(items[0].amount) === t;
+    return { subtotal: travel ? fmtMoney(subtotal) : '', travel: travel ? fmtMoney(travelFee) : '', total: oneLine ? '' : fmtMoney(total) };
+  }
+
+  // Quote block: line items + the sums (quoteSums), or the "needs your review" state. totalRow = the Total row ('' = not drawn);
+  // final = the booked price, only when it differs from the quote total (review r3 item 7).
   function quoteView(lead) {
     if (!lead) return null;
     var defer = String(lead.quote_status || '').toLowerCase() === 'defer';
@@ -779,11 +828,16 @@
       defer: defer,
       reasons: defer ? deferReasons(lead.quote_defer_reasons) : [],
       items: defer ? [] : items,
-      subtotal: defer ? '' : fmtMoney(lead.quote_subtotal),
-      travel: defer ? '' : (toCents(lead.quote_travel_fee) === 0 ? 'None' : fmtMoney(lead.quote_travel_fee)),
+      subtotal: '', travel: '', totalRow: '', final: '',
       total: defer ? '' : fmtMoney(lead.quote_total)
     };
-    view.empty = !defer && !view.items.length && !view.total && !view.subtotal;
+    if (!defer) {
+      var sums = quoteSums(lead.quote_line_items, lead.quote_subtotal, lead.quote_travel_fee, lead.quote_total);
+      view.subtotal = sums.subtotal; view.travel = sums.travel; view.totalRow = sums.total;
+      var b = toCents(lead.booked_amount);
+      if (statusGroup(lead.status) === 'booked' && b !== null && b !== toCents(lead.quote_total)) view.final = fmtMoney(lead.booked_amount);
+    }
+    view.empty = !defer && !view.items.length && !view.total && !fmtMoney(lead.quote_subtotal);
     return view;
   }
 
@@ -810,9 +864,13 @@
       if (extra) Object.keys(extra).forEach(function (k) { f[k] = extra[k]; });
       out.push(f);
     }
-    // Date, guests and price live in the record header; service hours and bar rental in the Quote card (UI round 2, C6).
-    add('occasion', 'Occasion', String(lead.occasion || '').trim());
+    // Kevin 11-09: the Event card holds the WHOLE event (date and guests moved here from the header line); the price stays
+    // out (header money line + Quote card). Every form question about the event is here; an empty answer is left out.
+    add('date', 'Date', fmtEventDate(lead.event_date, now));
     add('time', 'Time', fmtTimeRange(lead.start_time, lead.end_time));
+    var g = Number(lead.guests);
+    if (lead.guests !== null && lead.guests !== undefined && lead.guests !== '' && isFinite(g) && g > 0) add('guests', 'Guests', g.toLocaleString('en-CA'));
+    add('occasion', 'Occasion', String(lead.occasion || '').trim());
     var area = String(lead.event_area || '').replace(/\s+/g, ' ').trim();
     if (area) {
       var km = Number(lead.distance_km);
@@ -846,10 +904,33 @@
     function one(key, label, value) { return value ? [{ key: key, label: label, value: String(value) }] : []; }
     var hours = String(lead.service_hours_label || '').replace(/\s+/g, ' ').trim();
     var bar = lead.bar_rental === true ? 'Yes' : lead.bar_rental === false ? 'No' : '';
-    out.key = [].concat(pick('occasion'), pick('time'), one('hours', 'Hours', hours), pick('area'), one('bar', 'Bar rental', bar));
-    out.more = [].concat(pick('multi'), staff ? [] : pick('offer'));
+    // One list, in the order an owner plans the job: when, how many, what, how long, where, bar; then extra dates and the offer.
+    // Nothing is hidden behind "More details" any more (Kevin 11-09: the card must show the event in its entirety); `more` stays empty.
+    out.key = [].concat(pick('date'), pick('time'), pick('guests'), pick('occasion'), one('hours', 'Hours', hours), pick('area'),
+      one('bar', 'Bar rental', bar), pick('multi'), staff ? [] : pick('offer'));
     out.words = String(lead.additional_details || '').trim();
     return out;
+  }
+  // "In their words" on the Event card: in full when short; a long message opens at its first ~300 characters with "Show all".
+  var WORDS_SHORT = 300;
+  function wordsView(text) {
+    var t = String(text == null ? '' : text).trim();
+    if (t.length <= WORDS_SHORT + 40) return { full: t, short: t, long: false };
+    var cut = t.slice(0, WORDS_SHORT);
+    var sp = cut.search(/\s\S*$/);
+    return { full: t, short: (sp > WORDS_SHORT - 60 ? cut.slice(0, sp) : cut).replace(/[\s,;:.\-]+$/, '') + '\u2026', long: true };
+  }
+  // Header money line (owner only): the ONE figure an owner needs before calling, above the fold. The Quote card below has the lines.
+  function headMoney(lead) {
+    if (!lead) return '';
+    // Booked: the booked price, else the quote, as "booked" (what Metrics, Ask and the spreadsheet count; review r3 item 2).
+    if (statusGroup(lead.status) === 'booked') {
+      var bk = toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : fmtMoney(lead.quote_total);
+      if (bk) return bk + ' booked';
+    }
+    var q = fmtMoney(lead.quote_total);
+    if (q) return q + ' quoted';
+    return quotedOrOwnerMoney(lead);   // a saved price: "$515 not sent", "$515 sending now", "$515 may have gone out"
   }
 
   /* ---------- metrics (cv_metrics) ---------- */
@@ -1066,12 +1147,15 @@
     var items = (Array.isArray(o.line_items) ? o.line_items : []).filter(function (it) { return it && typeof it === 'object'; }).map(function (it) {
       return { label: String(it.label || '').trim(), detail: String(it.detail || '').trim(), amount: fmtMoney(it.amount) };
     });
+    var ownerSums = quoteSums(o.line_items, o.subtotal, o.travel_fee, o.total);
     var first = state === 'unknown' ? (resend ? 'It may have gone out. Check the conversation before sending again.' : 'The earlier text may have gone out. Check the conversation before sending or pricing it again.')
       : state === 'sending' ? 'It may already have gone out. Check the conversation.'
       : o.earlier_maybe_sent === true ? 'An earlier text with a price may have gone out. Check the conversation before sending.' : '';
     return {
       state: state, sent: state === 'sent' || resend, status: status, count: count,
-      total: fmtMoney(o.total), subtotal: fmtMoney(o.subtotal), travel: toCents(o.travel_fee) === 0 ? 'None' : fmtMoney(o.travel_fee), items: items,
+      total: fmtMoney(o.total), items: items,
+      // the Subtotal / Travel fee / Total rows to draw ('' = left out): quoteSums, so delivery is never counted twice (review r3)
+      subtotal: ownerSums.subtotal, travel: ownerSums.travel, totalRow: ownerSums.total,
       // the customer-facing record already holds the price once it is sent: the card then only says when it went
       showDetails: state !== 'sent' && !resend,
       // sending / unknown / an earlier maybe-sent text: it may have reached them, and that is said first whatever else is true
@@ -1338,11 +1422,35 @@
   }
   function dateKey(d) { var m = /^(\d{4}-\d{2}-\d{2})/.exec(String(d || '')); return m ? m[1] : ''; }
 
+  // 024 (Kevin 11-09): the one "same person" rule, as cv_private.same_person: the same number AND (the same email, or the same
+  // first name, case-, accent- and punctuation-blind). Two people can share a number (a couple, an office line, a re-used number).
+  // PERSON_SPACE / PERSON_STRIP are the SAME text as the two classes in sql/024 cv_private.same_person (test_lib.js asserts it, and
+  // tools/tests/person_name_vectors.json runs the same pairs through both; review r3 item 5). Spelled out, never \s or [:punct:].
+  var PERSON_SPACE = '[\\t\\n\\v\\f\\r \\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+';
+  var PERSON_STRIP = '[\\u0021-\\u002F\\u003A-\\u0040\\u005B-\\u0060\\u007B-\\u007E\\u00A1-\\u00BF\\u00D7\\u00F7\\u0300-\\u036F\\u2010-\\u205E]';
+  var PERSON_SPACE_RE = new RegExp(PERSON_SPACE, 'g'), PERSON_STRIP_RE = new RegExp(PERSON_STRIP, 'g');
+  function personFirstKey(name) {
+    var w = (String(name == null ? '' : name).replace(PERSON_SPACE_RE, ' ').replace(/^ +| +$/g, '').split(' ')[0] || '').toLowerCase();
+    if (typeof w.normalize === 'function') w = w.normalize('NFD');
+    return w.replace(PERSON_STRIP_RE, '');
+  }
+  function personEmailKey(email) { return String(email == null ? '' : email).replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '').toLowerCase(); }
+  // a, b: { phone, email, name } (lead_detail uses full_name, lead_list display_name: pass them as name).
+  function samePerson(a, b) {
+    if (!a || !b) return false;
+    var pa = phoneKey(a.phone);
+    if (!pa || pa !== phoneKey(b.phone)) return false;
+    var ea = personEmailKey(a.email), na = personFirstKey(a.name);
+    return (!!ea && ea === personEmailKey(b.email)) || (!!na && na === personFirstKey(b.name));
+  }
+
   // Leads already on file for the typed phone number, for the duplicate box under Phone.
   // optedPhones (optional): phone numbers known to have opted out. -> { key, matches, shown (max 3), more, sameLead (same date, or both without a date), optedOut }
-  function dupInfo(leads, rawPhone, eventDate, optedPhones) {
+  // typedName (optional, 024): the name typed in the form. samePerson = a lead on file has that first name (lead_list has no email);
+  // null when no name is typed (nothing to tell), so the hint never claims the same person on the number alone.
+  function dupInfo(leads, rawPhone, eventDate, optedPhones, typedName) {
     var norm = normalizeLeadPhone(String(rawPhone == null ? '' : rawPhone));
-    var out = { phone: norm, matches: [], shown: [], more: 0, sameLead: null, optedOut: false };
+    var out = { phone: norm, matches: [], shown: [], more: 0, sameLead: null, optedOut: false, samePerson: null };
     if (!norm) return out;
     var key = phoneKey(norm);
     var want = dateKey(eventDate);
@@ -1350,10 +1458,40 @@
     out.shown = out.matches.slice(0, 3);
     out.more = Math.max(0, out.matches.length - 3);
     out.sameLead = out.matches.filter(function (l) { return dateKey(l.event_date) === want; })[0] || null;
+    var typed = personFirstKey(typedName);
+    out.samePerson = typed ? out.matches.some(function (l) { return personFirstKey(l.display_name) === typed; }) : null;
     // lead_list has no opted_out column, so also check the numbers lead_detail says opted out (optedPhones), booked, lost or manual rows included.
     out.optedOut = out.matches.some(function (l) { return isOptedOut(l); }) ||
       (Array.isArray(optedPhones) ? optedPhones : []).some(function (p) { return phoneKey(p) === key; });
     return out;
+  }
+  // Which "different date" sentence: the same person only when the typed first name is on one of the matches.
+  function dupOtherText(d) {
+    if (!d || d.sameLead) return DUP_TEXT.same;
+    if (d.samePerson === true) return DUP_TEXT.other;
+    return d.samePerson === false ? DUP_TEXT.otherPerson : DUP_TEXT.otherUnknown;
+  }
+  // 024 + r3 items 7 / 9: lead_detail.phone_shared -> ONE small line per other PERSON on this number (never per lead, never an event
+  // of this lead): "Someone else, Casey Lee, also uses this phone number (Sat, Jun 12, 2027; Mar 1, 2027)." phone_shared carries no
+  // email, so its leads are grouped by the rule's first-name half (personFirstKey); a lead with no name is its own line. lead_id = that
+  // person's first lead in the list (newest first), for the link on the name. An older read without the column shows nothing.
+  function phoneSharedLines(lead, now) {
+    var list = lead && Array.isArray(lead.phone_shared) ? lead.phone_shared : [];
+    var groups = [], byKey = {};
+    list.filter(function (o) { return o && isUuid(o.lead_id); }).forEach(function (o) {
+      var name = String(o.name == null ? '' : o.name).replace(/\s+/g, ' ').trim();
+      if (name.length > 60) name = name.slice(0, 59).trim() + '\u2026';
+      var key = personFirstKey(name);
+      var g = key && byKey[key];
+      if (!g) { g = { lead_id: o.lead_id, name: name, dates: [] }; groups.push(g); if (key) byKey[key] = g; }
+      var d = o.event_date ? fmtEventDate(o.event_date, now) : 'no event date';
+      if (d && g.dates.indexOf(d) === -1) g.dates.push(d);
+    });
+    return groups.map(function (g) {
+      var before = g.name ? 'Someone else, ' : 'Someone else ';
+      var after = (g.name ? ', ' : '') + 'also uses this phone number (' + g.dates.join('; ') + ').';
+      return { lead_id: g.lead_id, name: g.name, before: before, after: after, text: before + g.name + after };
+    });
   }
   // "Already on file: Pat · Sat, Nov 14 · Asked for you" pieces for one match.
   function dupLine(lead) {
@@ -1362,6 +1500,9 @@
   var DUP_TEXT = {
     same: 'Same date as a lead on file: saving opens that lead (blank details are filled in, nothing is overwritten).',
     other: 'A different date from the leads on file: saving adds a new event for the same person.',
+    // 024: the number is on file, but not under the typed first name (or no name typed yet): never claim the same person.
+    otherPerson: 'This number is already on file under another name: saving adds a separate lead with this number.',
+    otherUnknown: 'A different date from the leads on file: saving adds a new lead with this number.',
     optedOut: 'This number opted out of texts.'
   };
 
@@ -1706,14 +1847,28 @@
     if (defer && !reasons.length) reasons = deferReasons(r.defer_codes);
     var km = num(r.distance_km);
     var shownDiscount = items.some(function (i) { return i.discount; });
+    var calcSums = defer ? { subtotal: '', travel: '', total: '' } : quoteSums(r.line_items, r.subtotal, r.travel_fee, r.total);
     var codes = Array.isArray(r.flag_codes) ? r.flag_codes : [];
+    // What the customer text's price block is drawn from (Copy): the engine's own line items, only the keys renderPriceBlockSms reads.
+    var PB_KEYS = ['label', 'detail', 'amount', 'base_amount', 'base_detail', 'discount', 'discount_kind', 'discount_label', 'includes'];
+    var priceItems = defer ? [] : (Array.isArray(r.line_items) ? r.line_items : []).filter(function (it) { return it && typeof it === 'object'; }).map(function (it) {
+      var o = {};
+      PB_KEYS.forEach(function (k) { if (it[k] !== undefined) o[k] = it[k]; });
+      return o;
+    });
     return {
       defer: defer,
+      priceItems: priceItems,
+      priceTotal: defer ? null : r.total,
+      currency: typeof r.currency === 'string' && /^[A-Z]{3}$/.test(r.currency) ? r.currency : 'CAD',
       reasons: defer ? reasons : [],
       items: items,
-      subtotal: defer ? '' : fmtMoney(r.subtotal),
-      travel: defer ? '' : (toCents(r.travel_fee) === 0 ? 'None' : fmtMoney(r.travel_fee)),
+      // the rows to draw under the lines ('' = left out; quoteSums: delivery is a line, never a second Travel fee row). total stays
+      // the full figure (Add, the leave warning); totalRow is the Total row.
+      subtotal: calcSums.subtotal,
+      travel: calcSums.travel,
       total: defer ? '' : fmtMoney(r.total),
+      totalRow: calcSums.total,
       deposit: defer ? '' : fmtMoney(r.deposit),
       distance: km === null ? '' : Math.round(km).toLocaleString('en-CA') + ' km away',
       // A flag that only repeats a discount line already printed above it is dropped (matched on the engine's flag code, not its text).
@@ -1723,9 +1878,184 @@
     };
   }
 
-  // Plain-text summary for "Copy quote".
+  /* ---------- PRICE BLOCK (GENERATED by tools/sync_price_block.mjs from n8n/lab-main.json; do not edit) ---------- */
+// --- INLINE START ---
+// Mirrors WF1 and compose_reply exactly, so an intake quote and a re-quote read
+// identically down to the thousands separator.
+function qbMoney(n) {
+  return '$' + Number(n).toLocaleString('en-CA', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+function qbRound2(n) {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+// jsonb comes back parsed from the pg driver, but a text column or a driver
+// change would hand us a string. Both are cheap to accept; a thrown parse error
+// mid-conversation is not.
+function qbArray(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    try { var p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch (e) { return []; }
+  }
+  return [];
+}
+
+// summarizeQuote(lineItems, total) -> the shape every renderer draws.
+//
+//   items         line items AS DISPLAYED. A discounted line is shown at its
+//                 FULL fee with its plain detail, because the discount is
+//                 stated on its own line below - showing "$0" AND then waiving
+//                 it would be waiving the same money twice.
+//   discount      total waived across all line items (0 when nothing applies)
+//   discountLabel the "special offer" line, null when there is no discount
+//   offers        PROMO-SLOT 2026-09-29: EVERY offer line, in order - one per
+//                 campaign promotion (a line item with discount_kind 'promo',
+//                 labelled by its promotions row), then the ONE delivery offer,
+//                 always LAST. discountLabel is offers[0].label when there is
+//                 one offer, 'Special offers' when there are several.
+//   grossTotal    what the event costs before the offer  (total + discount)
+//   totalLabel    'TOTAL' or 'DISCOUNTED TOTAL'  - always the LAST line (CR12)
+//   total         the calculator's own total. NEVER recomputed here.
+//
+// A line item opts in by carrying `discount` (> 0). The calculator sets it, and
+// also sets `base_amount` / `base_detail` so no renderer ever has to do the
+// arithmetic or take a substring of a customer-facing string. `base_amount`
+// falls back to amount + discount only so an OLD stored quote - a jsonb row
+// written before this change - still renders sensibly.
+function summarizeQuote(lineItems, total) {
+  var items = [];
+  var discount = 0;
+  var everyDiscountIsAWaiver = true;
+  var promoOffers = [];
+  var deliveryOff = 0;
+
+  qbArray(lineItems).forEach(function (li) {
+    if (!li) return;
+    var amount = Number(li.amount);
+    var d = Number(li.discount);
+    if (Number.isFinite(d) && d > 0) {
+      discount = qbRound2(discount + d);
+      if (li.discount_kind === 'promo') {
+        promoOffers.push({ label: li.discount_label ? 'Special offer - ' + li.discount_label : 'Special offer', amount: d });
+      } else {
+        deliveryOff = qbRound2(deliveryOff + d);
+        if (!(Number.isFinite(amount) && amount === 0)) everyDiscountIsAWaiver = false;
+      }
+      var base = Number(li.base_amount);
+      if (!Number.isFinite(base)) base = qbRound2((Number.isFinite(amount) ? amount : 0) + d);
+      items.push({
+        label: li.label,
+        detail: (li.base_detail === undefined || li.base_detail === null) ? li.detail : li.base_detail,
+        amount: base,
+      });
+    } else {
+      items.push(qbWithIncludes({ label: li.label, detail: li.detail, amount: amount }, li));
+    }
+  });
+
+  var t = Number(total);
+  var offers = promoOffers.slice();
+  if (deliveryOff > 0) {
+    offers.push({
+      label: everyDiscountIsAWaiver ? 'Special offer - delivery waived' : 'Special offer - delivery discount',
+      amount: deliveryOff,
+    });
+  }
+  return {
+    items: items,
+    discount: discount,
+    discountLabel: offers.length === 1 ? offers[0].label : (offers.length ? 'Special offers' : null),
+    offers: offers,
+    grossTotal: qbRound2(t + discount),
+    totalLabel: discount > 0 ? 'DISCOUNTED TOTAL' : 'TOTAL',
+    total: t,
+  };
+}
+
+// F-028 (Kevin 2026-10-31): THE INCLUDES LIST. A line item may carry
+// `includes`, an array of short strings the calculator wrote (the event
+// bundle: what its one price covers). summarizeQuote passes it through (only
+// when there is one) and every renderer draws it UNDER the line in place of
+// the bracketed detail. `detail` stays on the line for any reader that does
+// not know includes (the Sheet's Line Items cell, a stored copy, an older
+// renderer). No includes -> the line renders exactly as before.
+// F-029 (Kevin 2026-11-01): THE OWNER'S LAYOUT. The line itself has no "- " and
+// no indent, then a blank line, "Includes:" at column 0 and flat "- " items;
+// renderPriceBlockSms closes the list with one blank line when a priced line
+// (Additional hours, ...) follows it, so that line is not read as an include.
+// GSM-7:
+//
+//   Event Bundle: $700
+//
+//   Includes:
+//   - Menu/service package (1-100 guests)
+//   - 1 bartender x 4 hrs
+//   - Portable bar rental with delivery
+//
+//   - Additional hours (2h x $50/h): $100
+function qbIncludes(v) {
+  return qbArray(v).filter(function (x) { return typeof x === 'string' && x.trim() !== ''; })
+    .map(function (x) { return x.replace(/\s+/g, ' ').trim(); });
+}
+
+function qbWithIncludes(item, li) {
+  var inc = qbIncludes(li && li.includes);
+  if (inc.length) item.includes = inc;
+  return item;
+}
+
+function qbItemLine(li) {
+  var inc = qbIncludes(li.includes);
+  if (inc.length) {
+    return li.label + ': ' + qbMoney(li.amount) + '\n\nIncludes:\n'
+      + inc.map(function (x) { return '- ' + x; }).join('\n');
+  }
+  return '- ' + li.label + (li.detail ? ' (' + li.detail + ')' : '') + ': ' + qbMoney(li.amount);
+}
+
+// The plain-text block. Blank lines are the only layout tool SMS has, so they
+// are used deliberately and sparingly: one before the money, one after the
+// gross total (F-024, 2026-10-24: the offer reads as a line of its own), and
+// one before the anchor. The anchor is ALWAYS the last line of the block.
+//
+//   - Menu/Service Package (200 guests): $500
+//   - Bartending Staff (2 bartenders x 5h @ $85/h): $425
+//   - Portable Bar Rental (standard portable bar): $200
+//   - Delivery (67 km one way): $80
+//
+//   Total: $1,205
+//
+//   Special offer - delivery waived: -$80
+//
+//   DISCOUNTED TOTAL: $1,125 CAD
+function renderPriceBlockSms(lineItems, total, currency) {
+  var s = summarizeQuote(lineItems, total);
+  // F-029 (Kevin 2026-11-01): one blank line closes an includes list when a
+  // priced line follows it (Additional hours, ...), so it is not read as one.
+  var lines = [];
+  s.items.forEach(function (li, i) {
+    lines.push(qbItemLine(li));
+    if (i < s.items.length - 1 && qbIncludes(li.includes).length) lines.push('');
+  });
+  if (lines.length) lines.push('');
+  if (s.discount > 0) {
+    lines.push('Total: ' + qbMoney(s.grossTotal));
+    lines.push('');
+    s.offers.forEach(function (o) { lines.push(o.label + ': -' + qbMoney(o.amount)); });
+    lines.push('');
+  }
+  lines.push(s.totalLabel + ': ' + qbMoney(s.total) + ' ' + (currency || 'CAD'));
+  return lines.join('\n');
+}
+// --- INLINE END ---
+  /* ---------- END PRICE BLOCK ---------- */
+
+  // Plain-text quote for "Copy quote" (Kevin 11-09): the SAME price block as the customer's quote text (renderPriceBlockSms above,
+  // copied verbatim from WF1), so what the owner pastes matches what the system sends. Line 1 is plain words, never "word:"
+  // (a phone can file text that starts like a web address as a link); then the event line, the price block, the deposit.
   function quoteText(view, req, now) {
-    if (!view || view.defer) return '';
+    if (!view || view.defer || !Array.isArray(view.priceItems) || !view.priceItems.length) return '';
     var b = (req && req.body) || req || {};
     var head = [];
     if (b.occasion) head.push(b.occasion);
@@ -1740,12 +2070,24 @@
       var detail = head.join(', ');
       lines.push(/^[A-Za-z][A-Za-z0-9+.\-]*:/.test(detail) ? 'For ' + detail : detail);
     }
-    view.items.forEach(function (it) { lines.push(it.label + (it.detail ? ' (' + it.detail + ')' : '') + ': ' + it.amount); });
-    if (view.subtotal) lines.push('Subtotal: ' + view.subtotal);
-    if (view.travel) lines.push('Travel fee: ' + view.travel);
-    lines.push('Total: ' + view.total);
-    if (view.deposit) lines.push('Deposit to hold the date: ' + view.deposit);
-    return lines.join('\n');
+    lines.push('');
+    lines.push(renderPriceBlockSms(view.priceItems, view.priceTotal, view.currency));
+    if (view.deposit) lines.push('', 'Deposit to hold the date: ' + view.deposit);
+    // plain ASCII, as the customer text is (render.js ascii(); review r3 item 8): "Valentine's Cafe", never a curly quote or accent
+    return smsAscii(lines.join('\n'));
+  }
+
+  // The SAME conversion as ascii() in quote/edge/cv-quote-send/render.js (WF1's ascii()): the text stays GSM-7; a name is flattened,
+  // never cut. test_lib.js runs both on the same strings.
+  var SMS_TRANSLIT = { '\u00df': 'ss', '\u00e6': 'ae', '\u00c6': 'AE', '\u0153': 'oe', '\u0152': 'OE', '\u00f8': 'o', '\u00d8': 'O', '\u0142': 'l', '\u0141': 'L',
+    '\u0111': 'd', '\u0110': 'D', '\u00fe': 'th', '\u00de': 'Th', '\u0131': 'i' };
+  function smsAscii(v) {
+    var s = String(v === null || v === undefined ? '' : v)
+      .replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"')
+      .replace(/[\u2013\u2014]/g, '-').replace(/\u2026/g, '...')
+      .replace(/[\u00df\u00e6\u00c6\u0153\u0152\u00f8\u00d8\u0142\u0141\u0111\u0110\u00fe\u00de\u0131]/g, function (c) { return SMS_TRANSLIT[c]; });
+    if (typeof s.normalize === 'function') s = s.normalize('NFD');
+    return s.replace(/[\u0300-\u036f]/g, '').replace(/[^\x00-\x7F]/g, '');
   }
 
   // cv-quote errors -> { message, fields }. bad_input details name the fields.
@@ -3390,7 +3732,17 @@
     addLeadErrorText: addLeadErrorText,
     addLeadArgs: addLeadArgs,
     addLeadError: addLeadError,
+    bubbleSender: bubbleSender,
+    bubbleLabels: bubbleLabels,
     phoneKey: phoneKey,
+    personFirstKey: personFirstKey,
+    PERSON_SPACE: PERSON_SPACE,
+    PERSON_STRIP: PERSON_STRIP,
+    smsAscii: smsAscii,
+    quoteSums: quoteSums,
+    samePerson: samePerson,
+    dupOtherText: dupOtherText,
+    phoneSharedLines: phoneSharedLines,
     dupInfo: dupInfo,
     dupLine: dupLine,
     DUP_TEXT: DUP_TEXT,
@@ -3460,6 +3812,8 @@
     homeView: homeView,
     homeCounts: homeCounts,
     jobBits: jobBits,
+    headMoney: headMoney,
+    wordsView: wordsView,
     tabPlan: tabPlan,
     diagScrub: diagScrub,
     diagPush: diagPush,

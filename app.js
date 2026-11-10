@@ -179,8 +179,8 @@
     optoutBanner: $('optout-banner'), recContact: $('rec-contact'),
     contactActions: $('contact-actions'), contactNote: $('contact-note'),
     recEvent: $('rec-event'), eventFacts: $('event-facts'), eventWords: $('event-words'), eventDetails: $('event-details'),
-    eventFactsMore: $('event-facts-more'), eventMore: $('event-more'), eventMoreBtn: $('event-more-btn'), recEmail: $('rec-email'),
-    recQuote: $('rec-quote'), quoteBody: $('quote-body'), recOthers: $('rec-others'), othersList: $('others-list'),
+    eventMoreBtn: $('event-more-btn'), recEmail: $('rec-email'), recPhoneRow: $('rec-phone-row'),
+    recQuote: $('rec-quote'), quoteBody: $('quote-body'), recOthers: $('rec-others'), othersList: $('others-list'), recShared: $('rec-shared'), sharedList: $('shared-list'),
     convo: $('convo'), convoScroll: $('convo-scroll'),
     convoOpen: $('convo-open'), convoFull: $('convo-full'), convoFullClose: $('convo-full-close'), convoFullScroll: $('convo-full-scroll'), fullThread: $('full-thread'), fullEmpty: $('full-empty'), fullSysFold: $('full-sys-fold'),
     actions: $('actions'), actionsNote: $('actions-note'), actionErr: $('action-error'), history: $('history'), historyMore: $('history-more'),
@@ -344,6 +344,8 @@
   var DETAIL_EXTRA = ',booked_amount,lost_reason,lost_note,notes';
   // Added for hand-added leads (sql/011); dropped again if the view does not have them yet.
   var DETAIL_SOURCE = ',source,manual_source,auto_texts,quote_received,followup_possible,no_followup,owner_quote';
+  // 024: the other people on this lead's number; dropped again (first fallback) if the view does not have it yet.
+  var DETAIL_SHARED = ',phone_shared';
   var SEARCH_BASE = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
   var SEARCH_COLUMNS = SEARCH_BASE + ',source,manual_source'; // sql/011 columns on lead_detail; the search falls back without them
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
@@ -396,13 +398,16 @@
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
-          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE).eq('lead_id', id).maybeSingle().then(function (r0) {
-            if (!r0.error) return r0.data;
-            return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA).eq('lead_id', id).maybeSingle().then(function (r) {
-              if (!r.error) return r.data;
-              return client.from('lead_detail').select(DETAIL_COLUMNS).eq('lead_id', id).maybeSingle().then(function (r2) {
-                if (!r2.error) return r2.data;
-                return client.from('lead_list').select('*').eq('lead_id', id).maybeSingle().then(ok);
+          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED).eq('lead_id', id).maybeSingle().then(function (rs) {
+            if (!rs.error) return rs.data;
+            return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE).eq('lead_id', id).maybeSingle().then(function (r0) {
+              if (!r0.error) return r0.data;
+              return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA).eq('lead_id', id).maybeSingle().then(function (r) {
+                if (!r.error) return r.data;
+                return client.from('lead_detail').select(DETAIL_COLUMNS).eq('lead_id', id).maybeSingle().then(function (r2) {
+                  if (!r2.error) return r2.data;
+                  return client.from('lead_list').select('*').eq('lead_id', id).maybeSingle().then(ok);
+                });
               });
             });
           }),
@@ -981,7 +986,7 @@
 
   // "Already on file" box under Phone. Uses the lead list already loaded (no extra call).
   function renderAddDup() {
-    var d = L.dupInfo(S.listLoaded ? S.leads : [], el.addPhone.value, el.addDate.value, S.optedPhones);
+    var d = L.dupInfo(S.listLoaded ? S.leads : [], el.addPhone.value, el.addDate.value, S.optedPhones, el.addName.value);
     show(el.addDup, d.matches.length > 0 || d.optedOut);
     if (!d.matches.length) { setText(el.addDupSame, ''); setText(el.addDupMore, ''); setText(el.addDupOpt, d.optedOut ? L.DUP_TEXT.optedOut : ''); el.addDupList.replaceChildren(); return; }
     var frag = document.createDocumentFragment();
@@ -996,7 +1001,7 @@
     });
     el.addDupList.replaceChildren(frag);
     setText(el.addDupMore, d.more ? '+' + d.more + ' more' : '');
-    setText(el.addDupSame, d.sameLead ? L.DUP_TEXT.same : L.DUP_TEXT.other);
+    setText(el.addDupSame, L.dupOtherText(d));
     setText(el.addDupOpt, d.optedOut ? L.DUP_TEXT.optedOut : '');
   }
 
@@ -1373,7 +1378,7 @@
       });
       if (v.items.length) frag.appendChild(items);
       var sums = make('dl', 'quote-sums');
-      [['Subtotal', v.subtotal, ''], ['Travel fee', v.travel, ''], ['Total', v.total, 'is-total']].forEach(function (x) {
+      [['Subtotal', v.subtotal, ''], ['Travel fee', v.travel, ''], ['Total', v.totalRow, 'is-total']].forEach(function (x) {
         if (!x[1]) return;
         sums.appendChild(make('dt', x[2], x[0])); sums.appendChild(make('dd', x[2], x[1]));
       });
@@ -3362,6 +3367,7 @@
     var tel = L.telHref(lead.phone);
     if (phone && tel) { el.recPhone.textContent = phone; el.recPhone.href = tel; show(el.recPhone, true); }
     else { el.recPhone.textContent = ''; el.recPhone.removeAttribute('href'); show(el.recPhone, false); }
+    show(el.recPhoneRow, !!(phone && tel));
     var actions = L.contactActions(lead, custom.contactActions);
     var frag = document.createDocumentFragment();
     actions.forEach(function (a) {
@@ -3392,27 +3398,24 @@
       dl.replaceChildren();
       facts.forEach(function (f) { fact(dl, f.label, f.value, { href: f.href, external: !!f.href, note: f.note, flag: f.flag }); });
     }
-    fill(el.eventFacts, d.key);
-    fill(el.eventFactsMore, d.more);
-    el.eventDetails.textContent = d.words;
-    show(el.eventWords, !!d.words);
-    var hasMore = d.more.length > 0 || !!d.words;
-    // Nothing up front: the extra details open by themselves, there is nothing to toggle.
-    var alone = hasMore && d.key.length === 0;
-    show(el.eventMoreBtn, hasMore && !alone);
-    if (alone) { el.eventMore.hidden = false; }
-    else if (S.eventMoreFor !== lead.lead_id) { el.eventMore.hidden = true; el.eventMoreBtn.setAttribute('aria-expanded', 'false'); el.eventMoreBtn.textContent = 'More details'; }
-    S.eventMoreFor = el.eventMore.hidden ? null : lead.lead_id;
-    show(el.recEvent, d.key.length > 0 || hasMore);
+    fill(el.eventFacts, d.key.concat(d.more));
+    // In their words: in full when short; a long message opens at its start with Show all (kept open for this lead across refreshes).
+    var w = L.wordsView(d.words);
+    var open = w.long && S.eventMoreFor === lead.lead_id;
+    el.eventDetails.textContent = open || !w.long ? w.full : w.short;
+    show(el.eventWords, !!w.full);
+    show(el.eventMoreBtn, w.long);
+    el.eventMoreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    el.eventMoreBtn.textContent = open ? 'Show less' : 'Show all';
+    if (!open) S.eventMoreFor = null;
+    show(el.recEvent, d.key.length > 0 || d.more.length > 0 || !!w.full);
   }
 
   function toggleEventMore() {
-    var open = el.eventMore.hidden;
-    el.eventMore.hidden = !open;
-    el.eventMoreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    el.eventMoreBtn.textContent = open ? 'Fewer details' : 'More details';
     var lead = S.thread && S.thread.lead;
-    S.eventMoreFor = open && lead ? lead.lead_id : null;
+    if (!lead) return;
+    S.eventMoreFor = S.eventMoreFor === lead.lead_id ? null : lead.lead_id;
+    renderEvent(lead);
   }
 
   function renderQuote(lead) {
@@ -3448,10 +3451,11 @@
         var dt = make('dt', cls || '', label), dd = make('dd', cls || '', value);
         sums.appendChild(dt); sums.appendChild(dd);
       }
+      // L.quoteView: no row that repeats one above it (delivery is a line; one line is its own total; Final price only when it differs)
       sum('Subtotal', q.subtotal);
       sum('Travel fee', q.travel);
-      sum('Total', q.total, 'is-total');
-      if (L.statusGroup(lead.status) === 'booked') sum('Final price', L.fmtMoney(lead.booked_amount), 'is-final');
+      sum('Total', q.totalRow, 'is-total');
+      sum('Final price', q.final, 'is-final');
       frag.appendChild(sums);
     }
     el.quoteBody.replaceChildren(frag);
@@ -3480,7 +3484,7 @@
         frag.appendChild(items);
       }
       var sums = make('dl', 'quote-sums');
-      [['Subtotal', q.subtotal, ''], ['Travel fee', q.travel, ''], ['Total', q.total, 'is-total']].forEach(function (x) {
+      [['Subtotal', q.subtotal, ''], ['Travel fee', q.travel, ''], ['Total', q.totalRow, 'is-total']].forEach(function (x) {
         if (!x[1]) return;
         sums.appendChild(make('dt', x[2], x[0])); sums.appendChild(make('dd', x[2], x[1]));
       });
@@ -3560,6 +3564,23 @@
     });
     el.othersList.replaceChildren(frag);
     show(el.recOthers, others.length > 0);
+    // 024 + r3: someone else on the same number: one small muted line per person at the bottom, not an event card; the name opens
+    // their lead (staff never get the column).
+    var shared = L.phoneSharedLines(lead);
+    var sf = document.createDocumentFragment();
+    shared.forEach(function (o) {
+      var li = make('li', 'shared-line');
+      li.appendChild(document.createTextNode(o.before));
+      if (o.name) {
+        var a = make('a', 'shared-name', o.name);
+        a.href = '#/lead/' + encodeURIComponent(o.lead_id);
+        li.appendChild(a);
+      }
+      li.appendChild(document.createTextNode(o.after));
+      sf.appendChild(li);
+    });
+    el.sharedList.replaceChildren(sf);
+    show(el.recShared, shared.length > 0);
   }
 
   // Line under the name. A pending automatic follow-up text (follow_ups) gives the exact send time.
@@ -3590,7 +3611,7 @@
     var lead = S.thread.lead;
     el.title.textContent = S.tab.label; // the lead's name is the big heading below; the bar says where Back goes
     setText(el.subtitle, '');
-    var sections = [el.recHead, el.recContact, el.strip, el.recNotes, el.recEvent, el.recPrice, el.recQuote, el.recOthers, el.recHistory];
+    var sections = [el.recHead, el.recContact, el.strip, el.recNotes, el.recEvent, el.recPrice, el.recQuote, el.recOthers, el.recShared, el.recHistory];
     if (!lead) {
       sections.forEach(function (n) { show(n, false); });
       show(el.optoutBanner, false);
@@ -3602,7 +3623,8 @@
     el.recName.textContent = leadName(lead);
     fillChip(el.stripChip, st);
     renderNext();
-    setText(el.recJob, L.jobBits(lead).join(' \u00b7 '));
+    // Date and guests live in the Event card; the header keeps the one figure (owner only, staff stay money-free).
+    setText(el.recJob, isStaff() ? '' : L.headMoney(lead));
     fillSource(lead);
     setText(el.recNoauto, L.noAutoLine(lead));
     show(el.recHead, true);
@@ -3631,12 +3653,13 @@
     renderOthers(lead);
   }
 
-  function bubble(m) {
+  // label: who wrote it (L.bubbleLabels; '' = same sender as the bubble above). Left out (the automatic texts to the owner) = the kind label.
+  function bubble(m, label) {
     var out = m.direction === 'out';
     var owner = m.audience === 'owner';
-    var row = make('div', 'row ' + (out ? 'out' : 'in') + (owner ? ' owner' : ''));
+    var row = make('div', 'row ' + (out ? 'out' : 'in') + (owner ? ' owner' : '') + (label === '' ? ' cont' : ''));
     var b = make('div', 'bubble');
-    var label = L.kindLabel(m.kind);
+    if (label === undefined) label = L.kindLabel(m.kind);
     if (label) b.appendChild(make('div', 'label', label));
     b.appendChild(make('p', 'text', m.body == null ? '' : String(m.body)));
     var t = make('time', 'stamp', L.fmtStamp(m.at));
@@ -3682,9 +3705,10 @@
     var frag = document.createDocumentFragment();
     if (parts.system.length && S.thread.sysOpen) frag.appendChild(sysList(parts.system, sysId));
     var prev = null;
-    parts.chat.forEach(function (m) {
+    var labels = L.bubbleLabels(parts.chat, S.thread.lead);
+    parts.chat.forEach(function (m, i) {
       if (!prev || !L.sameDay(prev.at, m.at)) frag.appendChild(make('div', 'day', L.fmtDay(m.at)));
-      frag.appendChild(bubble(m));
+      frag.appendChild(bubble(m, labels[i]));
       prev = m;
     });
     return frag;
@@ -3755,7 +3779,7 @@
       return;
     }
     var all = rows.concat(parts.system);
-    var sig = all.map(function (r) { return r.msg_id + ':' + String(r.body == null ? '' : r.body).length; }).join('|') + (S.thread.sysOpen ? '|open' : '');
+    var sig = all.map(function (r) { return r.msg_id + ':' + String(r.body == null ? '' : r.body).length; }).join('|') + (S.thread.sysOpen ? '|open' : '') + '|' + L.bubbleSender({ direction: 'in', audience: 'lead' }, S.thread.lead);
     var first = S.thread.sig === '' && !el.threadBox.hasChildNodes();
     if (sig === S.thread.sig && !first) return;
 
@@ -3887,7 +3911,7 @@
     el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.notesList.replaceChildren(); el.fuBody.replaceChildren();
     el.calBody.replaceChildren(); el.calDayList.replaceChildren(); el.searchResults.replaceChildren();
     el.calAgendaWeek.replaceChildren(); el.calAgendaLater.replaceChildren(); el.metricsBody.replaceChildren();
-    el.eventFacts.replaceChildren(); el.eventFactsMore.replaceChildren(); el.recEmail.replaceChildren(); S.eventMoreFor = null; el.quoteBody.replaceChildren(); el.othersList.replaceChildren(); el.history.replaceChildren();
+    el.eventFacts.replaceChildren(); el.recEmail.replaceChildren(); S.eventMoreFor = null; el.quoteBody.replaceChildren(); el.othersList.replaceChildren(); el.sharedList.replaceChildren(); el.history.replaceChildren();
     el.recPhone.removeAttribute('href'); el.contactActions.replaceChildren();
     ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recPhone', 'recEmail', 'eventDetails', 'confirmText', 'confirmNote', 'stripNote', 'actionErr', 'noteErr', 'contactNote']
       .forEach(function (k) { if (el[k]) el[k].textContent = ''; });
@@ -4282,6 +4306,7 @@
     el.addDlg.addEventListener('click', function (e) { if (e.target === el.addDlg && !S.addBusy) closeAdd(); });
     el.addDlg.addEventListener('cancel', function (e) { if (S.addBusy) e.preventDefault(); });
     el.addPhone.addEventListener('blur', renderAddDup);
+    el.addName.addEventListener('blur', function () { if (!el.addDup.hidden) renderAddDup(); });   // 024: the hint depends on the typed first name
     el.addPhone.addEventListener('input', function () { setAddError('phone', ''); });
     el.addDate.addEventListener('change', function () { renderAddDup(); setAddError('event_date', ''); });
     ['addName', 'addGuests', 'addArea', 'addOccasion', 'addEmail'].forEach(function (k) {
