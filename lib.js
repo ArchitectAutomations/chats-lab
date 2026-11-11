@@ -443,6 +443,13 @@
     return lead.source === 'manual';
   }
 
+  // B1 (Kevin 11-10 "Yes, correct"): a hand-added row (auto_texts false) whose PERSON gave form or text-first consent on some other record.
+  // The assistant answers their texts; nothing else changes (no day-5 text, quote_send stays refused: noConsent still decides every button).
+  // Only the words use this. A read without person_consent (an older server) is false, so it says what it said before.
+  function personConsent(lead) {
+    return !!lead && lead.auto_texts === false && lead.person_consent === true && !isOptedOut(lead);
+  }
+
   // A1 / B2 (Kevin 11-10): the lines about a lead who texted STOP. They say the same thing wherever they show.
   var STOP_NO_FOLLOWUP = "They texted STOP, so they won't get a follow-up text.";
   // B2 (chair, 11-10): the red banner on the record. STOP only stops AUTOMATIC texts; the owner may still text them himself, so his banner says what the system does.
@@ -484,7 +491,7 @@
     if (status === 'contacted' && lead && (lead.status === 'booked' || lead.status === 'lost')) {
       return q + ' The ' + lc(lead.status) + (lead.status === 'booked' ? ' price' : ' reason') + ' will be cleared. No follow-up text will go out.';
     }
-    if (status === 'contacted' && noConsent(lead)) return q + ' No automatic texts go to leads you added.';
+    if (status === 'contacted' && noConsent(lead)) return q + (personConsent(lead) ? ' No automatic follow-up texts go to leads you added.' : ' No automatic texts go to leads you added.');
     if (status === 'contacted') {
       if (lead && followupMissesEvent(lead.event_date, now)) return q + ' No follow-up text will go out.';
       // Contacted or texted before: its one follow-up may be used up, and the page cannot see that. Promise nothing.
@@ -495,6 +502,43 @@
     }
     if (noConsent(lead)) return q;
     return q + " They won't get the next follow-up text.";
+  }
+
+  /* ---------- C2: "Reached them?" after Call / Text (Kevin 11-10, "Yes") ----------
+     The owner taps Call or Text on an open lead: the page keeps { lead_id, at } in sessionStorage under ONE key per signed-in user (nothing else:
+     no phone, no name). Back on the page within 2 hours the record shows "Reached them?" with Mark contacted (the normal Contacted sheet, so the
+     follow-up choice and the STOP note still apply) and Not yet. Owner only; never for booked / lost / contacted. Cleared on sign-out (cv_ prefix),
+     on Not yet, and once the lead is marked. */
+  var REACHED_PREFIX = 'cv_reached_v1:';
+  var REACHED_TTL_MS = 2 * 3600000;
+  var REACHED_OPEN = { 'new': 1, engaged: 1, quoted: 1, handed_off: 1, opted_out: 1 };   // opted_out = a STOP lead the owner may still call (B2)
+  var REACHED_TEXT = { ask: 'Reached them?', yes: 'Mark contacted', no: 'Not yet' };
+  function reachedKey(uid) {
+    var u = String(uid == null ? '' : uid);
+    return /^[A-Za-z0-9_-]{1,64}$/.test(u) ? REACHED_PREFIX + u : '';
+  }
+  function reachedEligible(lead, staff) {
+    if (staff === true || !lead || !lead.lead_id) return false;
+    return REACHED_OPEN[String(lead.status || '').toLowerCase()] === 1;
+  }
+  // -> the string to store, or '' (nothing to remember).
+  function reachedPack(lead, staff, now) {
+    if (!reachedEligible(lead, staff)) return '';
+    return JSON.stringify({ lead_id: String(lead.lead_id), at: nowDate(now).getTime() });
+  }
+  // -> { lead_id, at } when the stored text is a fresh entry (not older than 2 hours, not from the future), else null.
+  function reachedRead(raw, now) {
+    var o;
+    try { o = JSON.parse(raw); } catch (e) { return null; }
+    if (!o || typeof o !== 'object' || typeof o.lead_id !== 'string' || !o.lead_id || typeof o.at !== 'number' || !isFinite(o.at)) return null;
+    var age = nowDate(now).getTime() - o.at;
+    if (age < 0 || age > REACHED_TTL_MS) return null;
+    return { lead_id: o.lead_id, at: o.at };
+  }
+  // Whether the record of `lead` shows the line.
+  function reachedShow(raw, lead, staff, now) {
+    var e = reachedRead(raw, now);
+    return !!e && reachedEligible(lead, staff) && e.lead_id === String(lead.lead_id);
   }
 
   // The hint under the Final price box of the Booked sheet. Only a price that was really filled in from the quote says so; an empty box says nothing.
@@ -1129,6 +1173,14 @@
     }
     v.pastCount = Math.max(0, cohort - recorded);
     return v;
+  }
+
+  // D1 (Kevin 11-10 "hide"): the Close rate tile stays hidden while cv_forecast says its history is not ready (tracking.ready is not true).
+  // No forecast data at all (switched off, failed, not loaded, no tracking block): nothing is said, so the tile shows as before.
+  function closeRateHidden(f) {
+    if (!f || typeof f !== 'object' || f.enabled === false) return false;
+    var tr = f.tracking;
+    return !!tr && typeof tr === 'object' && tr.ready !== true;
   }
 
   /* ---------- Did these happen? (cv_past_events, sql/016) ---------- */
@@ -1767,11 +1819,13 @@
     return CLOSED_FOR_QUOTE[String(lead.status || '').toLowerCase()] ? 'no quote sent' : 'no quote sent yet';
   }
   var NO_AUTO_TEXT = 'No automatic texts: you contact them yourself.';
+  // B1: the same lead when the person already agreed to texts on another record: the assistant answers if they text.
+  var NO_AUTO_TEXT_PERSON = 'The assistant answers if they text, but no automatic follow-up texts go to a lead you added.';
   // 022: after the owner's "no follow-up" (or none sent and no quote) the record says plainly that no text will go.
   var NO_FOLLOWUP_LINE = { chosen: 'No follow-up text will go out: you chose not to send one.', no_quote: 'No follow-up text will go out: no quote was sent.', opted_out: 'No follow-up text will go out: they texted STOP.' };
   function noAutoLine(lead) {
     if (!lead) return '';
-    if (lead.auto_texts === false) return NO_AUTO_TEXT;
+    if (lead.auto_texts === false) return personConsent(lead) ? NO_AUTO_TEXT_PERSON : NO_AUTO_TEXT;
     return NO_FOLLOWUP_LINE[lead.no_followup] || '';
   }
 
@@ -3280,7 +3334,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
         'On {tab_list}, tap + Add lead, at the top right.',
         'Fill in the Name and Phone (10 digits), pick Where they came from ({sources}), then any event details you know. Tick Already talked to them if so.',
         'Tap Add lead.'
-      ], note: 'No automatic texts go to leads you add, unless they later fill in your form. You contact them yourself.' },
+      ], note: 'No automatic follow-up texts go to leads you add, unless they later fill in your form. You contact them yourself; the assistant answers people who agreed before.' },
       { id: 'quote', title: 'Make a quote', f: ['quote'], steps: [
         'Tap More, then {tab_quote}.',
         'Fill in Number of guests, How many hours of service, Portable bar required? and Event city. More details (optional) holds the Event date, Occasion and Promo code.',
@@ -3835,7 +3889,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var r = row || {};
     var t = function (v) { return { v: v == null ? '' : String(v), kind: 't' }; };
     var n = function (v) { return { v: v, kind: 'n' }; };
-    var texts = r.opted_out === true ? 'Opted out' : r.auto_texts === false ? 'Off: you contact them' : 'On';
+    var texts = r.opted_out === true ? 'Opted out' : r.auto_texts === false ? (r.person_consent === true ? 'Replies only: no follow-ups' : 'Off: you contact them') : 'On';
     return [
       t(exportLocal(r.created_at)), n(exportNum(r.customer_no)), t(oneLine(r.name)), t(exportPhone(r.phone)), t(oneLine(r.email)),
       t(r.status ? statusInfo(r.status).label : ''), t(exportLocal(r.status_at)),
@@ -4534,6 +4588,10 @@ function renderPriceBlockSms(lineItems, total, currency) {
     needsYou: needsYou,
     waitsOnOwner: waitsOnOwner,
     noConsent: noConsent,
+    personConsent: personConsent,
+    closeRateHidden: closeRateHidden,
+    REACHED_PREFIX: REACHED_PREFIX, REACHED_TTL_MS: REACHED_TTL_MS, REACHED_TEXT: REACHED_TEXT,
+    reachedKey: reachedKey, reachedEligible: reachedEligible, reachedPack: reachedPack, reachedRead: reachedRead, reachedShow: reachedShow,
     lostPartOf: lostPartOf,
     lostParts: lostParts,
     lostCounts: lostCounts,

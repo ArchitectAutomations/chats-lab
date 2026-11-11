@@ -1164,3 +1164,9 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .push-banner-btn { flex: none; min-height: 44px; }
 .rec-newtext[hidden] { display: none; }
 @media (min-width: 784px) { .push-banner { margin-left: auto; margin-right: auto; } }
+
+/* C2: "Reached them?" line under Call / Text */
+.reached { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: var(--sp-2) 0 0; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line, currentColor); border-radius: 12px; }
+.reached[hidden] { display: none; }
+.reached-q { margin: 0; font-weight: 700; flex: 1 1 100%; }
+.reached-btn { min-height: 44px; }

@@ -189,6 +189,7 @@
     recordLoading: $('record-loading'), recHead: $('rec-head'), recName: $('rec-name'), recNext: $('rec-next'), recJob: $('rec-job'), recPhone: $('rec-phone'), recHistory: $('rec-history'),
     optoutBanner: $('optout-banner'), recContact: $('rec-contact'),
     contactActions: $('contact-actions'), contactNote: $('contact-note'),
+    reached: $('rec-reached'), reachedYes: $('reached-yes'), reachedNo: $('reached-no'),
     recEvent: $('rec-event'), eventFacts: $('event-facts'), eventWords: $('event-words'), eventDetails: $('event-details'),
     eventMoreBtn: $('event-more-btn'), recEmail: $('rec-email'), recPhoneRow: $('rec-phone-row'),
     recQuote: $('rec-quote'), quoteBody: $('quote-body'), recOthers: $('rec-others'), othersList: $('others-list'), recShared: $('rec-shared'), sharedList: $('shared-list'),
@@ -369,6 +370,8 @@
   var DETAIL_SOURCE = ',source,manual_source,auto_texts,quote_received,followup_possible,no_followup,owner_quote';
   // 024: the other people on this lead's number; dropped again (first fallback) if the view does not have it yet.
   var DETAIL_SHARED = ',phone_shared';
+  // B1 (sql/031): true = the person agreed to texts on some record, so the assistant answers them even on a hand-added row. Words only.
+  var DETAIL_CONSENT = ',person_consent';
   var SEARCH_BASE = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
   var SEARCH_COLUMNS = SEARCH_BASE + ',source,manual_source'; // sql/011 columns on lead_detail; the search falls back without them
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
@@ -455,7 +458,10 @@
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
-          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED).eq('lead_id', id).maybeSingle().then(function (rs) {
+          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT).eq('lead_id', id).maybeSingle().then(function (rc) {
+            if (!rc.error) return rc;   // B1: person_consent is the view's last column; a lab without it falls to the tiers below
+            return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED).eq('lead_id', id).maybeSingle();
+          }).then(function (rs) {
             if (!rs.error) return rs.data;
             return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE).eq('lead_id', id).maybeSingle().then(function (r0) {
               if (!r0.error) return r0.data;
@@ -1043,6 +1049,7 @@
       var call = make('a', 'row-call');
       call.href = tel;
       call.setAttribute('aria-label', 'Call ' + leadName(lead));
+      call.setAttribute('data-lead-id', lead.lead_id);
       call.appendChild(icon(ICON_PHONE, 22));
       li.appendChild(call);
     }
@@ -1066,6 +1073,7 @@
       var call = make('a', 'row-call');
       call.href = tel;
       call.setAttribute('aria-label', 'Call ' + leadName(lead));
+      call.setAttribute('data-lead-id', lead.lead_id);
       call.appendChild(icon(ICON_PHONE, 22));
       li.appendChild(call);
     }
@@ -3497,15 +3505,17 @@
 
   // Looking ahead: its own RPC, soft-failed. Any error leaves the block hidden; nothing else on Metrics depends on it.
   function refreshForecast() {
-    if (!S.api.forecast || !feature('forecast')) return Promise.resolve();
+    if (!S.api.forecast || !feature('forecast')) { S.crHidden = false; return Promise.resolve(); }   // D1: no forecast to wait for: the tile shows as before
     var n = ++S.seq.forecast;
     return Promise.resolve(S.api.forecast()).then(function (f) {
       if (n !== S.seq.forecast || !S.signedIn) return;
       S.forecast = f || null;
+      S.crHidden = L.closeRateHidden(S.forecast);   // D1: answered: follow tracking.ready
       if (S.screen === 'metrics') renderMetrics();
     }).catch(function () {
       if (n !== S.seq.forecast) return;
       S.forecast = null;
+      if (S.crHidden === undefined) S.crHidden = false;   // D1: the first answer failed: show as before; a later blip keeps the last answer
       if (S.screen === 'metrics') renderMetrics();
     });
   }
@@ -3710,6 +3720,7 @@
     // Lead value is a section of Metrics: it follows the 'value' switch, right after Money on the table.
     out = out.filter(function (k) { return k !== 'value'; });
     out = out.filter(function (k) { return k !== 'forecast' || feature('forecast'); });
+    out = out.filter(function (k) { return k !== 'close_rate' || S.crHidden === false; });   // D1: three states: undefined = forecast still loading (hidden), true = not ready (hidden), false = ready or no forecast (shown)
     if (feature('value')) { var oi = out.indexOf('open'); out.splice(oi === -1 ? out.length : oi + 1, 0, 'value'); }
     return out;
   }
@@ -4089,6 +4100,35 @@
     dl.appendChild(dd);
   }
 
+  /* ---------- C2: "Reached them?" (owner only) ----------
+     Tapping Call or Text on an open lead keeps { lead_id, at } in sessionStorage (one key per signed-in user, L.reachedKey). Back on the page
+     within 2 hours the record shows the line. Mark contacted opens the NORMAL Contacted sheet (follow-up choice, STOP note); Not yet clears. */
+  var RC = { back: true };   // a fresh page load counts as "back"; a tap on Call / Text sets it false until the page is visible again
+  function reachedKeyNow() { return S.uid && !isStaff() ? L.reachedKey(S.uid) : ''; }
+  function reachedNote(lead) {
+    var key = reachedKeyNow();
+    if (!key) return;
+    var raw = L.reachedPack(lead, isStaff(), Date.now());
+    if (raw) store('set', key, raw); else store('del', key);
+    RC.back = false;
+  }
+  function reachedClear() { var key = reachedKeyNow(); if (key) store('del', key); }
+  function renderReached() {
+    var lead = S.thread.lead, key = reachedKeyNow(), on = false;
+    if (lead && key) {
+      var raw = store('get', key);
+      on = RC.back && L.reachedShow(raw, lead, isStaff(), Date.now());
+      var e = raw ? L.reachedRead(raw, Date.now()) : null;
+      if (raw && (!e || (e.lead_id === String(lead.lead_id) && !L.reachedEligible(lead, false)))) store('del', key);   // stale, or the lead has been marked
+    }
+    show(el.reached, on);
+  }
+  function reachedYes() {
+    var a = L.actions().filter(function (x) { return x.status === 'contacted'; })[0];
+    if (a && !isStaff() && S.thread.lead) openConfirm(a);
+  }
+  function reachedNo() { reachedClear(); renderReached(); }
+
   // Call / Text / Email under the header. The phone number itself is the tappable line in the header; the email sits behind its button.
   function renderContact(lead) {
     var phone = L.fmtPhoneNational(lead.phone);
@@ -4364,6 +4404,7 @@
     el.optoutBanner.textContent = L.stopBanner(isStaff());   // B2: the owner may still text them; the system will not
     show(el.optoutBanner, L.isOptedOut(lead));
     renderContact(lead);
+    renderReached();
     renderEmail(lead);
     el.strip.className = 'rec-card strip tone-' + st.tone;
     var lostNote = String(lead.status || '').toLowerCase() === 'lost' ? String(lead.lost_note || '').trim() : '';
@@ -4775,7 +4816,7 @@
     S.counts = null; S.shown = {}; S.listTop = 0; S.pastLimit = 10;
     S.exp.cfgSeq++; S.exp.on = null;
     S.bulk = { open: false, date: '', view: null, seq: S.bulk.seq + 1, busy: false, err: '', done: '', undo: null };
-    S.seq.metrics++; S.seq.forecast++; S.seq.pastEvents++; S.pastEvents = null; S.pastBusy = ''; S.pastErr = ''; S.pastScroll = false; S.forecast = null; S.metrics = null; S.metricsError = '';
+    S.seq.metrics++; S.seq.forecast++; S.seq.pastEvents++; S.pastEvents = null; S.pastBusy = ''; S.pastErr = ''; S.pastScroll = false; S.forecast = null; S.crHidden = undefined; S.metrics = null; S.metricsError = '';
     S.seq.followups++; S.followUps = null; S.followUpsError = '';
     clearSearch();
     clearQuote();
@@ -5240,8 +5281,18 @@
     el.convoScroll.addEventListener('scroll', onConvoScroll, { passive: true });
 
     // Phones background tabs and drop sockets: catch up the moment the page is back.
+    document.addEventListener('click', function (ev) {   // C2: Call / Text on a lead (the record's buttons and number, a list row's Call icon)
+      var a = ev.target && ev.target.closest ? ev.target.closest('a[href^="tel:"], a[href^="sms:"]') : null;
+      if (!a || !S.signedIn || isStaff()) return;
+      var lid = a.getAttribute('data-lead-id');
+      var lead = lid ? L.leadIndex(S.leads)[lid] : (S.screen === 'thread' ? S.thread.lead : null);
+      if (lead) reachedNote(lead);
+    }, true);
+    el.reachedYes.addEventListener('click', reachedYes);
+    el.reachedNo.addEventListener('click', reachedNo);
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden') qDraftFlush();   // the phone may kill the app next: write the draft now, not in 400 ms
+      if (document.visibilityState === 'visible') { RC.back = true; if (S.signedIn && S.screen === 'thread') renderReached(); }   // C2
       if (document.visibilityState === 'visible' && S.signedIn && ACCESS.state === 'error') { checkAccess(); return; }
       if (document.visibilityState === 'visible' && S.signedIn) { scheduleRefresh(0); if (S.screen === 'support') refreshSupportList(); }
     });
