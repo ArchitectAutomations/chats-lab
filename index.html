@@ -575,6 +575,23 @@
           <p class="error" id="action-error" role="alert" hidden></p>
         </section>
 
+        <!-- R7 (sql/033, owner only, behind features.money and the 033 columns): the AI re-quote line, the Deposit received tick, the money kept from a cancellation. -->
+        <section class="rec-card rec-money" id="rec-money" aria-labelledby="h-money" hidden>
+          <h3 class="rec-h" id="h-money">Money</h3>
+          <div class="money-ai" id="money-ai" hidden>
+            <p class="money-ai-text" id="money-ai-text"></p>
+            <p class="rec-note money-ai-sub" id="money-ai-sub"></p>
+            <button class="btn primary money-ai-btn" id="money-ai-btn" type="button">Update</button>
+          </div>
+          <label class="money-deposit" id="money-deposit-row" hidden>
+            <input type="checkbox" id="money-deposit" aria-describedby="money-deposit-stamp">
+            <span id="money-deposit-text">Deposit received</span>
+          </label>
+          <p class="rec-note money-deposit-stamp" id="money-deposit-stamp" hidden></p>
+          <p class="money-kept" id="money-kept" hidden></p>
+          <p class="error" id="money-error" role="alert" hidden></p>
+        </section>
+
         <section class="rec-card" id="rec-event" aria-labelledby="h-event" hidden>
           <h3 class="rec-h" id="h-event">Event</h3>
           <dl class="facts" id="event-facts"></dl>
@@ -698,6 +715,13 @@
         <div id="reason-other" hidden>
           <label class="field-label" for="reason-note">What happened? (optional)</label>
           <textarea class="field note-field" id="reason-note" rows="2" maxlength="500"></textarea>
+        </div>
+        <!-- R7 (C5, owner only): shown only while "Cancelled after booking" is the picked reason. -->
+        <div id="reason-kept" hidden>
+          <label class="field-label" for="kept">Amount you kept</label>
+          <div class="money-wrap"><span class="money-sign" aria-hidden="true">$</span><input class="field money-field" id="kept" type="text" inputmode="decimal" autocomplete="off" aria-describedby="kept-hint"></div>
+          <p class="hint" id="kept-hint"></p>
+          <p class="hint" id="kept-back"></p>
         </div>
       </fieldset>
       <p class="error" id="confirm-error" role="alert" hidden></p>

@@ -489,7 +489,8 @@
     if (plain) return q; // no promise about texts: used where the page cannot tell which leads get follow-ups
     // 021: moving a booked or lost lead back uses up the day-5 text and removes what was recorded (sql/021), so the sheet says both. Before the no-consent line: an added lead has a price to lose too.
     if (status === 'contacted' && lead && (lead.status === 'booked' || lead.status === 'lost')) {
-      return q + ' The ' + lc(lead.status) + (lead.status === 'booked' ? ' price' : ' reason') + ' will be cleared. No follow-up text will go out.';
+      var tick = lead.deposit_received_at ? ' The deposit tick is cleared too; the history keeps it.' : '';   // R7: the tick goes with the outcome (sql/033)
+      return q + ' The ' + lc(lead.status) + (lead.status === 'booked' ? ' price' : ' reason') + ' will be cleared.' + tick + ' No follow-up text will go out.';
     }
     if (status === 'contacted' && noConsent(lead)) return q + (personConsent(lead) ? ' No automatic follow-up texts go to leads you added.' : ' No automatic texts go to leads you added.');
     if (status === 'contacted') {
@@ -544,6 +545,37 @@
   // The hint under the Final price box of the Booked sheet. Only a price that was really filled in from the quote says so; an empty box says nothing.
   function bookedPriceHint(prefilled) {
     return String(prefilled === null || prefilled === undefined ? '' : prefilled).trim() ? 'From the quote. Change it if the price differs.' : '';
+  }
+
+  // R7 (C4): what the Booked sheet starts with. The server freezes, for a Booked with no typed price: the lead's quote, else the owner's saved price
+  // (cv_private.booked_freeze_amount). So the sheet prefills the quote and, when the owner leaves it alone, sends NO amount (the server then freezes
+  // the same number). The one exception is a quote that is older than the owner's last edit of the event details (lead_detail.details_edited_at):
+  // the server never freezes a stale quote, so the page sends the shown number itself (the owner has seen it and confirms it) and the hint says to check.
+  // -> { value: text for the box, quote: the number "unchanged" is compared with (null = always send what is typed), hint }.
+  var STALE_QUOTE_HINT = 'From the quote, but the event details changed after it was made. Check the price.';
+  function quoteStale(lead) {
+    var e = toDate(lead && lead.details_edited_at);
+    if (!e) return false;
+    var q = toDate(lead.quoted_at);
+    return !q || e.getTime() > q.getTime();
+  }
+  // Review R7 P2: a stale quote with an UNSENT owner price saved after the last edit: that owner price is what the server freezes (booked_freeze_amount
+  // step 2), so the sheet prefills it and sends nothing.
+  function freshOwnerPrice(lead) {
+    var oq = lead && lead.owner_quote && typeof lead.owner_quote === 'object' ? lead.owner_quote : null;
+    if (!oq || oq.state === 'sent' || toCents(oq.total) === null) return null;
+    var added = toDate(oq.added_at), edited = toDate(lead.details_edited_at);
+    return added && edited && added.getTime() > edited.getTime() ? oq.total : null;
+  }
+  function bookedPrefill(lead) {
+    if (lead && toCents(lead.quote_total) !== null && quoteStale(lead)) {
+      var op = freshOwnerPrice(lead);
+      if (op !== null) return { value: amountInput(op), quote: op, hint: bookedPriceHint(amountInput(op)) };
+    }
+    var total = effectiveTotal(lead);
+    var value = amountInput(total);
+    var stale = !!lead && toCents(lead.quote_total) !== null && quoteStale(lead);
+    return { value: value, quote: stale ? null : total, hint: stale && value ? STALE_QUOTE_HINT : bookedPriceHint(value) };
   }
 
   // 022 + R2 (B5, Kevin 11-10 "C"): the sheet's two buttons on Contacted whenever the server says the lead could really get the day-5 text
@@ -624,7 +656,8 @@
     bad_reason: 'Pick one of the reasons shown.',
     note_too_long: 'Keep the note under 500 characters.',
     bad_followup: 'Pick one of the two follow-up choices.',
-    followup_only_with_contacted: 'Pick one of the two follow-up choices.'
+    followup_only_with_contacted: 'Pick one of the two follow-up choices.',
+    cancelled_only_after_booked: 'Only a booked lead can be marked as cancelled after booking. The page is up to date now.'   // sql/033
   };
   // 028 (A1): a stale page asked to send the follow-up to a lead who texted STOP. Nothing was saved; the page refetches after this.
   // The status word is the client's own (statusInfo), not hard-coded.
@@ -635,13 +668,14 @@
   // Staff-only refusals from cv_set_lead_status (sql/018): plain words.
   var STAFF_ERRORS = {
     staff_no_price: 'Only the owner can enter a final price. Mark the lead booked without one and the owner adds it.',
-    staff_open_leads_only: 'Staff can only change a lead that is still open. Ask the owner to change a booked or lost lead.'
+    staff_open_leads_only: 'Staff can only change a lead that is still open. Ask the owner to change a booked or lost lead.',
+    staff_no_cancelled: 'Only the owner can mark a booking cancelled.'   // sql/033
   };
 
   function friendlyStatusError(err, role) {
     var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).trim();
     var msg = raw.toLowerCase();
-    var sm = /\b(staff_no_price|staff_open_leads_only)\b/.exec(msg);
+    var sm = /\b(staff_no_price|staff_open_leads_only|staff_no_cancelled)\b/.exec(msg);
     if (sm) return STAFF_ERRORS[sm[1]];
     var m = /\b(not_owner|bad_status|not_found|not_allowed|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(msg);
     if (m) {
@@ -670,7 +704,8 @@
   var HISTORY_ACTIONS = {
     'new': 'New lead', engaged: 'Started texting', quoted: 'Quoted', handed_off: 'Asked for you',
     contacted: 'Contacted', booked: 'Booked', lost: 'Lost', opted_out: 'Opted out', reopened: 'Reopened',
-    quote_priced: 'Priced by you', quote_sent: 'Quote sent', edited: 'Details edited'
+    quote_priced: 'Priced by you', quote_sent: 'Quote sent', edited: 'Details edited',
+    deposit: 'Deposit received', deposit_undone: 'Deposit unticked'   // R7 (C5, sql/033): the owner's tick; owner history only
   };
   var HISTORY_SOURCES = {
     page: 'from the page', sms: 'by text', text: 'by text', owner_sms: 'by text', bulk: 'bulk clear',
@@ -691,6 +726,11 @@
     var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
     var s = String(h.source || '').toLowerCase();
     var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
+    // R7 (C5): a booking cancelled after it was made reads "Lost: cancelled after booking ($300 kept)".
+    if (a === 'lost' && String(h.reason || '').toLowerCase() === CANCELLED_KEY) {
+      var kept = fmtMoney(h.amount);
+      return [label + ': ' + lostReasonLabel(CANCELLED_KEY).toLowerCase() + (kept ? ' (' + kept + ' kept)' : ''), fmtStamp(h.at, now), src].filter(Boolean).join(' \u00b7 ');
+    }
     var extra = a === 'booked' || a === 'quote_priced' || a === 'quote_sent' ? fmtMoney(h.amount) : a === 'lost' ? lostReasonLabel(h.reason) : a === 'contacted' ? NO_FOLLOWUP_HISTORY[h.no_followup] || '' : '';
     return [label, extra, fmtStamp(h.at, now), src].filter(Boolean).join(' \u00b7 ');
   }
@@ -718,11 +758,12 @@
       return 'Changed ' + (EDIT_LABELS[k] || String(k).replace(/_/g, ' ')) + ': ' + editValue(k, ch[k][0], now) + ' \u2192 ' + editValue(k, ch[k][1], now);
     });
   }
-  // The rows the History list draws: newest first; staff never see an edit (old email and phone values are the owner's); an edit that
+  var OWNER_ONLY_HISTORY = ['edited', 'deposit', 'deposit_undone'];   // R7: the deposit rows are the owner's money; cv_staff_lead does not send them, and this drops them if one ever arrives
+  // The rows the History list draws: newest first; staff never see an edit or a deposit (old email and phone values are the owner's); an edit that
   // changed several fields becomes one row per field, side by side, so each reads on its own line.
   function historyRows(rows, opts) {
     var staff = !!(opts && opts.staff);
-    var list = sortHistory((Array.isArray(rows) ? rows : []).filter(function (h) { return !(staff && h && String(h.action || '').toLowerCase() === 'edited'); }));
+    var list = sortHistory((Array.isArray(rows) ? rows : []).filter(function (h) { return !(staff && h && OWNER_ONLY_HISTORY.indexOf(String(h.action || '').toLowerCase()) !== -1); }));
     var out = [];
     list.forEach(function (h) {
       var ch = String(h.action || '').toLowerCase() === 'edited' && h.changes && typeof h.changes === 'object' && !Array.isArray(h.changes) ? h.changes : null;
@@ -1148,6 +1189,8 @@
       var bk = toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : fmtMoney(lead.quote_total);
       if (bk) return bk + ' booked';
     }
+    // R7 (C5): a booking cancelled after it was made shows the money kept, not the old quote (owner only: staff never get the column).
+    if (isCancelledLost(lead) && toCents(lead.kept_amount) !== null) return fmtMoney(lead.kept_amount) + ' kept';
     var q = fmtMoney(lead.quote_total);
     if (q) return q + ' quoted';
     return quotedOrOwnerMoney(lead);   // a saved price: "$515 not sent", "$515 sending now", "$515 may have gone out"
@@ -2823,13 +2866,19 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // sql/026: the bulk clear's own reason. Shown wherever a reason is shown (chip, history, Metrics, spreadsheet, Ask), never
   // offered on the Lost sheet (owner or staff): cv_set_lead_status refuses it; only cv_bulk_lost writes it.
   var BULK_REASON = { key: BULK_REASON_KEY, label: 'Old lead' };
-  var ALL_LOST_REASONS = LOST_REASONS.concat([BULK_REASON]);
+  // sql/033 (R7, C5): the reason for a booking cancelled after it was made. OWNER ONLY, and only from a Booked lead: lostReasons() offers it
+  // only when asked to (lostReasons({ cancelled: true })), cv_set_lead_status refuses it for staff and for any lead that was not booked.
+  var CANCELLED_KEY = 'cancelled';
+  var CANCELLED_REASON = { key: CANCELLED_KEY, label: 'Cancelled after booking' };
+  var ALL_LOST_REASONS = LOST_REASONS.concat([BULK_REASON, CANCELLED_REASON]);
   var LOST_NOTE_MAX = 500;
   var AMOUNT_MAX = 100000;
 
   // Chips on the Lost sheet, labels from CV_CUSTOM.lostReasons.
-  function lostReasons() {
-    return LOST_REASONS.map(function (r) { return { key: r.key, label: CUSTOM.lost[r.key] || r.label }; });
+  // opts.cancelled (R7): put "Cancelled after booking" first (it is the likeliest reason when a booked job falls through). Left out = the five as before.
+  function lostReasons(opts) {
+    var list = opts && opts.cancelled === true ? [CANCELLED_REASON].concat(LOST_REASONS) : LOST_REASONS;
+    return list.map(function (r) { return { key: r.key, label: CUSTOM.lost[r.key] || r.label }; });
   }
   function lostReasonLabel(key) {
     var k = String(key || '').toLowerCase();
@@ -2863,7 +2912,9 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // Contacted call is the same two arguments as before.
   //   booked: p_amount only when the typed price differs from the quote (empty / unchanged -> left out)
   //   lost:   p_reason required; p_reason_note only for 'other' and only when something was typed
-  function statusExtras(status, form, quote) {
+  //   lost + cancelled (R7, owner only): p_reason 'cancelled' AND p_amount = the Amount you kept (never left out: a blank would let the server
+  //          fall back to the booked price, so the field is required and 0 is typed when nothing was kept). ctx.staff = true refuses it.
+  function statusExtras(status, form, quote, ctx) {
     form = form || {};
     if (status === 'booked') {
       var a = parseAmount(form.amount);
@@ -2874,6 +2925,13 @@ function renderPriceBlockSms(lineItems, total, currency) {
     }
     if (status === 'lost') {
       var r = String(form.reason || '').toLowerCase();
+      if (r === CANCELLED_KEY) {
+        if (ctx && ctx.staff === true) return { ok: false, error: STAFF_ERRORS.staff_no_cancelled, field: 'reason' };
+        var k = parseAmount(form.kept);
+        if (!k.ok) return { ok: false, error: k.error.replace('final price', 'amount you kept').replace('the price in dollars', 'the amount in dollars'), field: 'kept' };
+        if (k.value === null) return { ok: false, error: KEPT_REQUIRED, field: 'kept' };
+        return { ok: true, args: { p_reason: CANCELLED_KEY, p_amount: k.value } };
+      }
       if (!LOST_REASONS.some(function (x) { return x.key === r; })) return { ok: false, error: 'Pick a reason the lead was lost.', field: 'reason' };
       var args = { p_reason: r };
       var note = String(form.note || '').trim();
@@ -2894,6 +2952,89 @@ function renderPriceBlockSms(lineItems, total, currency) {
     if (statusGroup(st) === 'booked') extra = fmtMoney(lead.booked_amount);
     else if (st === 'lost') extra = lostReasonLabel(lead.lost_reason);
     return { label: extra ? info.label + ' \u00b7 ' + extra : info.label, tone: info.tone };
+  }
+
+  /* ---------- R7 (sql/033, Kevin C4 + C5): money on a booked lead ----------
+     All owner only. The page only offers any of it when the lead came with the 033 columns (hasMoneyColumns): on a lab without 033 there is no
+     tick, no "Cancelled after booking" and no "Update?" line, and the old paths run exactly as before. */
+  var KEPT_REQUIRED = 'Type the amount you kept. Type 0 if you kept nothing.';
+  var KEPT_HINT = 'Money you kept after the cancellation, for example a deposit. It is counted on its own line in Metrics, never in Money booked.';
+  var KEPT_GOING_BACK = 'Moving this lead back to Contacted later removes this outcome.';
+  var KEPT_GOING_BACK_DEPOSIT = ' The history still shows the deposit.';   // only said when a deposit is actually ticked
+  function keptBackText(lead) { return KEPT_GOING_BACK + (lead && toDate(lead.deposit_received_at) ? KEPT_GOING_BACK_DEPOSIT : ''); }
+  var DEPOSIT_LABEL = 'Deposit received';
+  var AI_PRICE_BUTTON = 'Update';
+  function hasMoneyColumns(lead) {
+    return !!lead && typeof lead === 'object' && Object.prototype.hasOwnProperty.call(lead, 'deposit_received_at') && Object.prototype.hasOwnProperty.call(lead, 'kept_amount');
+  }
+  function moneyOn(lead, staff) { return staff !== true && hasMoneyColumns(lead); }
+  function isCancelledLost(lead) {
+    return !!lead && String(lead.status || '').toLowerCase() === 'lost' && String(lead.lost_reason || '').toLowerCase() === CANCELLED_KEY;
+  }
+  // "Cancelled after booking" is offered on the Lost sheet only to the owner, only for a lead that is Booked now (the server's rule:
+  // cancelled_only_after_booked). A lead that was booked once and went back to Contacted is NOT offered it: the server would refuse.
+  function cancelledOffered(lead, staff) {
+    return moneyOn(lead, staff) && String(lead.status || '').toLowerCase() === 'booked';
+  }
+  // "Amount you kept" always starts BLANK (review R7 P1): a prefilled booked price would let one tap record the whole job as kept.
+  // It is required (KEPT_REQUIRED asks), and 0 is a real answer.
+  function keptPrefill() { return ''; }
+  // C4 (Kevin 11-10): "New price from the AI: $X. Update?" on a booked lead when the AI re-quoted AFTER the booking and the new total differs
+  // from the booked price. null = say nothing. booked_amount NULL = the booked price floats with the quote: nothing to update.
+  function aiPriceView(lead, staff) {
+    if (!moneyOn(lead, staff) || String(lead.status || '').toLowerCase() !== 'booked') return null;
+    var q = toCents(lead.quote_total), b = toCents(lead.booked_amount);
+    if (q === null || b === null || q === b) return null;
+    var qa = toDate(lead.quoted_at), ba = toDate(lead.booked_at);
+    if (!qa || !ba || qa.getTime() <= ba.getTime()) return null;
+    // Where the new total came from: lead_detail.owner_quote carries the price the owner priced and sent (sent_at). A sent price of exactly this
+    // total is the OWNER'S, not the AI's, so the line says "New price" and never "from the AI". Anything else is the AI's re-quote.
+    // DEFAULT-PENDING-KEVIN: if the owner's sent price and an AI re-quote were ever the same number, the neutral wording is used (never a false "from the AI").
+    var oq = lead.owner_quote && typeof lead.owner_quote === 'object' ? lead.owner_quote : null;
+    var ownerSent = !!oq && !!oq.sent_at && toCents(oq.total) === q;
+    return { text: (ownerSent ? 'New price: ' : 'New price from the AI: ') + fmtMoney(lead.quote_total) + '. Update?', booked: 'Booked at ' + fmtMoney(lead.booked_amount),
+      button: AI_PRICE_BUTTON, amount: q / 100, owner: ownerSent };
+  }
+  // The deposit tick on a booked lead. On a lead lost as cancelled the tick that was there stays visible and can be UNTICKED (never ticked again:
+  // with no tick there is no line). Booking the lead again clears the tick on the server, so the page always shows what the lead says, never an assumption.
+  // null = no card line.
+  function depositView(lead, staff, now) {
+    if (!moneyOn(lead, staff)) return null;
+    var st = String(lead.status || '').toLowerCase();
+    var at = lead.deposit_received_at;
+    var checked = !!toDate(at);
+    if (st === 'booked') return { label: DEPOSIT_LABEL, checked: checked, editable: true, stamp: checked ? fmtShortDate(at, now) : '' };
+    if (isCancelledLost(lead) && checked) return { label: DEPOSIT_LABEL, checked: true, editable: true, untickOnly: true, stamp: fmtShortDate(at, now) };
+    return null;
+  }
+  // Everything the lead page's money card shows (owner only). show = whether the card exists at all.
+  function moneyCardView(lead, staff, now) {
+    var ai = aiPriceView(lead, staff), dep = depositView(lead, staff, now);
+    var kept = moneyOn(lead, staff) && isCancelledLost(lead) && toCents(lead.kept_amount) !== null ? 'Kept from this cancellation: ' + fmtMoney(lead.kept_amount) : '';
+    return { show: !!(ai || dep || kept), ai: ai, deposit: dep, kept: kept };
+  }
+  // cv_set_deposit refusals in plain words. A failed tick is put back as it was (the page does that); this is the line under it.
+  function friendlyDepositError(err) {
+    var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).toLowerCase();
+    var det = String((err && err.details) || '').toLowerCase();
+    var all = raw + ' ' + det;
+    if (/\bnot_booked\b/.test(all)) return 'This lead is not booked any more, so the tick was not saved. The page is up to date now.';
+    if (/\bnot_owner\b/.test(all)) return 'Only the owner can tick the deposit.';
+    if (/\bnot_found\b/.test(all)) return "This lead can't be found any more. Go back to your list.";
+    var status = err && err.status;
+    if (status === 401 || (err && err.code === 'PGRST301') || /jwt/.test(raw)) return SESSION_RAN_OUT;
+    if (/failed to fetch|network|load failed/.test(raw)) return "Can't reach the server. Check your connection and try again.";
+    return "Couldn't save the deposit tick. Try again in a moment.";
+  }
+  // cv_metrics().kept {this_month, last_month, all_time} each {count, total} (033): its own block, never added into Money booked.
+  // null = no block (an older server, or nothing was ever kept from a cancellation).
+  function keptView(kept) {
+    if (!kept || typeof kept !== 'object' || Array.isArray(kept)) return null;
+    var all = fcPair(kept.all_time);
+    if (!(all.count > 0)) return null;
+    function pair(o) { return moneyCount(o, 'cancellation', 'cancellations'); }
+    return { title: 'Kept from cancellations', note: 'Not included in Money booked.',
+      tiles: [{ label: 'This month', pair: pair(kept.this_month) }, { label: 'Last month', pair: pair(kept.last_month) }, { label: 'All time', pair: pair(kept.all_time) }] };
   }
 
   // Money beside a lead: "Quoted $1,180" once a different final price is set, else the quote.
@@ -3566,7 +3707,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
      own names, filled in here: {tab_<route>} = the tab / More label, {contacted} {booked} {lost} {needs} = the status words ({x_lc} lower case),
      {lost_reasons} and {sources} = the pick-lists. The guide never names a person, and never mentions a feature that is not on. */
   var GUIDE_FLAGS = ['followups', 'calendar', 'metrics', 'quote', 'export', 'ask', 'support', 'supportContact', 'supportNoContact', 'supportSend', 'supportNoSend', 'pastEvents', 'bulk',
-    'addLead', 'search', 'push', 'noQuoteFilter', 'quoteDraft', 'quoteAge', 'forecast', 'value', 'quotePromoEnds', 'exportOff'];
+    'addLead', 'search', 'push', 'noQuoteFilter', 'quoteDraft', 'quoteAge', 'forecast', 'value', 'quotePromoEnds', 'exportOff', 'money'];
   var GUIDE = {
     lede: 'Short steps for the jobs you do most. Tap a heading to open it.',
     quickstart: {
@@ -3579,21 +3720,22 @@ function renderPriceBlockSms(lineItems, total, currency) {
     },
     sections: [
       { id: 'needs', title: 'See who needs you', f: [], steps: [
-        'The {needs} list at the top of {tab_list} shows the newest people waiting and how long each has waited. The wait turns red and says overdue when it runs long.',
-        'Tap a name to open the lead, or the phone icon to call. See all, when it shows, lists everyone waiting; tap Back to leads to return.'
+        'The {needs} list at the top of {tab_list} shows who is waiting and for how long. The wait turns red and says overdue when it runs long.',
+        'Tap a name to open the lead, or the phone icon to call. See all, when it shows, lists everyone waiting; Back to leads returns.'
       ] },
       { id: 'reply', title: 'Reply to a lead', f: [], steps: [
         'Open the lead and tap Call, Text or Email. Your phone opens its own Phone, Messages or Mail app.',
-        'Under Conversation you can read what was said. Tap Open full to read it all, then Close.',
+        'Under Conversation you can read what was said. Tap Open full to read it all.',
         'After you have reached them, under Change status tap {contacted}, then Mark as {contacted_lc}. Sometimes the box offers two buttons: Mark {contacted_lc} and send the follow-up, or Mark {contacted_lc}, no follow-up. If they texted STOP, no follow-up goes out.'
       ], note: 'You reply in your phone\'s own apps, not here. Someone who texted STOP gets no automatic texts; you can still call or text them.' },
       { id: 'outcome', title: 'Mark a lead {booked} or {lost}', f: [], steps: [
         'Open the lead. Under Change status, tap {booked} or {lost}. A box opens.',
         'For {booked}, check the Final price (it starts from the quote, if there is one). For {lost}, pick Why was it lost? ({lost_reasons}).',
-        'Tap Mark as {booked_lc} or Mark as {lost_lc} to confirm.'
-      ], note: 'Even small jobs count: it keeps your records right.' },
+        'Tap Mark as {booked_lc} or Mark as {lost_lc} to confirm.',
+        { t: 'On a {booked} lead, tick Deposit received once it arrives. If the booking is cancelled, tap {lost}, pick Cancelled after booking and type what you kept.', f: ['money'] }
+      ], note: 'Even small jobs count.' },
       { id: 'find', title: 'Find a lead', f: [], steps: [
-        'On {tab_list}, tap a button near the top to narrow the list: Open, {contacted}, {booked}, {lost} or All. The number on a button counts its leads.',
+        'On {tab_list}, tap a button near the top to narrow the list: Open, {contacted}, {booked}, {lost} or All.',
         { t: 'Or type a name, phone number or email in the search box at the top (Search name, phone or email).', f: ['search'] },
         { t: 'The No quote button lists open leads with no quote yet. Their rows say No quote sent (this list only).', f: ['noQuoteFilter'] },
         { t: 'Open one and tap Price it in the quote calculator.', f: ['noQuoteFilter', 'quote'] },
@@ -3625,8 +3767,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
       { id: 'metrics', title: 'See your numbers', f: ['metrics'], steps: [
         'Tap {tab_metrics}. Scroll through sections such as Money booked, Money on the table, Close rate and Speed.',
         { t: 'Lead value groups your open leads into price bands.', f: ['value'] },
-        { t: 'Looking ahead shows bookings by event month, your open quotes at full price, and a likely range once there is enough history.', f: ['forecast'] }
-      ], note: 'The numbers are only as good as your records. Mark leads {booked} or {lost}.' },
+        { t: 'Looking ahead shows bookings by event month, open quotes at full price, and a likely range once there is enough history.', f: ['forecast'] }
+      ], note: 'Mark leads {booked} or {lost} so these numbers stay right.' },
       { id: 'ask', title: 'Ask your CRM', f: ['ask'], steps: [
         'Tap More, then {tab_ask}. Tap a starter question (they stay after each answer), or type your own in the box at the bottom (Ask a question), then tap Ask.'
       ], note: 'It only reads your leads and never changes anything. Tap a lead name in an answer to open it.' },
@@ -3656,7 +3798,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       ] },
       { id: 'install', title: 'Install and sign in', f: [], steps: [
         'Open the app from its icon on your home screen. Not there yet? In Safari tap Share, then Add to Home Screen.',
-        'Sign in with your mobile number: tap Text me a code, type the 6-digit code, then tap Sign in.'
+        'Sign in with your mobile number: tap Text me a code, type the 6-digit code, tap Sign in.'
       ] }
     ],
     faq: [
@@ -4040,7 +4182,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var z = tzWord(tz);
     return ['Received (' + z + ' time)', 'Customer #', 'Name', 'Phone', 'Email', 'Status', 'Status changed (' + z + ' time)',
       'Event date', 'Occasion', 'Guests', 'Hours', 'Event city', 'Distance (km)', 'Bar rental', 'Quote', 'Quote total ($)',
-      'Quote details', 'Promotion', 'Value', 'Booked for ($)', 'Lost reason', 'Came from', 'Texts', 'Consent', 'Follow-up',
+      'Quote details', 'Promotion', 'Value', 'Booked for ($)', 'Deposit received (' + z + ' time)', 'Kept from cancellation ($)', 'Lost reason', 'Came from', 'Texts', 'Consent', 'Follow-up',
       'Last activity (' + z + ' time)', 'Events for this customer', 'Other dates (from form)', 'Additional details',
       'History', 'Notes', 'Record ID'];
   }
@@ -4137,7 +4279,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
       var s = String(e.source || '').toLowerCase();
       var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
-      var extra = a === 'booked' ? fmtMoney(e.amount) : a === 'lost' ? lostReasonLabel(e.reason) : '';
+      var extra = a === 'booked' ? fmtMoney(e.amount) : a === 'lost' ? lostReasonLabel(e.reason) + (String(e.reason || '').toLowerCase() === CANCELLED_KEY && fmtMoney(e.amount) ? ' (' + fmtMoney(e.amount) + ' kept)' : '') : '';
       return [exportLocal(e.at), label, extra, src].filter(Boolean).join(' ');
     });
     var more = Number(r.history_more) || 0;
@@ -4157,7 +4299,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     return CUSTOM.tiers[k] || TIERS.filter(function (t) { return t.key === k; })[0].label;
   }
 
-  // One RPC row -> the 32 cells, in header order. kind 't' = text (quoted + guarded when written), 'n' = number (bare).
+  // One RPC row -> the 34 cells (R7: + deposit received and kept from cancellation, right after Booked for), in header order. kind 't' = text (quoted + guarded when written), 'n' = number (bare).
   function exportCells(row) {
     var r = row || {};
     var t = function (v) { return { v: v == null ? '' : String(v), kind: 't' }; };
@@ -4169,7 +4311,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       t(exportYmd(r.event_date)), t(oneLine(r.occasion)), n(exportNum(r.guests)), t(exportHours(r)), t(oneLine(r.event_area)),
       n(exportNum(r.distance_km)), t(r.bar_rental === true ? 'Yes' : r.bar_rental === false ? 'No' : ''),
       t(exportQuoteWord(r.quote_status)), n(exportMoney(r.quote_total)), t(exportQuoteDetails(r)), t(promoText(r)), t(exportTier(r.value_tier)),
-      n(exportMoney(r.booked_value)), t(exportLost(r)), t(exportCameFrom(r)), t(texts), t(r.consent_basis == null ? '' : r.consent_basis),
+      n(exportMoney(r.booked_value)), t(exportLocal(r.deposit_received_at)), n(exportMoney(r.kept_amount)), t(exportLost(r)), t(exportCameFrom(r)), t(texts), t(r.consent_basis == null ? '' : r.consent_basis),
       t(exportFollowUp(r.follow_up)), t(exportLocal(r.last_activity_at)), n(exportNum(r.customer_events)),
       t(oneLine(r.multi_event_dates)), t(r.additional_details == null ? '' : r.additional_details),
       t(exportHistory(r)), t(exportNotes(r)), t(r.lead_id == null ? '' : r.lead_id)
@@ -4508,7 +4650,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   // Things a staff member never gets, whatever the config says (the server is the real gate; this keeps the page honest).
-  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team', 'noQuoteFilter', 'quoteDraft', 'guide', 'editLead'];
+  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team', 'noQuoteFilter', 'quoteDraft', 'guide', 'editLead', 'money'];
 
   /* ---------- Team (More, owner only): the cv-team Edge Function (team/edge/cv-team) ---------- */
 
@@ -4696,6 +4838,24 @@ function renderPriceBlockSms(lineItems, total, currency) {
     quotePromosEnd: quotePromosEnd,
     PROMO_ENDED_TEXT: PROMO_ENDED_TEXT,
     bookedPriceHint: bookedPriceHint,
+    bookedPrefill: bookedPrefill,
+    quoteStale: quoteStale,
+    STALE_QUOTE_HINT: STALE_QUOTE_HINT,
+    CANCELLED_KEY: CANCELLED_KEY,
+    KEPT_REQUIRED: KEPT_REQUIRED,
+    KEPT_HINT: KEPT_HINT,
+    KEPT_GOING_BACK: KEPT_GOING_BACK,
+    keptBackText: keptBackText,
+    DEPOSIT_LABEL: DEPOSIT_LABEL,
+    hasMoneyColumns: hasMoneyColumns,
+    cancelledOffered: cancelledOffered,
+    keptPrefill: keptPrefill,
+    aiPriceView: aiPriceView,
+    depositView: depositView,
+    moneyCardView: moneyCardView,
+    friendlyDepositError: friendlyDepositError,
+    keptView: keptView,
+    isCancelledLost: isCancelledLost,
     needsFreshPill: needsFreshPill,
     quoteDraftKey: quoteDraftKey,
     quoteDraftPack: quoteDraftPack,

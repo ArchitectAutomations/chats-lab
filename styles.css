@@ -1225,6 +1225,22 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .seg-opt input:checked + span { background: var(--action); border-color: var(--action); color: var(--on-accent); }
 .seg-opt input:focus-visible + span { outline: 3px solid var(--focus); outline-offset: 2px; }
 
+/* R7 (sql/033, C4 + C5): the money card on a booked lead (AI re-quote line, Deposit received tick, money kept) and the Cancelled sheet's amount.
+   Sizes all come from the type scale, so Larger text grows them; nothing has a fixed width. */
+.money-ai { margin: 0 0 var(--sp-3); }
+.money-ai[hidden] { display: none; }
+.money-ai-text { margin: 0; font-size: var(--fs-lg); font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.money-ai-sub { margin: 4px 0 0; }
+.money-ai-btn { width: 100%; margin-top: var(--sp-2); min-height: 48px; }
+.money-deposit { display: flex; align-items: center; gap: 12px; min-height: 48px; font-size: var(--fs-lg); font-weight: 600; cursor: pointer; }
+.money-deposit[hidden] { display: none; }
+.money-deposit input { width: 24px; height: 24px; flex: none; accent-color: var(--accent-strong); }
+.money-deposit-stamp { margin: 0 0 var(--sp-2) 36px; }
+.money-kept { margin: 0; font-size: var(--fs-lg); font-weight: 700; line-height: 1.3; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.money-kept + .money-deposit { margin-top: var(--sp-1); }
+#reason-kept { margin: 14px 0 0; }
+#reason-kept .hint { overflow-wrap: anywhere; }
+
 /* ---------- bigger text sizes (More > Text size: Large, Larger): layout only. Nothing here applies at Normal. ---------- */
 /* Five filter chips: one row at Normal; at Large / Larger they wrap onto a second row rather than clip ("Contacted" is ~81 px at Larger). */
 :root[data-text-size="large"] #filters, :root[data-text-size="larger"] #filters { flex-wrap: wrap; }

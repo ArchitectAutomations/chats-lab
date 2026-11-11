@@ -28,7 +28,7 @@
   // Every backend call goes through one wrapper that records FAILURES only: the call's name, a status and a short code word.
   var API_NAMES = {
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
-    setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', editLead: 'cv_edit_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
+    setStatus: 'cv_set_lead_status', setDeposit: 'cv_set_deposit', addLead: 'cv_add_lead', editLead: 'cv_edit_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test', markSeen: 'cv_mark_seen', pushStatus: 'cv_push_status',
     supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', exportConfig: 'cv_config', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
   };
@@ -151,6 +151,9 @@
     stripNote: $('strip-note'), hStatus: $('h-status'),
     priceBox: $('price-box'), price: $('price'), priceHint: $('price-hint'), reasonBox: $('reason-box'), reasonChips: $('reason-chips'), reasonOther: $('reason-other'),
     reasonNote: $('reason-note'), confirmErr: $('confirm-error'),
+    reasonKept: $('reason-kept'), kept: $('kept'), keptHint: $('kept-hint'), keptBack: $('kept-back'),
+    recMoney: $('rec-money'), moneyAi: $('money-ai'), moneyAiText: $('money-ai-text'), moneyAiSub: $('money-ai-sub'), moneyAiBtn: $('money-ai-btn'),
+    moneyDepositRow: $('money-deposit-row'), moneyDeposit: $('money-deposit'), moneyDepositStamp: $('money-deposit-stamp'), moneyKept: $('money-kept'), moneyErr: $('money-error'),
     qAddBox: $('q-add-box'), qAdd: $('q-add'), qAddNote: $('q-add-note'), qAddErr: $('q-add-err'),
     recMyQuote: $('rec-myquote'), mqStatus: $('mq-status'), mqBody: $('mq-body'), mqNote: $('mq-note'), mqSend: $('mq-send'), mqResend: $('mq-resend'), mqErr: $('mq-error'),
     quote: $('screen-quote'), qForm: $('q-form'), qStale: $('q-stale'), qRestored: $('q-restored'), qPromoEnded: $('q-promo-ended'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
@@ -249,6 +252,7 @@
     cal: null,           // { y, m, sel } month on screen and picked day
     showPossible: false,
     noteBusy: false,
+    depositBusy: false,   // R7: a Deposit received save is running
     quote: { busy: false, seq: 0, view: null, req: null, raw: null, pending: null, fromLead: null, backTo: null, pre: null, added: false, adding: false, refused: false },
     quoteSendBusy: false,
     optedPhones: [], optedAt: 0, optedBusy: false,   // numbers that opted out (lead_detail), for Add lead and the No-quote rule
@@ -381,6 +385,9 @@
   var DETAIL_SHARED = ',phone_shared';
   // B1 (sql/031): true = the person agreed to texts on some record, so the assistant answers them even on a hand-added row. Words only.
   var DETAIL_CONSENT = ',person_consent';
+  // R7 (sql/033, C4 + C5): the quote's age (the "New price from the AI" line), the last edit (a stale quote), the deposit tick and the money kept from a cancellation.
+  // A lab without 033 does not have them: the first read then falls back to the tiers below, and the lead simply has none of the money card.
+  var DETAIL_MONEY = ',quoted_at,details_edited_at,deposit_received_at,kept_amount';
   var SEARCH_BASE = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
   var SEARCH_COLUMNS = SEARCH_BASE + ',source,manual_source'; // sql/011 columns on lead_detail; the search falls back without them
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
@@ -467,7 +474,10 @@
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
-          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT).eq('lead_id', id).maybeSingle().then(function (rc) {
+          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY).eq('lead_id', id).maybeSingle().then(function (rm) {
+            if (!rm.error) return rm;   // R7: the 033 columns are the view's last four; a lab without them falls to the next tier
+            return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT).eq('lead_id', id).maybeSingle();
+          }).then(function (rc) {
             if (!rc.error) return rc;   // B1: person_consent is the view's last column; a lab without it falls to the tiers below
             return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED).eq('lead_id', id).maybeSingle();
           }).then(function (rs) {
@@ -496,6 +506,10 @@
         var args = { p_lead_id: id, p_status: status };
         Object.keys(extra || {}).forEach(function (k) { if (extra[k] !== null && extra[k] !== undefined) args[k] = extra[k]; });
         return client.rpc('cv_set_lead_status', args).then(ok);
+      },
+      // R7 (sql/033): the owner's Deposit received tick on a Booked lead. Owner only: the staff API has no such call.
+      setDeposit: function (id, received) {
+        return client.rpc('cv_set_deposit', { p_lead_id: id, p_received: received === true }).then(ok);
       },
       // Server-side search on lead_detail (RLS applies). The filter string comes from L.searchFilter.
       searchLeads: function (q) {
@@ -2415,6 +2429,7 @@
       case 'quoteAge': return feature('quote') && Number(custom.quoteAgeWarnDays) !== 0;
       case 'forecast': return feature('forecast') && !!L.forecastView(S.forecast);
       case 'value': return feature('value');
+      case 'money': return feature('money') && !isStaff();   // R7: owner only; the page offers the tick and the reason only where the server has sql/033
       default: return false;
     }
   }
@@ -3776,6 +3791,17 @@
       if (avg) b.appendChild(make('p', 'm-sub', 'Average job: ' + avg));
       return b;
     },
+    // R7 (C5, Kevin 11-10 "No"): money kept from a booking that was cancelled is its OWN block, never added into Money booked above.
+    kept: function (m) {
+      var v = feature('money') ? L.keptView(m.kept) : null;
+      if (!v) return null;
+      var b = block(v.title);
+      var tiles = make('div', 'm-tiles');
+      v.tiles.forEach(function (x, i) { tiles.appendChild(tile(x.label, x.pair, i === 0)); });
+      b.appendChild(tiles);
+      b.appendChild(make('p', 'm-sub', v.note));
+      return b;
+    },
     close_rate: function (m) {
       var b = block('Close rate');
       var cr = L.closeRateTile(m.close_rate);
@@ -3923,7 +3949,9 @@
     want.forEach(function (k) { if (METRIC_BLOCKS[k] && out.indexOf(k) === -1) out.push(k); });
     if (!out.length) out = METRIC_DEFAULT.slice();
     // Lead value is a section of Metrics: it follows the 'value' switch, right after Money on the table.
-    out = out.filter(function (k) { return k !== 'value'; });
+    out = out.filter(function (k) { return k !== 'value' && k !== 'kept'; });
+    var bi = out.indexOf('booked');   // R7: Kept from cancellations sits right under Money booked, as its own block
+    out.splice(bi === -1 ? 0 : bi + 1, 0, 'kept');
     out = out.filter(function (k) { return k !== 'forecast' || feature('forecast'); });
     out = out.filter(function (k) { return k !== 'close_rate' || S.crHidden === false; });   // D1: three states: undefined = forecast still loading (hidden), true = not ready (hidden), false = ready or no forecast (shown)
     if (feature('value')) { var oi = out.indexOf('open'); out.splice(oi === -1 ? out.length : oi + 1, 0, 'value'); }
@@ -4008,6 +4036,54 @@
     var count = showAll ? L.actions().length : ahead.length;
     el.actions.hidden = !!lead && count === 0 && !S.pending;
     el.actions.style.gridTemplateColumns = 'repeat(' + Math.max(1, Math.min(3, count || 3)) + ', 1fr)';
+    renderMoney();
+  }
+
+  /* ---------- R7 (sql/033, Kevin C4 + C5): the money card: AI re-quote line, Deposit received tick, money kept ---------- */
+
+  // Owner only (feature 'money' is staff-blocked and the lead has no 033 columns for staff); on a lab without 033 the lead has no such columns and nothing shows.
+  function renderMoney() {
+    var lead = S.thread.lead;
+    var v = lead && feature('money') ? L.moneyCardView(lead, isStaff()) : null;
+    show(el.recMoney, !!(v && v.show));
+    if (!v || !v.show) { setText(el.moneyErr, ''); return; }
+    show(el.moneyAi, !!v.ai);
+    if (v.ai) { setText(el.moneyAiText, v.ai.text); setText(el.moneyAiSub, v.ai.booked); el.moneyAiBtn.disabled = !!S.pending; }
+    var d = v.deposit;
+    show(el.moneyDepositRow, !!d);
+    show(el.moneyDepositStamp, false);
+    if (d) {
+      if (!S.depositBusy) el.moneyDeposit.checked = d.checked;
+      el.moneyDeposit.disabled = !d.editable || typeof S.api.setDeposit !== 'function' || S.depositBusy || !!S.pending;
+      setText(el.moneyDepositStamp, d.checked && d.stamp ? 'Ticked ' + d.stamp : '');
+    }
+    setText(el.moneyKept, v.kept);
+  }
+
+  // "Update" = the existing same-status Booked path with the new quote typed (cv_set_lead_status(id, 'booked', quote_total)).
+  function updateAiPrice() {
+    var lead = S.thread.lead;
+    var v = lead && feature('money') ? L.aiPriceView(lead, isStaff()) : null;
+    if (!v || S.pending) return;
+    setText(el.moneyErr, '');
+    saveStatus('booked', { p_amount: v.amount });
+  }
+
+  // A tap on the tick saves it at once. A failure puts the tick back as it was and says why in plain words.
+  function onDepositChange() {
+    var id = S.thread.id, want = el.moneyDeposit.checked, prior = !want;
+    var dv = S.thread.lead ? L.depositView(S.thread.lead, isStaff()) : null;
+    if (!id || isStaff() || !dv || (dv.untickOnly && want) || S.depositBusy || S.pending || typeof S.api.setDeposit !== 'function') { el.moneyDeposit.checked = prior; return; }
+    S.depositBusy = true;
+    el.moneyDeposit.disabled = true;
+    setText(el.moneyErr, '');
+    Promise.resolve().then(function () { return S.api.setDeposit(id, want); }).then(function () {
+      return Promise.all([refreshThread(), refreshList()]).catch(function () { /* the tick is saved; the page catches up on the next refresh */ });
+    }, function (e) {
+      if (id === S.thread.id) { el.moneyDeposit.checked = prior; setText(el.moneyErr, L.friendlyDepositError(e)); }
+      maybeRecheckAccess(e);
+      return refreshThread();   // the lead may have changed (no longer booked): show what the server says
+    }).then(function () { S.depositBusy = false; if (id === S.thread.id) renderMoney(); });
   }
 
   function renderHistory() {
@@ -4028,14 +4104,16 @@
   }
 
   // Reason chips for the Lost sheet: real radio buttons (labels from CV_CUSTOM.lostReasons).
-  function buildReasons() {
+  // withCancelled (R7, owner only, a Booked lead): "Cancelled after booking" is the first chip and picking it opens the Amount you kept box.
+  function buildReasons(withCancelled) {
     var frag = document.createDocumentFragment();
-    L.lostReasons().forEach(function (r) {
+    L.lostReasons({ cancelled: withCancelled === true }).forEach(function (r) {
       var lab = make('label', 'reason-chip');
       var input = make('input');
       input.type = 'radio'; input.name = 'lost-reason'; input.value = r.key;
       input.addEventListener('change', function () {
         show(el.reasonOther, r.key === 'other');
+        show(el.reasonKept, r.key === L.CANCELLED_KEY);
         setText(el.confirmErr, '');
       });
       lab.appendChild(input);
@@ -4084,15 +4162,22 @@
     var priced = booked && !isStaff();
     show(el.priceBox, priced);
     if (priced) {
-      el.price.value = L.amountInput(L.effectiveTotal(lead)); el.price.removeAttribute('aria-invalid');
-      setText(el.priceHint, L.bookedPriceHint(el.price.value));   // "From the quote" only when a price really was filled in from one
+      var bp = L.bookedPrefill(lead);   // R7 (C4): the quote, as the server's freeze order assumes; a quote older than an edit says so
+      el.price.value = bp.value; el.price.removeAttribute('aria-invalid');
+      setText(el.priceHint, bp.hint);   // "From the quote" only when a price really was filled in from one
     }
     show(el.reasonBox, lost);
     if (lost) {
+      var canCancel = !ctx && feature('money') && L.cancelledOffered(lead, isStaff());   // R7 (C5): owner only, a Booked lead only
+      buildReasons(canCancel);
       var checked = el.reasonChips.querySelectorAll('input');
       for (var i = 0; i < checked.length; i++) checked[i].checked = false;
       el.reasonNote.value = '';
       show(el.reasonOther, false);
+      show(el.reasonKept, false);
+      el.kept.value = L.keptPrefill(lead);   // always blank (review R7 P1)
+      el.kept.removeAttribute('aria-invalid');
+      setText(el.keptHint, L.KEPT_HINT); setText(el.keptBack, L.keptBackText(lead));
     }
     // 022: a lead with no quote that could really get the day-5 text: two buttons, neither one the default (focus stays on Cancel).
     var choice = !ctx && !isStaff() ? L.followupChoice(leadName(lead), action.status, lead) : null;
@@ -4131,10 +4216,11 @@
     var lead = c.ctx ? c.ctx.lead : S.thread.lead;
     var x = isStaff() && c.status === 'booked'
       ? { ok: true, args: {} }
-      : L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value }, lead && L.effectiveTotal(lead));
+      : L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value, kept: el.kept.value }, lead && L.bookedPrefill(lead).quote, { staff: isStaff() });
     if (!x.ok) {
       setText(el.confirmErr, x.error);
       if (x.field === 'amount') { el.price.setAttribute('aria-invalid', 'true'); try { el.price.focus(); } catch (e) { /* ignore */ } }
+      else if (x.field === 'kept') { el.kept.setAttribute('aria-invalid', 'true'); try { el.kept.focus(); } catch (e) { /* ignore */ } }
       else if (x.field === 'reason') { var first = el.reasonChips.querySelector('input'); if (first) try { first.focus(); } catch (e) { /* ignore */ } }
       return;
     }
@@ -4588,7 +4674,7 @@
     var lead = S.thread.lead;
     el.title.textContent = S.tab.label; // the lead's name is the big heading below; the bar says where Back goes
     setText(el.subtitle, '');
-    var sections = [el.recHead, el.recContact, el.strip, el.recNotes, el.recEvent, el.recPrice, el.recQuote, el.recOthers, el.recShared, el.recHistory];
+    var sections = [el.recHead, el.recContact, el.strip, el.recMoney, el.recNotes, el.recEvent, el.recPrice, el.recQuote, el.recOthers, el.recShared, el.recHistory];
     if (!lead) {
       sections.forEach(function (n) { show(n, false); });
       show(el.optoutBanner, false);
@@ -4800,6 +4886,8 @@
       show(el.pill, false);
       setText(el.threadErr, '');
       setText(el.actionErr, '');
+      setText(el.moneyErr, '');
+      S.depositBusy = false;
       setText(el.noteErr, '');
       el.noteText.value = ''; syncNoteSave(); show(el.sysFold, false);
       noteCount();
@@ -4916,7 +5004,7 @@
     el.calAgendaWeek.replaceChildren(); el.calAgendaLater.replaceChildren(); el.metricsBody.replaceChildren();
     el.eventFacts.replaceChildren(); el.recEmail.replaceChildren(); S.eventMoreFor = null; el.quoteBody.replaceChildren(); el.othersList.replaceChildren(); el.sharedList.replaceChildren(); el.history.replaceChildren();
     el.recPhone.removeAttribute('href'); el.contactActions.replaceChildren();
-    ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recPhone', 'recEmail', 'eventDetails', 'confirmText', 'confirmNote', 'stripNote', 'actionErr', 'noteErr', 'contactNote']
+    ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recPhone', 'recEmail', 'eventDetails', 'confirmText', 'confirmNote', 'stripNote', 'actionErr', 'moneyErr', 'noteErr', 'contactNote']
       .forEach(function (k) { if (el[k]) el[k].textContent = ''; });
     el.noteText.value = ''; syncNoteSave();
     closeConfirm();
@@ -5377,6 +5465,11 @@
     el.confirmAlt.addEventListener('click', confirmNoFollowup);
     el.price.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); confirmYes(); } });
     el.price.addEventListener('input', function () { el.price.removeAttribute('aria-invalid'); setText(el.confirmErr, ''); });
+    el.kept.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); confirmYes(); } });
+    el.kept.addEventListener('input', function () { el.kept.removeAttribute('aria-invalid'); setText(el.confirmErr, ''); });
+    // R7 (C4 + C5): the money card on a lead's page
+    el.moneyAiBtn.addEventListener('click', updateAiPrice);
+    el.moneyDeposit.addEventListener('change', onDepositChange);
 
     // Add a lead (Leads)
     el.btnAdd.addEventListener('click', openAdd);

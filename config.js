@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261110-2224-c9719a85";
+window.CV_BUILD = "20261110-2350-b6af2cf8";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -50,6 +50,7 @@ window.CV_CUSTOM = {
   // export (More > Download spreadsheet: all your leads as a file for Numbers, Excel or Google Sheets; the database has its own switch, cv_config export_enabled).
   // guide (More > How to use the CRM, owner only: short steps for the everyday jobs; each section appears only when the features it describes are on, and it never names a feature that is off).
   // editLead ("Edit details" on a lead's page, owner only: fix the date, guests, times, name, email, area or occasion; the phone too for a lead you added that has no texts yet. Every change is written in the history; the database has its own switch, cv_config edit_lead_enabled, and sql/032 must be applied first).
+  // money (sql/033 must be applied first; owner only, staff never see any of it): the Deposit received tick on a Booked lead, "New price from the AI: $X. Update?" on a Booked lead, the "Cancelled after booking" reason with the Amount you kept, and Metrics "Kept from cancellations". Each part also needs the lead to come with the 033 columns, so a lab without 033 shows none of it.
   // quoteSend (the "Send it to them" button on a lead's saved price). OFF unless exactly true; the database has its own switch, cv_config quote_send_enabled.
   // team (More > Team, owner only: add or remove the people who can read your leads and notes). OFF unless exactly true; leave false until Kevin rules.
   // noQuoteFilter (owner only): the "No quote" chip under the filter chips and the "No quote sent" tag on rows. Same rule as the "without a quote yet" count in Metrics.
@@ -58,7 +59,7 @@ window.CV_CUSTOM = {
   waitWarnHours: 24,
   // Days after which a saved price on a lead (not sent yet) says how old it is: 7–29, default 21, 0 = never. The server refuses to text a price older than 30 days.
   quoteAgeWarnDays: 21,
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: false, noQuoteFilter: true, quoteDraft: true, guide: true, editLead: true },
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: false, noQuoteFilter: true, quoteDraft: true, guide: true, editLead: true, money: true },
 
   // Quote calculator pick-lists (More details). Leave a list out and that field stays a plain text box.
   // quoteOccasions: exactly the Occasion choices on the client's booking form, same words, same order.
@@ -99,7 +100,8 @@ window.CV_CUSTOM = {
   // Reason chips on the "Mark as lost" sheet (also used in history lines and Metrics).
   // Keys are fixed (they are what the database stores): price, date_taken, no_reply, went_elsewhere, other.
   // old_lead is the bulk clear's own reason (sql/026): shown on chips, history, Metrics, the spreadsheet; never a chip on the sheet.
-  lostReasons: { price: 'Price', date_taken: 'Date taken', no_reply: 'No reply', went_elsewhere: 'Went elsewhere', other: 'Other', old_lead: 'Old lead' },
+  // cancelled (sql/033): a booking that fell through. OWNER ONLY, and a chip only on a Booked lead; it keeps the money you kept (Metrics: "Kept from cancellations").
+  lostReasons: { price: 'Price', date_taken: 'Date taken', no_reply: 'No reply', went_elsewhere: 'Went elsewhere', other: 'Other', old_lead: 'Old lead', cancelled: 'Cancelled after booking' },
 
   // Where a lead you add by hand came from (the four chips on "+ Add lead", and the source line on the record).
   // Keys are fixed (they are what the database stores): instagram, phone_call, referral, other.
