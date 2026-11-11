@@ -14,6 +14,17 @@
 
   /* ---------- phone ---------- */
 
+  // R6 (B9 + F4): a lead added with NO phone has no phone anywhere the page can see: every view and RPC sends null. Realtime and a direct `leads`
+  // read carry the raw stored key ("nophone-" + letters), which must never be shown or used. This is the ONE place that decides: a phone is a
+  // non-blank string that is not that key. null / '' / whitespace / any other type / "nophone-..." in any case = no phone (null).
+  var NOPHONE_RE = /^nophone-/i;
+  function realPhone(p) {
+    if (typeof p !== 'string') return null;
+    var s = p.trim();
+    return s && !NOPHONE_RE.test(s) ? s : null;
+  }
+  function hasPhone(p) { return realPhone(p) !== null; }
+
   // Canadian default. Returns '+1XXXXXXXXXX' (or another +E.164) or null.
   function normalizePhone(input) {
     if (typeof input !== 'string') return null;
@@ -747,6 +758,7 @@
     return MONTHS[Number(m[2]) - 1] + ' ' + Number(m[3]) + (Number(m[1]) !== partsOf(nowDate(now)).y ? ', ' + m[1] : '');
   }
   function editValue(field, v, now) {
+    if (field === 'phone') v = realPhone(v);   // R6: no phone (or the stored key) reads "none", never a key
     if (v === null || v === undefined || String(v).trim() === '') return 'none';
     var out = field === 'event_date' ? ymdShort(v, now) : field === 'start_time' || field === 'end_time' ? fmtTime(v)
       : field === 'phone' ? fmtPhoneNational(v) || String(v) : String(v);
@@ -891,7 +903,7 @@
     var d = String(lead.display_name || '').trim();
     if (!d) {
       // lead_detail has no display_name: same fallback lead_list uses ("Lead ending 1234").
-      var digits = String(lead.phone || '').replace(/\D/g, '');
+      var digits = String(realPhone(lead.phone) || '').replace(/\D/g, '');
       return digits.length >= 4 ? 'Lead ending ' + digits.slice(-4) : 'Unnamed lead';
     }
     return /^Lead ending \d{4}$/.test(d) ? d : titleCase(d);
@@ -907,8 +919,8 @@
 
   // Only an already-normalised E.164 string is accepted for links (no spaces, no letters, no scheme tricks).
   function strictE164(p) {
-    if (typeof p !== 'string') return null;
-    var s = p.trim();
+    var s = realPhone(p);
+    if (s === null) return null;
     if (!/^\+[1-9]\d{7,14}$/.test(s)) return null;
     return normalizePhone(s);
   }
@@ -1671,6 +1683,12 @@
   function featureOn(features, key) {
     return !(features && typeof features === 'object' && features[key] === false);
   }
+  // R6 (B9 + F4): a lead with no phone may be added only when the page's own switch says exactly true. Unlike the features above, a missing
+  // value is OFF (the database has its own switch, cv_config add_lead_no_phone, the real gate).
+  // R6 (S1): the database's own switch (cv_config add_lead_no_phone), read when the Add sheet opens. Only exactly 'true' is on: a failed read,
+  // no row, or anything else is off (the form then behaves as it always did). row = { value } or null.
+  function addLeadNoPhoneServerOn(row) { return !!row && typeof row === 'object' && row.value === 'true'; }
+  function addLeadNoPhoneOn(features) { return !!(features && typeof features === 'object' && features.addLeadNoPhone === true); }
 
   /* ---------- add a lead by hand + repeat customers (session 3, round 1) ---------- */
 
@@ -1717,10 +1735,19 @@
     return s ? s : null;
   }
 
+  // R6 (N3): the typed phone, cleaned EXACTLY as cv_add_lead / cv_edit_lead clean it (sql/035: [[:space:]] to a space, control characters
+  // and the invisible direction marks out, spaces collapsed, trimmed). cleanText does the same except that JS counts U+FEFF as whitespace and the
+  // server does not (it keeps it, so a lone U+FEFF is "something typed that is not a phone" = bad_phone). null = blank = nothing typed.
+  function cleanPhoneText(v) {
+    if (v === null || v === undefined) return null;
+    return cleanText(String(v).replace(/\uFEFF/g, '\uFFFD'));
+  }
+
   var ADD_LEAD_ERRORS = {
     name_required: 'Add a name.',
     name_too_long: 'Keep the name under 120 characters.',
     bad_phone: 'Enter a phone number with area code, like (416) 555-0123.',
+    email_required: 'Add an email (or a phone).',
     bad_source: 'Pick where they came from.',
     bad_email: "That email doesn't look right.",
     bad_date: 'Pick a date between 2020 and five years from now.',
@@ -1729,15 +1756,24 @@
     occasion_too_long: 'Keep the occasion under 80 characters.'
   };
   var ADD_LEAD_FIELD = {
-    name_required: 'name', name_too_long: 'name', bad_phone: 'phone', bad_source: 'source', bad_email: 'email',
+    name_required: 'name', name_too_long: 'name', bad_phone: 'phone', email_required: 'email', bad_source: 'source', bad_email: 'email',
     bad_date: 'event_date', bad_guests: 'guests', area_too_long: 'area', occasion_too_long: 'occasion'
   };
   // Order the checks run (and the first bad field gets the focus): the form's order, then the rest.
   var ADD_LEAD_ORDER = ['name', 'phone', 'source', 'event_date', 'guests', 'area', 'occasion', 'email'];
 
+  // R6 (B9 + F4), only while the page switch is on (opts.noPhone, from addLeadNoPhoneOn): the Phone box may stay blank, and then BOTH a name and an
+  // email are needed. A blank is nothing typed after the cleaning; anything typed that is not a phone ("(0)", "-") is still bad_phone.
+  var ADD_NOPHONE_HINT = 'No phone? Then add their name and email.';
+  var ADD_NOPHONE_TEXT = {
+    bad_phone: 'Enter a phone with area code, or leave it blank and add an email.',
+    off: "Adding a lead without a phone isn't switched on yet. Enter a phone number."
+  };
+
   // form = { name, phone, source, event_date, guests, area, occasion, email, contacted } (strings from the inputs).
-  // -> { ok, errors: { field: code }, values: { name, phone (E.164), source, event_date, guests, area, occasion, email, contacted } }
-  function validateAddLead(form, now) {
+  // opts (optional) = { noPhone: true } when the page switch addLeadNoPhone is on.
+  // -> { ok, errors: { field: code }, values: { name, phone (E.164, or null = no phone), source, event_date, guests, area, occasion, email, contacted } }
+  function validateAddLead(form, now, opts) {
     var f = form || {};
     var errors = {};
     var v = {
@@ -1748,7 +1784,11 @@
     if (!v.name) errors.name = 'name_required';
     else if (v.name.length > 120) errors.name = 'name_too_long';
     v.phone = normalizeLeadPhone(String(f.phone == null ? '' : f.phone));
-    if (!v.phone) errors.phone = 'bad_phone';
+    v.phone_blank = cleanPhoneText(f.phone) === null;   // nothing typed (the server's own blank rule); a bad_phone on a blank phone means the server switch is off
+    if (!v.phone) {
+      if (opts && opts.noPhone === true && v.phone_blank) { if (!v.email) errors.email = 'email_required'; }   // no phone: the name (above) and the email are required
+      else errors.phone = 'bad_phone';
+    }
     if (!ADD_SOURCES.some(function (r) { return r.key === v.source; })) errors.source = 'bad_source';
     if (v.email && (v.email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email))) errors.email = 'bad_email';
     if (v.event_date) {
@@ -1776,11 +1816,15 @@
     for (var i = 0; i < ADD_LEAD_ORDER.length; i++) if (errors && errors[ADD_LEAD_ORDER[i]]) return ADD_LEAD_ORDER[i];
     return '';
   }
-  function addLeadErrorText(code) { return ADD_LEAD_ERRORS[code] || "Check this and try again."; }
+  // opts.noPhone = the switch is on: a bad phone is worded so that blank is allowed.
+  function addLeadErrorText(code, opts) {
+    if (code === 'bad_phone' && opts && opts.noPhone === true) return ADD_NOPHONE_TEXT.bad_phone;
+    return ADD_LEAD_ERRORS[code] || "Check this and try again.";
+  }
 
-  // Validated values -> RPC arguments. Only filled fields are sent.
+  // Validated values -> RPC arguments. Only filled fields are sent. No phone = p_phone null (never a placeholder: the server says bad_phone to one).
   function addLeadArgs(values) {
-    var a = { p_name: values.name, p_phone: values.phone, p_source: values.source };
+    var a = { p_name: values.name, p_phone: values.phone || null, p_source: values.source };
     if (values.email) a.p_email = values.email;
     if (values.event_date) a.p_event_date = values.event_date;
     if (values.guests !== null && values.guests !== undefined) a.p_guests = values.guests;
@@ -1791,7 +1835,8 @@
   }
 
   // A cv_add_lead failure -> { kind, field, text }. kind: field | feature_off | not_owner | auth | network | other.
-  function addLeadError(err) {
+  // ctx (optional) = { noPhone: the page switch is on, blank: the phone was sent blank }: a bad_phone on a blank phone means the database switch is still off.
+  function addLeadError(err, ctx) {
     var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).trim().toLowerCase();
     var det = String((err && err.details) || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
     var m = /\b(not_owner|not_allowed|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(raw);
@@ -1802,7 +1847,8 @@
         if (why === 'feature_off') return { kind: 'feature_off', field: '', text: 'Adding leads is switched off.' };
         return { kind: 'other', field: '', text: "You can't add a lead right now." };
       }
-      if (ADD_LEAD_FIELD[why]) return { kind: 'field', field: ADD_LEAD_FIELD[why], text: ADD_LEAD_ERRORS[why] };
+      if (why === 'bad_phone' && ctx && ctx.blank === true) return { kind: 'field', field: 'phone', text: ADD_NOPHONE_TEXT.off };
+      if (ADD_LEAD_FIELD[why]) return { kind: 'field', field: ADD_LEAD_FIELD[why], text: why === 'bad_phone' && ctx && ctx.noPhone === true ? ADD_NOPHONE_TEXT.bad_phone : ADD_LEAD_ERRORS[why] };
       return { kind: 'other', field: '', text: 'Check the details and try again.' };
     }
     var status = err && err.status;
@@ -1813,7 +1859,7 @@
 
   // The same person across number formats: the digits, with a 10-digit number read as +1 (as other_events does).
   function phoneKey(p) {
-    var d = String(p == null ? '' : p).replace(/\D/g, '');
+    var d = String(realPhone(p) || '').replace(/\D/g, '');
     if (d.length === 10) d = '1' + d;
     return d;
   }
@@ -1911,9 +1957,11 @@
   // The phone is the key a conversation hangs on. The page says why before the server has to: only a hand-added lead a form never upgraded.
   var PHONE_LOCKED_FORM = "The number can't be changed on a lead that came from your website form. Add a new lead with the new number instead.";
   var PHONE_LOCKED_TEXTS = "The number can't be changed once there are texts on this lead. Add a new lead with the new number instead.";
+  // R6: a lead added with no phone says so under the box (it can get one later; the server's rules decide collisions and opted-out numbers).
+  var PHONE_NONE_HINT = 'No phone on this lead yet. Add one if you get it. A phone cannot be removed later.';
   function editPhoneState(lead) {
     var ok = !!lead && lead.source === 'manual' && lead.auto_texts === false;
-    return { editable: ok, why: ok ? '' : PHONE_LOCKED_FORM };
+    return { editable: ok, why: ok ? (lead && !hasPhone(lead.phone) ? PHONE_NONE_HINT : '') : PHONE_LOCKED_FORM };
   }
 
   function hhmm(v) {
@@ -1933,7 +1981,7 @@
     var l = lead || {};
     var g = Number(l.guests);
     return {
-      name: cleanText(l.full_name) || '', phone: l.phone ? (fmtPhoneNational(l.phone) || String(l.phone)) : '', email: cleanText(l.email) || '',
+      name: cleanText(l.full_name) || '', phone: realPhone(l.phone) ? (fmtPhoneNational(l.phone) || String(realPhone(l.phone))) : '', email: cleanText(l.email) || '',
       event_date: dateOnly(l.event_date), start_time: hhmm(l.start_time) || '', end_time: hhmm(l.end_time) || '',
       guests: l.guests !== null && l.guests !== undefined && l.guests !== '' && isFinite(g) && g > 0 ? String(g) : '',
       event_address: cleanText(l.event_area) || '', occasion: cleanText(l.occasion) || ''
@@ -1941,10 +1989,11 @@
   }
   var EDIT_ERRORS = {
     name_required: 'Add a name.', name_too_long: ADD_LEAD_ERRORS.name_too_long, bad_phone: ADD_LEAD_ERRORS.bad_phone, bad_email: ADD_LEAD_ERRORS.bad_email,
+    email_required: 'A lead with no phone needs an email. Keep the email, or add a phone number too.',   // R6 (F4): the server refuses clearing the email of a lead that has no phone
     bad_date: ADD_LEAD_ERRORS.bad_date, bad_time: "That time doesn't look right.", bad_guests: ADD_LEAD_ERRORS.bad_guests,
     area_too_long: ADD_LEAD_ERRORS.area_too_long, occasion_too_long: ADD_LEAD_ERRORS.occasion_too_long
   };
-  var EDIT_ERROR_FIELD = { name_required: 'name', name_too_long: 'name', bad_phone: 'phone', bad_email: 'email', bad_date: 'event_date', bad_time: 'start_time',
+  var EDIT_ERROR_FIELD = { name_required: 'name', name_too_long: 'name', bad_phone: 'phone', bad_email: 'email', email_required: 'email', bad_date: 'event_date', bad_time: 'start_time',
     bad_guests: 'guests', area_too_long: 'event_address', occasion_too_long: 'occasion' };
   var EDIT_NOTHING = 'Nothing has changed yet.';
 
@@ -1962,13 +2011,15 @@
     else if (v.name.length > 120) errors.name = 'name_too_long';
     else if (v.name !== was.name) changes.name = v.name;
     if (phoneOn) {
-      var typedPhone = cleanText(f.phone);
+      var typedPhone = cleanPhoneText(f.phone);
       var ph = typedPhone ? normalizeLeadPhone(typedPhone) : null;
       if (!ph) { if (typedPhone || was.phone) errors.phone = 'bad_phone'; }
       else if (phoneKey(ph) !== phoneKey(lead && lead.phone)) changes.phone = ph;
     }
     if (v.email && (v.email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email))) errors.email = 'bad_email';
     else if ((v.email || '') !== was.email) changes.email = v.email;
+    // R6 (F4): a lead with no phone keeps an email, unless a phone is added in this same edit.
+    if (!v.email && was.email && !hasPhone(lead && lead.phone) && !changes.phone) errors.email = 'email_required';
     if (v.event_date && !okYmd(v.event_date, now)) errors.event_date = 'bad_date';
     else if ((v.event_date || '') !== was.event_date) changes.event_date = v.event_date;
     ['start_time', 'end_time'].forEach(function (k) {
@@ -4217,6 +4268,10 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   // "About: Sarah · Sat 14 Nov" from a lead record.
+  // R6 (N6): the line about what "include this customer" adds. A lead with no phone has none to send, so it says only the name.
+  function supportIncludeLine(lead) {
+    return ' This time also the customer\u2019s name' + (lead && hasPhone(lead.phone) ? ' and phone.' : '.');
+  }
   function supportLeadLine(lead, now) {
     if (!lead) return '';
     var first = String(displayName(lead)).split(/\s+/)[0] || '';
@@ -4344,7 +4399,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
 
   // +14165550123 -> (416) 555-0123. Anything else stays as stored (it is guarded when written). Empty -> ''.
   function exportPhone(e164) {
-    var s = String(e164 == null ? '' : e164).trim();
+    var s = String(realPhone(e164) || '');
     var m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(s);
     return m ? '(' + m[1] + ') ' + m[2] + '-' + m[3] : s;
   }
@@ -4946,6 +5001,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     titleCase: titleCase,
     displayName: displayName,
     fmtPhoneNational: fmtPhoneNational,
+    strictE164: strictE164,
     telHref: telHref,
     smsHref: smsHref,
     mailtoHref: mailtoHref,
@@ -5086,6 +5142,15 @@ function renderPriceBlockSms(lineItems, total, currency) {
     addLeadSources: addLeadSources,
     manualSourceLabel: manualSourceLabel,
     normalizeLeadPhone: normalizeLeadPhone,
+    realPhone: realPhone,
+    cleanPhoneText: cleanPhoneText,
+    addLeadNoPhoneServerOn: addLeadNoPhoneServerOn,
+    supportIncludeLine: supportIncludeLine,
+    hasPhone: hasPhone,
+    addLeadNoPhoneOn: addLeadNoPhoneOn,
+    ADD_NOPHONE_HINT: ADD_NOPHONE_HINT,
+    ADD_NOPHONE_TEXT: ADD_NOPHONE_TEXT,
+    PHONE_NONE_HINT: PHONE_NONE_HINT,
     cleanText: cleanText,
     validateAddLead: validateAddLead,
     addLeadFirstError: addLeadFirstError,

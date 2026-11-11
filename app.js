@@ -30,7 +30,7 @@
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
     setStatus: 'cv_set_lead_status', setDeposit: 'cv_set_deposit', addLead: 'cv_add_lead', editLead: 'cv_edit_lead', hideLead: 'cv_hide_lead', unhideLead: 'cv_unhide_lead', hiddenLeads: 'cv_hidden_leads', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test', markSeen: 'cv_mark_seen', pushStatus: 'cv_push_status',
-    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', exportConfig: 'cv_config', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
+    supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', exportConfig: 'cv_config', addLeadConfig: 'cv_config', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
   };
   function trackApi(api) {
     Object.keys(API_NAMES).forEach(function (k) {
@@ -187,7 +187,7 @@
     bulk: $('bulk'), bulkDate: $('bulk-date'), bulkHead: $('bulk-head'), bulkSample: $('bulk-sample'), bulkMore: $('bulk-more'), bulkNote: $('bulk-note'),
     bulkErr: $('bulk-error'), bulkYes: $('bulk-yes'), bulkNo: $('bulk-no'),
     btnAdd: $('btn-add-lead'), toast: $('toast'),
-    addDlg: $('add-lead'), addForm: $('add-form'), addName: $('add-name'), addPhone: $('add-phone'), addDate: $('add-date'),
+    addDlg: $('add-lead'), addForm: $('add-form'), addName: $('add-name'), addPhone: $('add-phone'), addPhoneHint: $('add-phone-hint'), addDate: $('add-date'),
     addGuests: $('add-guests'), addArea: $('add-area'), addOccasion: $('add-occasion'), addContacted: $('add-contacted'),
     addEmail: $('add-email'), addSourceChips: $('add-source-chips'), addErr: $('add-error'), addSubmit: $('add-submit'), addCancel: $('add-cancel'),
     btnEdit: $('btn-edit-lead'), editDlg: $('edit-lead'), editForm: $('edit-form'), editName: $('edit-name'), editPhone: $('edit-phone'), editPhoneWhy: $('edit-phone-why'),
@@ -201,7 +201,7 @@
     addDup: $('add-dup'), addDupList: $('add-dup-list'), addDupMore: $('add-dup-more'), addDupSame: $('add-dup-same'), addDupOpt: $('add-dup-opt'),
     recSource: $('rec-source'), recNewText: $('rec-newtext'), recNoauto: $('rec-noauto'), recPrice: $('rec-price'), priceLink: $('price-link'),
     strip: $('strip'), stripChip: $('strip-chip'), sysFold: $('sys-fold'), hNotes: $('h-notes'),
-    recordLoading: $('record-loading'), recHead: $('rec-head'), recName: $('rec-name'), recNext: $('rec-next'), recJob: $('rec-job'), recPhone: $('rec-phone'), recHistory: $('rec-history'),
+    recordLoading: $('record-loading'), recHead: $('rec-head'), recName: $('rec-name'), recNext: $('rec-next'), recJob: $('rec-job'), recPhone: $('rec-phone'), recPhoneNone: $('rec-phone-none'), recHistory: $('rec-history'),
     optoutBanner: $('optout-banner'), recContact: $('rec-contact'),
     contactActions: $('contact-actions'), contactNote: $('contact-note'),
     reached: $('rec-reached'), reachedYes: $('reached-yes'), reachedNo: $('reached-no'),
@@ -259,6 +259,7 @@
     depositBusy: false,   // R7: a Deposit received save is running
     quote: { busy: false, seq: 0, view: null, req: null, raw: null, pending: null, fromLead: null, backTo: null, pre: null, added: false, adding: false, refused: false },
     quoteSendBusy: false,
+    addSrv: false, addSrvSeq: 0,   // R6 (S1): the database's no-phone switch, read when the Add sheet opens
     optedPhones: [], optedAt: 0, optedBusy: false,   // numbers that opted out (lead_detail), for Add lead and the No-quote rule
     needsDepth: 0,       // history.length right after See all pushed #/needs (0 = it did not; Back to leads then replaces instead of going back)
     uid: '',             // the signed-in user's id (calculator draft key only); '' until known
@@ -650,6 +651,8 @@
       exportLeads: function (args) { return client.rpc('cv_export_leads', args).then(ok); },
       // D10: the database's own switch (cv_config export_enabled; the owner can read cv_config). -> { value } or null when there is no row.
       exportConfig: function () { return client.from('cv_config').select('value').eq('key', 'export_enabled').maybeSingle().then(ok); },
+      // R6 (S1): the database's no-phone switch (cv_config add_lead_no_phone), read when the Add sheet opens. -> { value } or null when there is no row.
+      addLeadConfig: function () { return client.from('cv_config').select('value').eq('key', 'add_lead_no_phone').maybeSingle().then(ok); },
       // Round 4: in pages like the lead list (a busy owner can have more than 1,000 rows here too), up to L.LIST_CAP. Review r4
       // item 7: keyset on lead_id (due_at is worked out from now(), so it is no key). A full page ends inside some lead's rows, so
       // that lead's rows are dropped and read again, whole, by the next page (lead_id >= it). A lead has a few rows at most.
@@ -1317,6 +1320,27 @@
     el.addSourceChips.replaceChildren(frag);
   }
 
+  // R6 (B9 + F4): the Phone box may stay blank (then name + email are required) only while the page switch says exactly true. Off = nothing changes.
+  // S1: it also needs the database's switch (S.addSrv, read each time the sheet opens). Not read yet, a failed read, no row or anything but 'true' = off:
+  // no hint, a phone is required, today's words.
+  function addNoPhone() { return HAS_ADD && L.addLeadNoPhoneOn(custom.features) && S.addSrv === true; }
+  function loadAddConfig() {
+    var seq = ++S.addSrvSeq;
+    S.addSrv = false;
+    if (!HAS_ADD || !L.addLeadNoPhoneOn(custom.features) || !S.api || typeof S.api.addLeadConfig !== 'function') return;
+    Promise.resolve().then(function () { return S.api.addLeadConfig(); }).then(function (row) {
+      if (seq !== S.addSrvSeq) return;
+      S.addSrv = L.addLeadNoPhoneServerOn(row);
+    }, function () { /* a failed read is not an answer: the form stays as it always was */ }).then(function () {
+      if (seq === S.addSrvSeq && el.addDlg.open) renderAddNoPhoneHint();
+    });
+  }
+  function renderAddNoPhoneHint() {
+    var on = addNoPhone();
+    setText(el.addPhoneHint, on ? L.ADD_NOPHONE_HINT : '');
+    show(el.addPhoneHint, on);
+  }
+
   function addFieldNode(f) { return f === 'source' ? el.addSourceChips.querySelector('input') : el[ADD_FIELD_EL[f]]; }
 
   function setAddError(field, text) {
@@ -1345,6 +1369,7 @@
 
   // "Already on file" box under Phone. Uses the lead list already loaded (no extra call).
   function renderAddDup() {
+    // R6: no phone typed = no duplicate check at all (a blank would otherwise match every other lead that has no phone).
     var d = L.dupInfo(S.listLoaded ? S.leads : [], el.addPhone.value, el.addDate.value, S.optedPhones, el.addName.value);
     show(el.addDup, d.matches.length > 0 || d.optedOut);
     if (!d.matches.length) { setText(el.addDupSame, ''); setText(el.addDupMore, ''); setText(el.addDupOpt, d.optedOut ? L.DUP_TEXT.optedOut : ''); el.addDupList.replaceChildren(); return; }
@@ -1368,6 +1393,8 @@
     if (!HAS_ADD || !S.signedIn || S.addBusy) return;
     el.addForm.reset();
     clearAddErrors();
+    loadAddConfig();
+    renderAddNoPhoneHint();
     renderAddDup();
     // Numbers that opted out (lead_list cannot say): one lookup per open, the box updates when it lands.
     if (S.api && typeof S.api.optedOutPhones === 'function') {
@@ -1401,9 +1428,10 @@
   function submitAdd() {
     if (S.addBusy) return;
     clearAddErrors();
-    var res = L.validateAddLead(readAddForm());
+    var nop = { noPhone: addNoPhone() };
+    var res = L.validateAddLead(readAddForm(), undefined, nop);
     if (!res.ok) {
-      Object.keys(res.errors).forEach(function (f) { setAddError(f, L.addLeadErrorText(res.errors[f])); });
+      Object.keys(res.errors).forEach(function (f) { setAddError(f, L.addLeadErrorText(res.errors[f], nop)); });
       var first = addFieldNode(L.addLeadFirstError(res.errors));
       if (first) try { first.focus(); } catch (e) { /* ignore */ }
       return;
@@ -1418,7 +1446,7 @@
       openLeadAfterAdd(row.lead_id, 'Lead added');
     }).catch(function (e) {
       setAddBusy(false);
-      var er = L.addLeadError(e);
+      var er = L.addLeadError(e, { noPhone: nop.noPhone, blank: res.values.phone_blank === true });
       if (er.kind === 'field') {
         setAddError(er.field, er.text);
         var n = addFieldNode(er.field);
@@ -3209,7 +3237,7 @@
     var on = !!(S.support.cfg && S.support.cfg.sendEnabled);
     var T = SUPPORT_TEXT[on ? 'on' : 'off'];
     var t = T.disclose;
-    if (supportLeadActive() && el.spInclude.checked) t += ' This time also the customer’s name and phone.';
+    if (supportLeadActive() && el.spInclude.checked) t += L.supportIncludeLine(S.nav.lead && S.nav.lead.lead);
     el.spDisclose.textContent = t;
     setText(el.spNoSend, T.noSend);
     el.spLede.textContent = T.lede; el.spFormH.textContent = T.heading; el.spSendLabel.textContent = T.button;
@@ -4703,7 +4731,10 @@
     var tel = L.telHref(lead.phone);
     if (phone && tel) { el.recPhone.textContent = phone; el.recPhone.href = tel; show(el.recPhone, true); }
     else { el.recPhone.textContent = ''; el.recPhone.removeAttribute('href'); show(el.recPhone, false); }
-    show(el.recPhoneRow, !!(phone && tel));
+    // R6: a lead added with no phone says "No phone" (never a number, never Call / Text). The stored key never reaches here: every view sends null.
+    var noPhone = !L.hasPhone(lead.phone);
+    show(el.recPhoneNone, noPhone);
+    show(el.recPhoneRow, !!(phone && tel) || noPhone);
     var actions = L.contactActions(lead, custom.contactActions, { staff: isStaff() });
     var frag = document.createDocumentFragment();
     actions.forEach(function (a) {

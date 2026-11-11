@@ -573,7 +573,7 @@
           <p class="rec-noauto" id="rec-noauto" hidden></p>
           <!-- How to reach them: the same label / value grid as the Event card, so the record reads as one aligned form. -->
           <dl class="rec-reach" id="rec-reach">
-            <div class="reach-row" id="rec-phone-row" hidden><dt>Phone</dt><dd><a class="rec-phone" id="rec-phone" hidden></a></dd></div>
+            <div class="reach-row" id="rec-phone-row" hidden><dt>Phone</dt><dd><a class="rec-phone" id="rec-phone" hidden></a><span class="rec-phone-none" id="rec-phone-none" hidden>No phone</span></dd></div>
             <div class="reach-row"><dt>Email</dt><dd class="rec-email" id="rec-email" hidden></dd></div>
           </dl>
           <!-- R4 (A2): owner only, behind features.editLead. The sheet is #edit-lead below. -->
@@ -805,7 +805,8 @@
       </div>
       <div class="sheet-field">
         <label class="field-label" for="add-phone">Phone</label>
-        <input class="field" id="add-phone" type="tel" inputmode="tel" autocomplete="off" aria-describedby="add-err-phone add-dup">
+        <input class="field" id="add-phone" type="tel" inputmode="tel" autocomplete="off" aria-describedby="add-phone-hint add-err-phone add-dup">
+        <p class="hint" id="add-phone-hint" hidden></p>
         <p class="error" id="add-err-phone" role="alert" hidden></p>
         <div class="add-dup" id="add-dup" role="status" aria-live="polite" hidden>
           <p class="add-dup-h" id="add-dup-h">Already on file</p>

@@ -307,7 +307,7 @@ a { color: var(--link); }
 .rec-phone:active { opacity: 0.7; }
 .rec-email { margin: 0; font-size: var(--fs-md); color: var(--on-primary); overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
 .rec-email-link { display: inline-flex; align-items: center; min-height: 40px; padding: 8px 0; box-sizing: border-box; color: var(--on-primary); font-weight: 600; text-decoration: underline; text-decoration-color: var(--muted-on-primary); text-underline-offset: 3px; overflow-wrap: anywhere; }
-.rec-email-none { display: inline-flex; align-items: center; min-height: 40px; color: var(--muted-on-primary); }
+.rec-email-none, .rec-phone-none { display: inline-flex; align-items: center; min-height: 40px; color: var(--muted-on-primary); }
 .more-toggle { display: inline-flex; align-items: center; min-height: 44px; margin: var(--sp-1) 0 0; padding: 0; background: transparent; border: 0; color: var(--link); font-size: var(--fs-md); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 
 /* Do-not-text banner: the one place red is used, because it must not be missed (white on #9A2A14 = 7.73:1). */
