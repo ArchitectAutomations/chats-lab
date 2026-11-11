@@ -4838,7 +4838,7 @@
 
   /* ---------- alerts on this phone (push) ---------- */
 
-  // Service worker: registered at page load (harmless when push is off). It only shows notifications; it caches nothing.
+  // Service worker: registered at page load (harmless when push is off). It shows notifications and, offline only, a fixed "No signal" page for page opens; it caches and stores nothing.
   var P = { open: false, cfg: null, sub: null, busy: false, seq: 0, reg: Promise.resolve(null) };
   function registerWorker() {
     if (!('serviceWorker' in navigator)) return;

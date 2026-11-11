@@ -1,4 +1,6 @@
-/* Service worker: push alerts only. No fetch handler, no caching: signed-in data never sits in a cache.
+/* Service worker: push alerts + a navigation-only offline fallback. Nothing is cached or stored: signed-in data never sits in a cache.
+   The only fetch handler answers page NAVIGATIONS: it passes them to the network and, only if the network fails, shows a fixed inline "No signal" page.
+   Rules (checked by tools/check_sw.js at publish): no Cache API, no importScripts, no storage, one fetch listener, navigate requests only.
    Payload (contract): { title, body, url: "/#/lead/<uuid>" | "/", tag, lead_id, test }. */
 'use strict';
 
@@ -25,6 +27,33 @@ function parsePayload(data) {
 
 self.addEventListener('install', function () { self.skipWaiting(); });
 self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim()); });
+
+// Offline fallback: fixed text, no data, no external resources, no script. 503 = honest "unavailable" (never mistaken for the app).
+var OFFLINE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No signal</title>' +
+  '<style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;box-sizing:border-box;text-align:center;font:17px/1.4 -apple-system,system-ui,sans-serif;background:#fff;color:#1a1a1a}' +
+  '@media(prefers-color-scheme:dark){body{background:#111;color:#f2f2f2}}p{margin:0;max-width:20em}a{display:inline-block;padding:12px 24px;border-radius:12px;background:#1a1a1a;color:#fff;text-decoration:none;font-weight:600}' +
+  '@media(prefers-color-scheme:dark){a{background:#f2f2f2;color:#111}}</style></head><body><p>No signal. Your leads load when you\u2019re back.</p><a href="/">Try again</a></body></html>';
+
+function offlineResponse() {
+  return new Response(OFFLINE_HTML, {
+    status: 503,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    }
+  });
+}
+
+// Navigation requests only. Anything else (data, scripts, images) is never touched: no respondWith, the browser handles it.
+self.addEventListener('fetch', function (event) {
+  try {
+    if (!event.request || event.request.mode !== 'navigate') return;
+    event.respondWith(fetch(event.request).catch(function () {
+      try { return offlineResponse(); } catch (e) { return Response.error(); }
+    }));
+  } catch (e) { /* any failure: fall through to the network */ }
+});
 
 self.addEventListener('push', function (event) {
   var n = parsePayload(event.data);
