@@ -109,7 +109,7 @@
 :root[data-text-size="larger"] { --type-scale: 1.3; }
 
 /* Sand surfaces: text turns green, muted and dividers follow. */
-.lead-row, .need-link, .ag-row, .m-tile, .fc-note, .rec-card, .sheet, .field, .row.in .bubble, .waiting-row, .more-row, .alerts {
+.lead-row, .need-link, .ag-row, .m-tile, .fc-note, .rec-card, .sheet, .field, .row.in .bubble, .waiting-row, .more-row, .alerts, .hidden-banner {
   --ink: var(--on-secondary);
   --muted: var(--muted-on-secondary);
   --line: var(--secondary-deep);
@@ -118,6 +118,7 @@
 /* Focus + links INSIDE a sand surface sit on sand: use the dark purple. (A row or card's own ring
    is drawn outside it, on green, so it keeps the light purple.) */
 .rec-card, .sheet, .alerts, .fc-note { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* .fc-note: the forecast's cream card (its "Review them" link was 1.44:1 in the light green-surface purple) */
+.hidden-banner { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* R5: the hidden-lead card is a sand surface too: its error line and focus ring need the sand colours */
 .sheet, .field { color-scheme: light; }
 
 * { box-sizing: border-box; }
@@ -1021,6 +1022,22 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .sheet-dup .sheet-actions { position: static; margin: 0; padding: 0; }
 .sheet-dup .hint { margin-top: 10px; }
 
+/* R5 (A3): "Hide this lead" beside Edit details: the same outlined pill, quieter (muted border), so Edit stays the main one. Two pills share a row and wrap
+   under each other at the bigger text sizes and at 320 px. */
+.btn-hide { margin-left: var(--sp-2); border-color: var(--muted-on-primary); color: var(--muted-on-primary); }
+.btn-hide:first-child, .btn-edit[hidden] + .btn-hide { margin-left: 0; }
+/* A hidden lead's record: a plain sand card above the rest, words first, one button under them. */
+.hidden-banner { margin: 0 0 12px; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); box-shadow: var(--shadow-card); }
+.hidden-banner[hidden] { display: none; }
+.hidden-banner-text { margin: 0 0 var(--sp-2); font-size: var(--fs-md); font-weight: 700; overflow-wrap: anywhere; }
+.hidden-banner .btn.primary { width: 100%; }
+.hidden-banner .error { margin: var(--sp-2) 0 0; }
+/* More > Hidden leads: the Team list's rows; the name is the link to the record. */
+.hid-who { display: block; min-height: 44px; color: inherit; text-decoration: none; }
+.hid-name { display: block; overflow-wrap: anywhere; }
+.hid-meta { display: block; }
+.hid-empty .hint { margin: 0; color: var(--muted); }
+
 /* Confirmation toast (outside every screen, so it survives the jump to the new lead). */
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 30; margin: 0;
@@ -1264,3 +1281,5 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 :root[data-text-size="large"] .titles h1, :root[data-text-size="larger"] .titles h1 { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 /* R4: the Edit sheet's two time boxes stack (a time box is ~9 em wide: side by side they would not fit a 320 px phone at these sizes). */
 :root[data-text-size="large"] .sheet-edit .edit-times, :root[data-text-size="larger"] .sheet-edit .edit-times { grid-template-columns: minmax(0, 1fr); }
+/* R5: Hide this lead sits under Edit details when the pills no longer share a row (flush left, no stray indent). */
+:root[data-text-size="large"] .btn-hide, :root[data-text-size="larger"] .btn-hide { margin-left: 0; }

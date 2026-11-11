@@ -469,6 +469,24 @@
     </div>
   </main>
 
+  <!-- Hidden leads (More, owner only, R5 A3): the leads the owner hid, newest first, each with "Show it again". Opens a lead's record on a tap. -->
+  <main class="screen hidden-screen" id="screen-hidden" hidden>
+    <div class="scroller" id="hid-scroll">
+      <div class="sp-wrap">
+        <p class="q-lede" id="hid-lede">Leads you hid are in no list, count or spreadsheet. Their history is kept.</p>
+        <p class="status-line sp-status" id="hid-loading">Loading…</p>
+        <ul class="sp-list" id="hid-list"></ul>
+        <div class="hid-empty" id="hid-empty" hidden>
+          <p class="status-line sp-status" id="hid-empty-text">No hidden leads.</p>
+          <p class="hint" id="hid-empty-hint"></p>
+        </div>
+        <p class="error" id="hid-error" role="alert" hidden></p>
+        <button class="btn quiet tm-reload" id="hid-reload" type="button" hidden>Try again</button>
+        <p class="sp-done" id="hid-msg" role="status" aria-live="polite" tabindex="-1" hidden></p>
+      </div>
+    </div>
+  </main>
+
   <!-- Team (More, owner only): add a person, see who has access and when they last signed in, remove them.
        Shown only when CV_CUSTOM.features.team is exactly true. Talks to the cv-team Edge Function. -->
   <main class="screen team-screen" id="screen-team" hidden>
@@ -536,6 +554,13 @@
       <div class="record record-top" id="record">
         <p class="status-line" id="record-loading">Loading this lead…</p>
 
+        <!-- R5 (A3): a hidden lead's record (from More > Hidden leads, a duplicate Add or an old link). Owner only. -->
+        <section class="hidden-banner" id="hidden-banner" aria-label="Hidden lead" hidden>
+          <p class="hidden-banner-text" id="hidden-banner-text">You hid this lead. Show it again?</p>
+          <button class="btn primary hidden-banner-btn" id="hidden-show" type="button">Show it again</button>
+          <p class="error" id="hidden-error" role="alert" hidden></p>
+        </section>
+
         <header class="rec-head" id="rec-head" hidden>
           <h2 class="rec-name" id="rec-name"></h2>
           <div class="rec-status">
@@ -553,6 +578,8 @@
           </dl>
           <!-- R4 (A2): owner only, behind features.editLead. The sheet is #edit-lead below. -->
           <button class="btn-edit" id="btn-edit-lead" type="button" aria-haspopup="dialog" hidden>Edit details</button>
+          <!-- R5 (A3): owner only, behind features.hideLead, and only while the server says hideable. The sheet is the shared #confirm below. -->
+          <button class="btn-edit btn-hide" id="btn-hide-lead" type="button" aria-haspopup="dialog" hidden>Hide this lead</button>
         </header>
 
         <p class="stop-banner" id="optout-banner" role="note" hidden>Do not text: this person opted out.</p>

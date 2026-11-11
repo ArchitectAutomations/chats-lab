@@ -28,7 +28,7 @@
   // Every backend call goes through one wrapper that records FAILURES only: the call's name, a status and a short code word.
   var API_NAMES = {
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
-    setStatus: 'cv_set_lead_status', setDeposit: 'cv_set_deposit', addLead: 'cv_add_lead', editLead: 'cv_edit_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
+    setStatus: 'cv_set_lead_status', setDeposit: 'cv_set_deposit', addLead: 'cv_add_lead', editLead: 'cv_edit_lead', hideLead: 'cv_hide_lead', unhideLead: 'cv_unhide_lead', hiddenLeads: 'cv_hidden_leads', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test', markSeen: 'cv_mark_seen', pushStatus: 'cv_push_status',
     supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', exportConfig: 'cv_config', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
   };
@@ -95,6 +95,7 @@
     { route: 'guide', href: '#/guide', label: 'How to use the CRM', show: showGuide, icon: 'M6 4.5h10a2 2 0 0 1 2 2V19H8a2 2 0 0 1-2-2zM6 17a2 2 0 0 1 2-2h10M10 8.5h4' },
     { route: 'support', href: '#/support', label: 'Help & support', show: showSupport, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM9.6 9.6a2.4 2.4 0 1 1 3.5 2.1c-.7.4-1.1.9-1.1 1.7M12 16.6v.2' },
     { route: 'export', href: '#/export', label: 'Download spreadsheet', show: showExport, icon: 'M12 4v11M7 10l5 5 5-5M5 20h14' },
+    { route: 'hidden', href: '#/hidden', label: 'Hidden leads', show: showHidden, icon: 'M3.5 12s3.2-6 8.5-6 8.5 6 8.5 6-3.2 6-8.5 6-8.5-6-8.5-6zM12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM4.5 4.5l15 15' },
     { route: 'team', href: '#/team', label: 'Team', show: showTeam, icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3.5 19c.5-3 2.6-4.5 5.5-4.5s5 1.5 5.5 4.5M16 11a2.5 2.5 0 1 0 0-5M17.5 14.7c1.8.4 2.8 1.7 3 4.3' },
     { route: 'more', href: '#/more', label: 'More', show: showMore, icon: 'M5 12h2M11 12h2M17 12h2' }
   ];
@@ -194,6 +195,9 @@
     editOccasion: $('edit-occasion'), editErr: $('edit-error'), editOther: $('edit-other'), editOtherLink: $('edit-other-link'), editSubmit: $('edit-submit'), editCancel: $('edit-cancel'),
     dupDlg: $('dup-lead'), dupTitle: $('dup-title'), dupIntro: $('dup-intro'), dupLines: $('dup-lines'), dupContacted: $('dup-contacted'), dupOpt: $('dup-opt'),
     dupNote: $('dup-note'), dupErr: $('dup-error'), dupUpdate: $('dup-update'), dupKeep: $('dup-keep'),
+    btnHide: $('btn-hide-lead'), hiddenBanner: $('hidden-banner'), hiddenBannerText: $('hidden-banner-text'), hiddenShow: $('hidden-show'), hiddenErr: $('hidden-error'),
+    hidScreen: $('screen-hidden'), hidLoading: $('hid-loading'), hidList: $('hid-list'), hidEmpty: $('hid-empty'), hidEmptyText: $('hid-empty-text'), hidEmptyHint: $('hid-empty-hint'),
+    hidError: $('hid-error'), hidReload: $('hid-reload'), hidMsg: $('hid-msg'),
     addDup: $('add-dup'), addDupList: $('add-dup-list'), addDupMore: $('add-dup-more'), addDupSame: $('add-dup-same'), addDupOpt: $('add-dup-opt'),
     recSource: $('rec-source'), recNewText: $('rec-newtext'), recNoauto: $('rec-noauto'), recPrice: $('rec-price'), priceLink: $('price-link'),
     strip: $('strip'), stripChip: $('strip-chip'), sysFold: $('sys-fold'), hNotes: $('h-notes'),
@@ -275,6 +279,8 @@
     historyOpen: false,
     addBusy: false,
     editBusy: false, edit: null, dup: null,   // R4: the Edit sheet and the duplicate-add sheet
+    hideBusy: false,     // R5: a Hide this lead save is running
+    hidden: { rows: null, n: null, loading: false, err: '', seq: 0, busy: '' },   // R5: More > Hidden leads: cv_hidden_leads rows, the count for the More row (null = not known), memory only
     toastTimer: null,
     quotePrefill: null,  // L.quotePrefill(lead) + fromLead + backTo: a lead's price link -> the quote calculator, used once
     nav: { cur: '', from: '', lead: null },  // screen before More / Help, and the lead record Help was reached from (same session)
@@ -388,6 +394,8 @@
   // R7 (sql/033, C4 + C5): the quote's age (the "New price from the AI" line), the last edit (a stale quote), the deposit tick and the money kept from a cancellation.
   // A lab without 033 does not have them: the first read then falls back to the tiers below, and the lead simply has none of the money card.
   var DETAIL_MONEY = ',quoted_at,details_edited_at,deposit_received_at,kept_amount';
+  // R5 (sql/034, A3): the three columns appended LAST to lead_detail. The first read tries them; a lab without 034 falls to the tiers below, and the lead is simply never hidden or hideable.
+  var DETAIL_HIDE = ',hidden,hidden_at,hideable';
   var SEARCH_BASE = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
   var SEARCH_COLUMNS = SEARCH_BASE + ',source,manual_source'; // sql/011 columns on lead_detail; the search falls back without them
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
@@ -474,7 +482,10 @@
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
-          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY).eq('lead_id', id).maybeSingle().then(function (rm) {
+          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE).eq('lead_id', id).maybeSingle().then(function (rh) {
+            if (!rh.error) return rh;   // R5: the 034 columns are the view's last three; a lab without them falls to the next tier
+            return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY).eq('lead_id', id).maybeSingle();
+          }).then(function (rm) {
             if (!rm.error) return rm;   // R7: the 033 columns are the view's last four; a lab without them falls to the next tier
             return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT).eq('lead_id', id).maybeSingle();
           }).then(function (rc) {
@@ -515,15 +526,25 @@
       searchLeads: function (q) {
         var f = L.searchFilter(q);
         if (!f) return Promise.resolve([]);
-        return client.from('lead_detail').select(SEARCH_COLUMNS + ',booked_amount,lost_reason').or(f)
+        // R5 (A3): a hidden lead is in no search result. Only the first read has the filter. An answer that says a column is missing (a database
+        // older than 034) falls to the older reads; any other failure is a failure, never an unfiltered list.
+        function older() {
+          return client.from('lead_detail').select(SEARCH_COLUMNS + ',booked_amount,lost_reason').or(f)
+            .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(function (r) {
+              if (!r.error) return r.data;
+              return client.from('lead_detail').select(SEARCH_BASE + ',booked_amount,lost_reason').or(f)
+                .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(function (r2) {
+                  if (!r2.error) return r2.data;
+                  return client.from('lead_detail').select(SEARCH_BASE).or(f)
+                    .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(ok);
+                });
+            });
+        }
+        return client.from('lead_detail').select(SEARCH_COLUMNS + ',booked_amount,lost_reason').eq('hidden', false).or(f)
           .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(function (r) {
             if (!r.error) return r.data;
-            return client.from('lead_detail').select(SEARCH_BASE + ',booked_amount,lost_reason').or(f)
-              .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(function (r2) {
-                if (!r2.error) return r2.data;
-                return client.from('lead_detail').select(SEARCH_BASE).or(f)
-                  .order('last_activity_at', { ascending: false, nullsFirst: false }).limit(25).then(ok);
-              });
+            if (L.hideColumnMissing(r.error)) return older();
+            throw r.error;
           });
       },
       // Read-only price check. Non-2xx answers are thrown as { status, error, details } from the JSON body.
@@ -595,6 +616,12 @@
       addLead: function (args) { return client.rpc('cv_add_lead', args).then(ok); },
       // R4 (sql/032), owner only: changes = { field: value } with only the fields that differ. -> { lead_id, changes: { field: [old, new] }, details_edited_at, opted_out }.
       editLead: function (id, changes) { return client.rpc('cv_edit_lead', { p_lead_id: id, p_changes: changes }).then(ok); },
+      // R5 (sql/034, A3), owner only (the staff map has none of these). hideLead -> { lead_id, hidden_at, changed }, unhideLead -> { lead_id, changed },
+      // hiddenLeads -> [{ lead_id, display_name, event_date, status, source, manual_source, hidden_at }] newest first. Errors keep { message, details } for L.hideError.
+      // seenLastIn = lead_detail.last_inbound_at as loaded (null when none): the server refuses 'new_text' when they texted after it.
+      hideLead: function (id, seenLastIn) { return client.rpc('cv_hide_lead', { p_lead_id: id, p_seen_last_in: seenLastIn === undefined ? null : seenLastIn }).then(ok); },
+      unhideLead: function (id) { return client.rpc('cv_unhide_lead', { p_lead_id: id }).then(ok); },
+      hiddenLeads: function () { return client.rpc('cv_hidden_leads').then(ok); },
       addNote: function (id, body) { return client.rpc('cv_add_note', { p_lead_id: id, p_body: body }).then(ok); },
       deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
@@ -748,13 +775,17 @@
       a.href = n.href;
       if (n.route === 'support') { li.hidden = true; supportRowNode = li; }  // shown once the database says support is on
       if (n.route === 'ask') { li.hidden = true; askRowNode = li; }  // shown once the database says Ask is on
+      if (n.route === 'hidden') { li.hidden = true; hiddenRowNode = li; hiddenRowBase = n.label; }  // R5: shown while at least one lead is hidden
       a.appendChild(icon(n.icon, 24));
-      a.appendChild(make('span', 'more-label', n.label));
+      var rowLabel = make('span', 'more-label', n.label);
+      if (n.route === 'hidden') hiddenRowLabelNode = rowLabel;
+      a.appendChild(rowLabel);
       a.appendChild(icon('M9 5l7 7-7 7', 20)).classList.add('more-chev');
       li.appendChild(a);
       rows.appendChild(li);
     });
     el.moreList.replaceChildren(rows);
+    renderHiddenRow();
   }
 
   function markTabs() {
@@ -791,15 +822,16 @@
     show(el.support, name === 'support');
     show(el.guideScreen, name === 'guide');
     show(el.teamScreen, name === 'team');
+    show(el.hidScreen, name === 'hidden');
     show(el.askScreen, name === 'ask');
     show(el.exportScreen, name === 'export');
     show(el.thread, name === 'thread');
     show(el.topbar, signedIn);
     show(el.tabbar, signedIn && PLAN.showBar);
     // Back arrow on a lead record and on the tools under More; every other screen is a tab with a plain title.
-    var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide';
+    var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide' || name === 'hidden';
     show(el.back, sub);
-    if (name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
+    if (name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide' || name === 'hidden') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
     if (name !== 'thread') {
       el.title.textContent = S.tab.label;
       setText(el.subtitle, '');
@@ -848,7 +880,7 @@
     stopLive();
     setLive('retry');
     S.stopLive = S.api.subscribe(
-      function () { scheduleRefresh(400); },
+      function (payload) { onLiveEvent(payload); },
       function (status) {
         if (status === 'SUBSCRIBED') { setLive('on'); scheduleRefresh(0); }
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { diagNoteCall('live', { status: 0, code: String(status).toLowerCase() }); setLive('retry'); }
@@ -874,6 +906,7 @@
       if (S.screen === 'thread' && S.thread.id) refreshThread();
       if (S.screen === 'metrics') refreshMetrics();
       if (S.screen === 'list' && L.searchFilter(S.search.q)) runSearch();
+      if (S.screen === 'hidden') refreshHidden(true);
     }, delay);
   }
 
@@ -1524,10 +1557,12 @@
 
   function duplicateAdded(id, values) {
     var plain = 'Already on file: opened it';
-    if (!editAvailable() || typeof S.api.fetchThread !== 'function') { openLeadAfterAdd(id, plain); return; }
+    if ((!editAvailable() && !hideAvailable()) || typeof S.api.fetchThread !== 'function') { openLeadAfterAdd(id, plain); return; }
     Promise.resolve().then(function () { return S.api.fetchThread(id); }).then(function (res) {
       var lead = res && res.lead;
       if (!lead) { openLeadAfterAdd(id, plain); return; }
+      if (hideAvailable() && L.isHiddenLead(lead)) { openDupHidden(id, lead, values); return; }   // R5 (A3): the owner hid this lead; the owner chooses, nothing is shown again by itself
+      if (!editAvailable()) { openLeadAfterAdd(id, plain); return; }
       var view = L.dupSheetView(lead, values);
       if (!view.lines.length) { offerContacted(lead, values.contacted); openLeadAfterAdd(id, plain); return; }   // no differences: today's toast
       openDup(id, lead, values, view);
@@ -1568,12 +1603,14 @@
     if (!d || d.busy) return;
     S.dup = null;
     closeDup();
+    if (d.hidden) { refreshList(); showToast('Left hidden. What you typed was not saved.'); return; }   // R5: "Leave it hidden"
     offerContacted(d.lead, d.contacted);
     openLeadAfterAdd(d.id, "Kept what's on file");
   }
   function dupUpdate() {
     var d = S.dup;
     if (!d || d.busy) return;
+    if (d.hidden) { dupShowAgain(d); return; }   // R5: "Show it again"
     setText(el.dupErr, '');
     setDupBusy(true);
     Promise.resolve().then(function () { return S.api.editLead(d.id, d.view.changes); }).then(function () {
@@ -1584,6 +1621,242 @@
     }).catch(function (e) {
       setDupBusy(false);
       setText(el.dupErr, L.editLeadError(e, { date: String(d.lead.event_date || '').slice(0, 10) }).text);   // the sheet stays: Keep still works
+    });
+  }
+
+  /* ---------- R5 (A3): Hide this lead (owner only, behind features.hideLead) ----------
+     The server says when a lead may be hidden (lead_detail.hideable: nothing was ever texted to them). The sheet is the shared confirm sheet;
+     cv_hide_lead re-checks under a lock, so a stale page is refused with a plain line. A hidden lead is out of every list, count, search and
+     the spreadsheet (server side). Its record still opens (More > Hidden leads, a duplicate Add, an old link) with "You hid this lead. Show it again?".
+     Never for staff: the staff API has none of these calls. */
+
+  var hiddenRowNode = null, hiddenRowBase = 'Hidden leads', hiddenRowLabelNode = null;   // the More row: shown while at least one lead is hidden
+  function hideAvailable() { return feature('hideLead') && !isStaff() && !!S.api && typeof S.api.hideLead === 'function'; }
+  function hiddenListAvailable() { return feature('hidden') && !isStaff() && !!S.api && typeof S.api.hiddenLeads === 'function'; }
+
+  function renderHiddenRow() {
+    if (!hiddenRowNode) return;
+    hiddenRowNode.hidden = !(hiddenListAvailable() && L.hiddenRowShown(S.hidden.n));
+    if (hiddenRowLabelNode) hiddenRowLabelNode.textContent = L.hiddenRowLabel(S.hidden.n, hiddenRowBase);
+  }
+
+  // The leads the owner hid: the screen and the count on the More row come from one read. silent = the count read only (no spinner, no error line).
+  function refreshHidden(silent) {
+    var H = S.hidden;
+    if (!S.signedIn || !hiddenListAvailable()) return Promise.resolve();
+    var n = ++H.seq;
+    if (!silent) { H.loading = true; H.err = ''; if (S.screen === 'hidden') renderHidden(); }
+    return Promise.resolve().then(function () { return S.api.hiddenLeads(); }).then(function (rows) {
+      if (n !== H.seq || !S.signedIn) return;
+      H.rows = Array.isArray(rows) ? rows : [];
+      H.n = L.hiddenListView(H.rows).length;
+      H.err = '';
+    }, function (e) {
+      if (n !== H.seq) return;
+      if (!silent) H.err = L.HIDDEN_LIST_ERROR;   // the rows already on screen stay; a silent count read keeps the count it had
+      maybeRecheckAccess(e);
+    }).then(function () {
+      if (n !== H.seq) return;
+      H.loading = false;
+      renderHiddenRow();
+      if (S.screen === 'hidden') renderHidden();
+    });
+  }
+
+  function renderHidden() {
+    var H = S.hidden, v = H.rows ? L.hiddenListView(H.rows) : null;
+    show(el.hidLoading, H.loading && !v);
+    setText(el.hidError, H.err);
+    show(el.hidReload, !!H.err);
+    show(el.hidEmpty, !!v && v.length === 0 && !H.loading);
+    setText(el.hidEmptyText, L.HIDDEN_EMPTY);
+    setText(el.hidEmptyHint, L.HIDDEN_EMPTY_HINT);
+    show(el.hidList, !!v && v.length > 0);
+    var frag = document.createDocumentFragment();
+    (v || []).forEach(function (r) {
+      var busy = H.busy === r.id;
+      var li = make('li', 'sp-row');
+      var who = make('a', 'hid-who');
+      who.href = '#/lead/' + encodeURIComponent(r.id);
+      who.appendChild(make('span', 'sp-kind tm-name hid-name', r.name));
+      if (r.meta) who.appendChild(make('span', 'sp-meta hid-meta', r.meta));
+      li.appendChild(who);
+      var actions = make('div', 'tm-actions');
+      var b = make('button', 'tm-btn', busy ? 'Working…' : L.SHOW_AGAIN);
+      b.type = 'button'; b.disabled = !!H.busy;
+      b.setAttribute('aria-label', L.SHOW_AGAIN + ': ' + r.name);
+      b.addEventListener('click', function () { unhideLead(r.id, 'list'); });
+      actions.appendChild(b);
+      li.appendChild(actions);
+      frag.appendChild(li);
+    });
+    el.hidList.replaceChildren(frag);
+  }
+
+  function showHidden() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
+    S.thread.id = null;
+    setScreen('hidden');
+    if (!hiddenListAvailable()) { location.replace('#/more'); return; }
+    setText(el.hidMsg, '');
+    renderHidden();
+    refreshHidden(false);
+  }
+
+  function resetHidden() {
+    var H = S.hidden;
+    S.hidden = { rows: null, n: null, loading: false, err: '', seq: H.seq + 1, busy: '' };
+    S.hideBusy = false;
+    setText(el.hidMsg, ''); setText(el.hidError, ''); setText(el.hiddenErr, '');
+    el.hidList.replaceChildren();
+    renderHiddenRow();
+  }
+
+  // A lead leaves every list the page holds (this phone hid it, or the live feed says another did). The refetch that follows is the truth.
+  function reachedDropFor(id) {
+    var key = reachedKeyNow();
+    if (!key) return;
+    var raw = store('get', key), e = raw ? L.reachedRead(raw, Date.now()) : null;
+    if (e && e.lead_id === id) store('del', key);   // no "Reached them?" for a lead that is gone from the lists
+  }
+  function dropHiddenLead(id) {
+    if (isStaff() || !L.isUuid(id)) return;
+    S.leads = S.leads.filter(function (l) { return l.lead_id !== id; });
+    if (S.followUps) S.followUps = S.followUps.filter(function (r) { return r.lead_id !== id; });
+    if (S.search.rows) S.search.rows = S.search.rows.filter(function (r) { return r.lead_id !== id; });
+    delete S.seenLocal[id];
+    reachedDropFor(id);
+    renderBadge();
+    renderLeadScreens();
+    if (S.screen === 'list') renderSearch();
+  }
+
+  // Every live event refetches (payloads are not trusted); a hide from another phone also drops the row at once and recounts the More row.
+  function onLiveEvent(payload) {
+    var ev = L.liveHideEvent(payload);
+    if (ev.drop) dropHiddenLead(ev.drop);
+    if (ev.recount) refreshHidden(true);
+    if (ev.drop && (S.screen === 'followups' || S.screen === 'metrics')) refreshPastEvents();
+    scheduleRefresh(400);
+  }
+
+  function renderHiddenBanner(lead) {
+    var hid = !isStaff() && L.isHiddenLead(lead);
+    show(el.hiddenBanner, hid);
+    if (!hid) { setText(el.hiddenErr, ''); return; }
+    setText(el.hiddenBannerText, L.HIDDEN_BANNER);
+    var busy = !!S.hidden.busy;
+    el.hiddenShow.disabled = busy;
+    el.hiddenShow.textContent = busy ? 'Working…' : L.SHOW_AGAIN;
+  }
+
+  // Show it again: from the record's banner, the Hidden leads list or the duplicate sheet. -> Promise<boolean>.
+  function unhideLead(id, from) {
+    var H = S.hidden;
+    if (H.busy || !S.api || typeof S.api.unhideLead !== 'function') return Promise.resolve(false);
+    H.busy = id;
+    setText(el.hiddenErr, ''); setText(el.hidError, ''); setText(el.hidMsg, '');
+    if (S.screen === 'hidden') renderHidden();
+    renderHiddenBanner(S.thread.lead);
+    return Promise.resolve().then(function () { return S.api.unhideLead(id); }).then(function () {
+      H.busy = '';
+      showToast(L.SHOWN_TOAST);
+      return true;
+    }, function (e) {
+      H.busy = '';
+      var er = L.hideError(e, 'unhide');
+      if (from === 'record' || from === 'dup') setText(el.hiddenErr, er.text); else setText(el.hidError, er.text);
+      maybeRecheckAccess(e);
+      return false;
+    }).then(function (done) {
+      if (done && Array.isArray(S.hidden.rows)) S.hidden.rows = S.hidden.rows.filter(function (r) { return r && r.lead_id !== id; });   // drop the row here; the read below corrects it (never a blank screen)
+      else if (done) S.hidden.rows = null;
+      refreshHidden(true);
+      refreshList(); refreshFollowUps();
+      if (id === S.thread.id) refreshThread();
+      if (S.screen === 'hidden') renderHidden();
+      renderHiddenBanner(S.thread.lead);
+      return done;
+    });
+  }
+
+  function openHide() {
+    var lead = S.thread.lead;
+    if (!lead || !hideAvailable() || !L.hideOffered(lead, { staff: isStaff() }) || S.hideBusy || !S.signedIn) return;
+    var v = L.hideConfirmView(lead);
+    show(el.priceBox, false); show(el.reasonBox, false);
+    openSheet({ kind: 'hide', id: lead.lead_id, seen: L.hideSeenArg(lead) }, v.text, v.yes, 'sheet-plain', el.confirmNo);
+    setText(el.confirmNote, v.note);
+  }
+
+  function doHide(c) {
+    if (S.hideBusy) return;
+    var id = c.id;
+    S.hideBusy = true;
+    sheetBusy(true, 'Hiding…');
+    Promise.resolve().then(function () { return S.api.hideLead(id, c.seen); }).then(function () {
+      S.hideBusy = false;
+      if (S.confirming === c) closeConfirm();
+      dropHiddenLead(id);
+      S.hidden.rows = null;
+      S.hidden.n = (typeof S.hidden.n === 'number' ? S.hidden.n : 0) + 1;   // the More row is there at once; the read below corrects the count
+      renderHiddenRow();
+      showToast(L.HIDDEN_TOAST);
+      refreshList(); refreshFollowUps(); refreshHidden(true);
+      if (S.screen === 'thread' && S.thread.id === id) location.hash = listHref();   // the lead is out of the lists: back to where it was opened from
+    }, function (e) {
+      S.hideBusy = false;
+      var er = L.hideError(e, 'hide');
+      if (S.confirming === c) {
+        sheetBusy(false);
+        el.confirmYes.textContent = L.HIDE_YES;
+        setText(el.confirmErr, er.text);
+        if (er.refresh) { el.confirmYes.hidden = true; el.confirmNo.textContent = 'Close'; }   // nothing left to confirm: the lead is read again below
+      }
+      if (er.refresh && id === S.thread.id) refreshThread();
+      maybeRecheckAccess(e);
+    });
+  }
+
+  // B7: "+ Add lead" found a lead the owner hid. The dup sheet asks; "Show it again" then goes on to the normal B7 sheet, "Leave it hidden" changes nothing.
+  function openDupHidden(id, lead, values) {
+    var hv = L.dupHiddenView(lead);
+    S.dup = { id: id, lead: lead, contacted: values.contacted === true, values: values, view: null, hidden: true, busy: false };
+    setText(el.dupTitle, hv.title);
+    setText(el.dupIntro, hv.intro);
+    el.dupLines.replaceChildren();
+    setText(el.dupContacted, ''); setText(el.dupOpt, '');
+    setText(el.dupNote, hv.note);
+    setText(el.dupErr, '');
+    el.dupUpdate.textContent = hv.show;
+    el.dupKeep.textContent = hv.leave;
+    setDupBusy(false);
+    if (typeof el.dupDlg.showModal === 'function') el.dupDlg.showModal();
+    else el.dupDlg.setAttribute('open', '');
+    try { el.dupKeep.focus(); } catch (e) { /* ignore */ }   // neither button is the default: focus starts on the one that changes nothing
+  }
+  function dupShowAgain(d) {
+    setText(el.dupErr, '');
+    setDupBusy(true);
+    var id = d.id;
+    Promise.resolve().then(function () { return S.api.unhideLead(id); }).then(function () {
+      S.hidden.rows = null; refreshHidden(true); refreshList();
+      return Promise.resolve().then(function () { return S.api.fetchThread(id); }).then(function (res) { return res && res.lead; }, function () { return null; });
+    }, function (e) {
+      setDupBusy(false);
+      setText(el.dupErr, L.hideError(e, 'unhide').text);   // the sheet stays: Leave it hidden still works
+      return undefined;
+    }).then(function (lead) {
+      if (lead === undefined) return;   // refused: the sheet is still up
+      var values = d.values || {};
+      S.dup = null;
+      closeDup();
+      showToast(L.SHOWN_TOAST);
+      var view = lead && editAvailable() ? L.dupSheetView(lead, values) : null;
+      if (view && view.lines.length) { openDup(id, lead, values, view); return; }   // the normal B7 sheet, now that it is shown again
+      if (!lead) { openLeadAfterAdd(id, "Shown again. Couldn't check what you typed, so it was not saved."); return; }   // the re-read failed: say so, never drop it silently
+      offerContacted(lead, values.contacted);
+      openLeadAfterAdd(id, L.SHOWN_TOAST);
     });
   }
 
@@ -1663,6 +1936,7 @@
     setScreen('more');
     renderPush();
     loadAskConfig(); // once per sign-in: decides whether the Ask row shows
+    refreshHidden(true); // R5: the Hidden leads (N) row
     refreshFollowUps(); // the held-alert and 9 am text lines in Alerts come from the follow-ups view
     if (P.goAlerts) {   // C7: "Turn on" on the Home banner lands here: bring the Alerts section into view
       P.goAlerts = false;
@@ -2429,6 +2703,7 @@
       case 'quoteAge': return feature('quote') && Number(custom.quoteAgeWarnDays) !== 0;
       case 'forecast': return feature('forecast') && !!L.forecastView(S.forecast);
       case 'value': return feature('value');
+      case 'hideLead': return hideAvailable();   // R5: the Hidden leads step shows only where Hide this lead is on
       case 'money': return feature('money') && !isStaff();   // R7: owner only; the page offers the tick and the reason only where the server has sql/033
       default: return false;
     }
@@ -3094,9 +3369,9 @@
 
   // Remember the screen before More / Help (and the lead record it came from) so a request can say where it was sent from.
   function trackNav(name) {
-    var group = name === 'more' || name === 'support' || name === 'quote' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide';
+    var group = name === 'more' || name === 'support' || name === 'quote' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide' || name === 'hidden';
     var prev = S.nav.cur;
-    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote' || prev === 'export' || prev === 'ask' || prev === 'team' || prev === 'guide';
+    var prevGroup = prev === 'more' || prev === 'support' || prev === 'quote' || prev === 'export' || prev === 'ask' || prev === 'team' || prev === 'guide' || prev === 'hidden';
     if (group && !prevGroup) {
       S.nav.from = prev;
       S.nav.lead = prev === 'lead' && S.thread.id ? { id: S.thread.id, lead: S.thread.lead } : null;
@@ -4138,6 +4413,7 @@
     // Every sheet starts with one button and no note; openConfirm adds the follow-up choice (022).
     el.confirmYes.className = 'btn primary';
     el.confirmAlt.hidden = true;
+    el.confirmYes.hidden = false;
     sheetBusy(false);
     setText(el.confirmNote, '');
     if (typeof el.confirm.showModal === 'function') el.confirm.showModal();
@@ -4206,6 +4482,7 @@
     if (!c) return;
     if (c.kind === 'note') { closeConfirm(); deleteNote(c.id); return; }
     if (c.kind === 'quote-send') { doQuoteSend(c); return; }
+    if (c.kind === 'hide') { doHide(c); return; }
     if (c.kind === 'quote-leave') {
       if (S.quote.adding) return;
       if (followup === 'none') { closeConfirm(); clearQuote(); return; }   // Leave without adding: the page is already where the owner was going
@@ -4408,7 +4685,7 @@
     var lead = S.thread.lead, key = reachedKeyNow(), on = false;
     if (lead && key) {
       var raw = store('get', key);
-      on = RC.back && L.reachedShow(raw, lead, isStaff(), Date.now());
+      on = RC.back && !L.isHiddenLead(lead) && L.reachedShow(raw, lead, isStaff(), Date.now());
       var e = raw ? L.reachedRead(raw, Date.now()) : null;
       if (raw && (!e || (e.lead_id === String(lead.lead_id) && !L.reachedEligible(lead, false)))) store('del', key);   // stale, or the lead has been marked
     }
@@ -4678,6 +4955,7 @@
     if (!lead) {
       sections.forEach(function (n) { show(n, false); });
       show(el.optoutBanner, false);
+      show(el.hiddenBanner, false);
       show(el.recordLoading, !S.thread.loaded);
       return;
     }
@@ -4693,6 +4971,8 @@
     setText(el.recNoauto, L.noAutoLine(lead));
     show(el.recHead, true);
     show(el.btnEdit, editAvailable());   // R4 (A2): owner only, behind features.editLead and a server that has cv_edit_lead
+    show(el.btnHide, hideAvailable() && L.hideOffered(lead, { staff: isStaff() }));   // R5 (A3): owner only, behind features.hideLead, and only while the server says hideable
+    renderHiddenBanner(lead);
     el.optoutBanner.textContent = L.stopBanner(isStaff());   // B2: the owner may still text them; the system will not
     show(el.optoutBanner, L.isOptedOut(lead));
     renderContact(lead);
@@ -5101,6 +5381,7 @@
     resetExport();
     resetAsk();
     resetTeam();
+    resetHidden();
     stopLive();
     clearTimeout(S.refreshTimer);
     S.seq.list++; S.seq.thread++;
@@ -5479,6 +5760,9 @@
     el.addDlg.addEventListener('cancel', function (e) { if (S.addBusy) e.preventDefault(); });
     // Edit details (a lead's page) and the duplicate-add sheet (R4)
     el.btnEdit.addEventListener('click', openEdit);
+    el.btnHide.addEventListener('click', openHide);   // R5 (A3)
+    el.hiddenShow.addEventListener('click', function () { if (S.thread.id) unhideLead(S.thread.id, 'record'); });
+    el.hidReload.addEventListener('click', function () { refreshHidden(false); });
     el.editForm.addEventListener('submit', function (e) { e.preventDefault(); submitEdit(); });
     el.editCancel.addEventListener('click', closeEdit);
     el.editDlg.addEventListener('click', function (e) { if (e.target === el.editDlg && !S.editBusy) closeEdit(); });

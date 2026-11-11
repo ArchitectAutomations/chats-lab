@@ -705,7 +705,8 @@
     'new': 'New lead', engaged: 'Started texting', quoted: 'Quoted', handed_off: 'Asked for you',
     contacted: 'Contacted', booked: 'Booked', lost: 'Lost', opted_out: 'Opted out', reopened: 'Reopened',
     quote_priced: 'Priced by you', quote_sent: 'Quote sent', edited: 'Details edited',
-    deposit: 'Deposit received', deposit_undone: 'Deposit unticked'   // R7 (C5, sql/033): the owner's tick; owner history only
+    deposit: 'Deposit received', deposit_undone: 'Deposit unticked',   // R7 (C5, sql/033): the owner's tick; owner history only
+    hidden: 'Hidden by you', unhidden: 'Shown again by you'   // R5 (A3, sql/034); hideHistoryText words an automatic unhide
   };
   var HISTORY_SOURCES = {
     page: 'from the page', sms: 'by text', text: 'by text', owner_sms: 'by text', bulk: 'bulk clear',
@@ -723,6 +724,8 @@
       var srcE = String(h.source || '').toLowerCase();
       return [lines.length ? lines.join('; ') : HISTORY_ACTIONS.edited, fmtStamp(h.at, now), HISTORY_SOURCES[srcE] || ''].filter(Boolean).join(' \u00b7 ');
     }
+    // R5 (A3): "Hidden by you", "Shown again by you", "Shown again: new activity" (source auto): the words already say who.
+    if (a === 'hidden' || a === 'unhidden') return [hideHistoryText(a, h.source), fmtStamp(h.at, now)].filter(Boolean).join(' \u00b7 ');
     var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
     var s = String(h.source || '').toLowerCase();
     var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
@@ -758,7 +761,7 @@
       return 'Changed ' + (EDIT_LABELS[k] || String(k).replace(/_/g, ' ')) + ': ' + editValue(k, ch[k][0], now) + ' \u2192 ' + editValue(k, ch[k][1], now);
     });
   }
-  var OWNER_ONLY_HISTORY = ['edited', 'deposit', 'deposit_undone'];   // R7: the deposit rows are the owner's money; cv_staff_lead does not send them, and this drops them if one ever arrives
+  var OWNER_ONLY_HISTORY = ['edited', 'deposit', 'deposit_undone', 'hidden', 'unhidden'];   // R7: the deposit rows are the owner's money; cv_staff_lead does not send them, and this drops them if one ever arrives
   // The rows the History list draws: newest first; staff never see an edit or a deposit (old email and phone values are the owner's); an edit that
   // changed several fields becomes one row per field, side by side, so each reads on its own line.
   function historyRows(rows, opts) {
@@ -2070,6 +2073,141 @@
       heading: dupHeading(lead, now), intro: DUP_SHEET.intro, diffs: diffs, lines: diffs.map(dupDiffLine), changes: changes,
       contacted: dupContactedLine(lead, values && values.contacted === true), optedOut: isOptedOut(lead) ? DUP_TEXT.optedOut : ''
     };
+  }
+
+  /* ---------- R5 (A3, sql/034): Hide this lead ----------
+     Owner only. The server decides (lead_detail.hideable: nothing was ever texted to them, the switch is on, the lead is not hidden already);
+     the page only shows what the server offers. A hidden lead is in no list, count or spreadsheet (server side); its record still opens with a
+     banner, and More > Hidden leads lists them with "Show it again". Every word the owner reads for this lives here. */
+  var HIDE_YES = 'Hide this lead';
+  var HIDE_NEW_TEXT = 'They just texted you. Read it first.';
+  var HIDE_CONFIRM_NOTE = 'It leaves every list, count and the spreadsheet. Its history is kept. Undo under More → Hidden leads.';
+  var HIDDEN_BANNER = 'You hid this lead. Show it again?';
+  var SHOW_AGAIN = 'Show it again';
+  var HIDDEN_LEAVE = 'Leave it hidden';
+  var HIDDEN_LABEL = 'Hidden leads';
+  var HIDDEN_EMPTY = 'No hidden leads.';
+  var HIDDEN_EMPTY_HINT = 'A lead you hide from its page, before anything was texted to it, waits here. Show it again any time.';
+  var HIDDEN_LIST_ERROR = "Couldn't load your hidden leads. Try again in a moment.";
+  var HIDDEN_TOAST = 'Lead hidden. Undo under More → Hidden leads.';
+  var SHOWN_TOAST = 'Shown again';
+
+  // Is "Hide this lead" offered? Owner only, the page switch on (opts.on === false = off, or the server has no cv_hide_lead), the server's own flag true,
+  // and not hidden already. A server that does not send the flag (an older database) never offers it.
+  function hideOffered(lead, opts) {
+    var o = opts || {};
+    if (!lead || o.staff || o.on === false) return false;
+    return lead.hideable === true && lead.hidden !== true;
+  }
+  function isHiddenLead(lead) { return !!lead && lead.hidden === true; }
+
+  // The booked money a hide takes out of Metrics: booked_amount, else the quote; '' when not booked or no money.
+  // A booked price of $0 is a real amount (cv_metrics uses coalesce(booked_amount, quote_total)): $0 is named, the quote is not.
+  function hideBookedMoney(lead) {
+    if (!lead || String(lead.status || '').toLowerCase() !== 'booked') return '';
+    var c = toCents(lead.booked_amount);
+    if (c === null) c = toCents(lead.quote_total);
+    return c !== null ? fmtMoney(c / 100) : '';
+  }
+  // Money kept from a cancellation (Lost after booking, kept_amount > 0) also leaves Metrics ("Kept from cancellations"); '' when none.
+  function hideKeptMoney(lead) {
+    if (!lead || String(lead.status || '').toLowerCase() !== 'lost') return '';
+    var c = toCents(lead.kept_amount);
+    return c !== null && c > 0 ? fmtMoney(c / 100) : '';
+  }
+  // The last_inbound_at the page loaded, exactly as received (null when none): cv_hide_lead refuses 'new_text' if they texted after it.
+  function hideSeenArg(lead) { return lead && lead.last_inbound_at !== undefined && lead.last_inbound_at !== '' ? lead.last_inbound_at : null; }
+  // The confirm sheet: { text, note, yes }.
+  function hideConfirmView(lead) {
+    var money = hideBookedMoney(lead), kept = hideKeptMoney(lead);
+    return {
+      text: 'Hide ' + displayName(lead) + '?',
+      note: HIDE_CONFIRM_NOTE + (money ? ' It is booked for ' + money + ', and that leaves Metrics too.' : kept ? ' It was cancelled with ' + kept + ' kept, and that leaves Metrics too.' : ''),
+      yes: HIDE_YES
+    };
+  }
+
+  // cv_hide_lead / cv_unhide_lead failures -> { kind, text, refresh }. refresh = the page may be out of date (read the lead again).
+  // The code is in message (or code 42501), the reason in details. op: 'hide' | 'unhide'.
+  function hideError(err, op) {
+    var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).trim().toLowerCase();
+    var det = String((err && err.details) || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
+    var m = /\b(not_owner|not_allowed|not_found|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(raw);
+    var code = m ? m[1] : (err && String(err.code) === '42501' ? 'not_owner' : '');
+    var why = m ? ((m[2] ? String(m[2]).trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_') : '') || det) : det;
+    if (code === 'not_owner') return { kind: 'not_owner', text: "Your sign-in isn't linked to this business. Sign out, then sign in with your own number.", refresh: false };
+    if (code === 'not_found') return { kind: 'not_found', text: "This lead isn't there any more. Go back to your leads and try again.", refresh: true };
+    if (code === 'not_allowed') {
+      if (why === 'feature_off') return { kind: 'feature_off', text: 'Hiding leads is switched off.', refresh: true };
+      if (why === 'texted') return { kind: 'texted', text: "This lead was texted, so it can't be hidden.", refresh: true };
+      if (why === 'new_text') return { kind: 'new_text', text: HIDE_NEW_TEXT, refresh: true };   // they texted after this screen loaded: read it first, never retried by itself
+      return { kind: 'not_allowed', text: "You can't do that right now.", refresh: true };
+    }
+    if (code === 'bad_input') return { kind: 'bad_input', text: "The page couldn't send that. Reload the page and try again.", refresh: false };
+    var status = err && err.status;
+    if (status === 401 || (err && err.code === 'PGRST301') || /jwt/.test(raw)) return { kind: 'auth', text: SESSION_RAN_OUT, refresh: false };
+    if (/failed to fetch|network|load failed/.test(raw)) return { kind: 'network', text: "Can't reach the server. Check your connection and try again.", refresh: false };
+    return { kind: 'other', text: op === 'unhide' ? "Couldn't show this lead again. Try again in a moment." : "Couldn't hide this lead. Try again in a moment.", refresh: false };
+  }
+  // A read failed because a column is missing (a database older than 034, or older still): PostgREST / Postgres say so in plain words.
+  // Anything else (a network failure, a refused session) is not this.
+  function hideColumnMissing(err) {
+    if (!err) return false;
+    var msg = String(err.message || '');
+    return String(err.code) === '42703' || String(err.code) === 'PGRST204' || /column\b[^]*\bdoes not exist|schema cache/i.test(msg);
+  }
+
+  // History wording (lead_events actions hidden / unhidden; source 'auto' = they texted or filled the form). '' for any other action.
+  // source: page = the owner tapped Show it again; auto = new activity (they texted or filled the form, or your own status text); text (or sms / owner_sms) = the owner's own DONE / BOOKED / LOST text changed its status.
+  function hideHistoryText(action, source) {
+    var a = String(action || '').toLowerCase(), s = String(source || '').toLowerCase();
+    if (a === 'hidden') return 'Hidden by you';
+    if (a !== 'unhidden') return '';
+    if (s === 'auto') return 'Shown again: new activity';   // a text, the form, a hand-off, or your own DONE / BOOKED / LOST / STOP text: the server says only "auto"
+    if (s === 'text' || s === 'sms' || s === 'owner_sms') return 'Shown again: your text changed its status';
+    return 'Shown again by you';
+  }
+
+  // cv_hidden_leads rows -> [{ id, name, meta }] for the list under More. Rows without a usable id are dropped. Order kept (the server sends newest first).
+  function hiddenListView(rows, now) {
+    return (Array.isArray(rows) ? rows : []).filter(function (r) { return r && isUuid(r.lead_id); }).map(function (r) {
+      var when = fmtAgoOn(r.hidden_at, now);
+      var meta = [r.status ? statusInfo(r.status).label : '', fmtEventDate(r.event_date, now), when ? 'Hidden ' + when : 'Hidden'].filter(Boolean).join(' · ');
+      return { id: String(r.lead_id).toLowerCase(), name: displayName(r), meta: meta };
+    });
+  }
+  // The More row: "Hidden leads (3)". n = the count the server gave; null / unknown = the plain label.
+  function hiddenRowLabel(n, base) { var b = String(base || '').trim() || HIDDEN_LABEL; return typeof n === 'number' && n > 0 ? b + ' (' + n + ')' : b; }
+  // The More row is there while at least one lead is hidden (or the count is not known yet and something was hidden this visit); never at 0.
+  function hiddenRowShown(n) { return typeof n === 'number' && n > 0; }
+
+  // B7: the duplicate + Add lead found a lead the owner hid. { title, intro, show, leave, note }. The owner chooses; nothing is shown again by itself.
+  function dupHiddenView(lead, now) {
+    var d = fmtEventDate(lead && lead.event_date, now);
+    return {
+      title: HIDDEN_BANNER,
+      intro: displayName(lead) + ' is already on file' + (d ? ' for ' + d : ' with no event date') + '.',
+      show: SHOW_AGAIN, leave: HIDDEN_LEAVE,
+      note: "Nothing is changed until you choose. Showing it puts it back in your lists."
+    };
+  }
+
+  // Realtime payload (never trusted: any event also refetches). -> { drop: <lead id or ''>, recount }: a leads UPDATE whose new row has hidden_at set, or a
+  // lead_events INSERT 'hidden', takes that lead out of every list at once; anything else (an unhide, any other change) just refetches.
+  function liveHideEvent(payload) {
+    var p = payload && typeof payload === 'object' ? payload : {};
+    var type = String(p.eventType || p.type || '').toUpperCase();
+    var table = String(p.table || '').toLowerCase();
+    var nw = p.new && typeof p.new === 'object' ? p.new : null;
+    var none = { drop: '', recount: false };
+    if (!nw) return none;
+    var id = String(nw.lead_id || nw.id || '').toLowerCase();
+    if (!isUuid(id)) return none;
+    var act = String(nw.action || '').toLowerCase();
+    if (table === 'leads' && (type === 'UPDATE' || type === 'INSERT') && nw.hidden_at) return { drop: id, recount: true };
+    if (table === 'lead_events' && type === 'INSERT' && act === 'hidden') return { drop: id, recount: true };
+    if (table === 'lead_events' && type === 'INSERT' && act === 'unhidden') return { drop: '', recount: true };   // shown again (by a text, the form or another phone): recount the More row
+    return none;
   }
 
   // Where a lead came from, for the record header (Kevin 11-09: every lead, plain words, never a raw key).
@@ -3686,7 +3824,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // Bar = Leads, Follow-ups, Calendar, Metrics (config order); More = Ask your CRM, Quote calculator, How to use the CRM, Help & support, Download spreadsheet (+ the fixed Alerts and Sign out). Lead value is a section inside Metrics, not a tab.
   // slots counts the bar tabs plus the More slot; with fewer than 2 the page hides the bar.
   var BAR_TABS = ['list', 'followups', 'calendar', 'metrics'];
-  var MORE_TABS = ['ask', 'quote', 'guide', 'support', 'export', 'team'];
+  var MORE_TABS = ['ask', 'quote', 'guide', 'support', 'export', 'hidden', 'team'];
   function tabPlan(want, on) {
     var isOn = typeof on === 'function' ? on : function () { return true; };
     var known = BAR_TABS.concat(MORE_TABS);
@@ -3707,7 +3845,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
      own names, filled in here: {tab_<route>} = the tab / More label, {contacted} {booked} {lost} {needs} = the status words ({x_lc} lower case),
      {lost_reasons} and {sources} = the pick-lists. The guide never names a person, and never mentions a feature that is not on. */
   var GUIDE_FLAGS = ['followups', 'calendar', 'metrics', 'quote', 'export', 'ask', 'support', 'supportContact', 'supportNoContact', 'supportSend', 'supportNoSend', 'pastEvents', 'bulk',
-    'addLead', 'search', 'push', 'noQuoteFilter', 'quoteDraft', 'quoteAge', 'forecast', 'value', 'quotePromoEnds', 'exportOff', 'money'];
+    'addLead', 'search', 'push', 'noQuoteFilter', 'quoteDraft', 'quoteAge', 'forecast', 'value', 'quotePromoEnds', 'exportOff', 'money', 'hideLead'];
   var GUIDE = {
     lede: 'Short steps for the jobs you do most. Tap a heading to open it.',
     quickstart: {
@@ -3739,7 +3877,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
         { t: 'Or type a name, phone number or email in the search box at the top (Search name, phone or email).', f: ['search'] },
         { t: 'The No quote button lists open leads with no quote yet. Their rows say No quote sent (this list only).', f: ['noQuoteFilter'] },
         { t: 'Open one and tap Price it in the quote calculator.', f: ['noQuoteFilter', 'quote'] },
-        'At the end of longer lists, tap Show more (it reads like Show 50 more) for the next leads, or Back to top.'
+        { t: 'Leads you hid are not in lists or search: tap More, then Hidden leads.', f: ['hideLead'] },
+        'At the end of longer lists, tap Show more for the next leads, or Back to top.'
       ], note: 'The {lost} button has three parts: {lost}, {old_lead} or {opted_out}.' },
       { id: 'past', title: 'Mark events that already happened', f: ['followups', 'pastEvents'], steps: [
         'Tap {tab_followups}. Did these happen? lists events that have passed with no result recorded.',
@@ -3753,7 +3892,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       { id: 'quote', title: 'Make a quote', f: ['quote'], steps: [
         'Tap More, then {tab_quote}.',
         'Fill in Number of guests, How many hours of service, Portable bar required? and Event city. More details (optional) holds the Event date, Occasion and Promo code.',
-        'Tap Get quote, then Copy quote, or Start a new quote for the next one.',
+        'Tap Get quote, then Copy quote.',
         'From a lead\'s Price it link, tap Add this quote to followed by the lead\'s name to save the price there.',
         { t: 'If your phone closes the app on this screen, open {tab_quote} again: your answers come back (Restored your unfinished quote) for up to 12 hours.', f: ['quoteDraft'] },
         { t: 'If a saved promo has ended, the quote says so and leaves the promo blank.', f: ['quoteDraft', 'quotePromoEnds'] },
@@ -4276,6 +4415,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   function exportHistory(r) {
     var h = (Array.isArray(r.history) ? r.history : []).filter(Boolean).map(function (e) {
       var a = String(e.action || '').toLowerCase();
+      if (a === 'hidden' || a === 'unhidden') return [exportLocal(e.at), hideHistoryText(a, e.source)].filter(Boolean).join(' ');   // R5: never the raw word in the spreadsheet
       var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
       var s = String(e.source || '').toLowerCase();
       var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
@@ -4650,7 +4790,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   // Things a staff member never gets, whatever the config says (the server is the real gate; this keeps the page honest).
-  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team', 'noQuoteFilter', 'quoteDraft', 'guide', 'editLead', 'money'];
+  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team', 'noQuoteFilter', 'quoteDraft', 'guide', 'editLead', 'money', 'hideLead', 'hidden'];
 
   /* ---------- Team (More, owner only): the cv-team Edge Function (team/edge/cv-team) ---------- */
 
@@ -4754,6 +4894,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   function roleFeatureOn(role, perms, features, key) {
     if (!featureOn(features, key)) return false;
     if (key === 'team') return role !== 'staff' && teamFeatureOn(features);   // Team is OFF unless config says exactly true; owner only
+    if (key === 'hidden') return role !== 'staff';   // R5: the Hidden leads list is always reachable for the owner (a hidden lead can always come back, whatever the page's hideLead switch says); the More row still shows only while something is hidden
     if (role !== 'staff') return true;
     var p = perms || {};
     if (STAFF_BLOCKED.indexOf(key) !== -1) return false;
@@ -4887,6 +5028,11 @@ function renderPriceBlockSms(lineItems, total, currency) {
     STAFF_NO_LEADS: STAFF_NO_LEADS,
     STAFF_BLOCKED: STAFF_BLOCKED,
     historyLine: historyLine,
+    hideOffered: hideOffered, hideSeenArg: hideSeenArg, isHiddenLead: isHiddenLead, hideConfirmView: hideConfirmView, hideBookedMoney: hideBookedMoney, hideKeptMoney: hideKeptMoney, hideError: hideError,
+    hideColumnMissing: hideColumnMissing, hideHistoryText: hideHistoryText, hiddenListView: hiddenListView, hiddenRowLabel: hiddenRowLabel, hiddenRowShown: hiddenRowShown,
+    dupHiddenView: dupHiddenView, liveHideEvent: liveHideEvent,
+    HIDE_YES: HIDE_YES, HIDE_NEW_TEXT: HIDE_NEW_TEXT, HIDE_CONFIRM_NOTE: HIDE_CONFIRM_NOTE, HIDDEN_BANNER: HIDDEN_BANNER, SHOW_AGAIN: SHOW_AGAIN, HIDDEN_LABEL: HIDDEN_LABEL, HIDDEN_EMPTY: HIDDEN_EMPTY,
+    HIDDEN_EMPTY_HINT: HIDDEN_EMPTY_HINT, HIDDEN_LIST_ERROR: HIDDEN_LIST_ERROR, HIDDEN_TOAST: HIDDEN_TOAST, SHOWN_TOAST: SHOWN_TOAST,
     sortHistory: sortHistory,
     historyRows: historyRows,
     editLines: editLines,
