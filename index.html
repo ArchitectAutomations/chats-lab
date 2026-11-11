@@ -100,7 +100,7 @@
       <!-- C7: alerts are off on this phone (owner only, push switched on for the client). Shown by renderAlertsBanner(). -->
       <div class="push-banner" id="push-banner" hidden>
         <span class="push-banner-text">Alerts are off on this phone</span>
-        <button type="button" class="btn push-banner-btn" id="push-banner-on">Turn on</button>
+        <button type="button" class="btn primary push-banner-btn" id="push-banner-on">Turn on</button>
       </div>
       <!-- Needs you: the newest few waiting on the owner as one-line rows (round 4, review r4 item 3), "See all" for the rest, and
            "N waiting over a day" when the older ones are not in the block (review r4 item 4). Built by renderNeeds(). -->
@@ -220,6 +220,18 @@
             </div>
           </div>
           <p class="alerts-msg" id="alerts-msg" role="status" aria-live="polite" hidden></p>
+        </section>
+        <!-- Text size: a viewer preference saved on this device only (localStorage), never lead data. Always shown. -->
+        <section class="rec-card textsize" id="textsize">
+          <fieldset class="textsize-box">
+            <legend class="rec-h" id="textsize-h">Text size</legend>
+            <div class="seg">
+              <label class="seg-opt"><input type="radio" name="text-size" value="normal"><span>Normal</span></label>
+              <label class="seg-opt"><input type="radio" name="text-size" value="large"><span>Large</span></label>
+              <label class="seg-opt"><input type="radio" name="text-size" value="larger"><span>Larger</span></label>
+            </div>
+          </fieldset>
+          <p class="rec-note">Makes the words bigger on this phone only.</p>
         </section>
         <ul class="more-list">
           <li>
@@ -548,8 +560,8 @@
           <p class="rec-note" id="contact-note" hidden></p>
           <div class="reached" id="rec-reached" role="group" aria-label="Reached them?" hidden>
             <p class="reached-q">Reached them?</p>
-            <button type="button" class="btn reached-btn" id="reached-yes">Mark contacted</button>
-            <button type="button" class="btn reached-btn reached-no" id="reached-no">Not yet</button>
+            <button type="button" class="btn primary reached-btn" id="reached-yes">Mark contacted</button>
+            <button type="button" class="btn quiet reached-btn reached-no" id="reached-no">Not yet</button>
           </div>
         </div>
 

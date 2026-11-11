@@ -47,6 +47,9 @@
     });
     return api;
   }
+  // Text size (More > Text size): applied FIRST, before any screen is shown, so the first text that paints is already at the saved size
+  // (every screen ships `hidden`; nothing paints until boot). The CSP allows no inline script, so this is the earliest place.
+  var TEXT_SIZE = L.textSizeApply(document.documentElement, L.textSizeLoad());
   applyTheme(custom.theme);
   var host = location.hostname;
   var isLocal = location.protocol === 'file:' || host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
@@ -5123,6 +5126,19 @@
     el.alertsTest.addEventListener('click', onAlertsTest);
     el.alertsOff.addEventListener('click', onAlertsOff);
     el.pushBannerOn.addEventListener('click', function () { P.goAlerts = true; location.hash = navFor('more').href; });
+
+    // Text size: the three radios in More. The choice applies at once and is saved on this device (a failed save is silent).
+    var tsBox = $('textsize');
+    if (tsBox && tsBox.querySelectorAll) {
+      Array.prototype.forEach.call(tsBox.querySelectorAll('input[name="text-size"]'), function (r) {
+        r.checked = r.value === TEXT_SIZE;
+        r.addEventListener('change', function () {
+          if (!r.checked) return;
+          TEXT_SIZE = L.textSizeApply(document.documentElement, r.value);
+          L.textSizeSave(TEXT_SIZE);
+        });
+      });
+    }
 
     el.signout.addEventListener('click', doSignOut);
     el.roleSignout.addEventListener('click', doSignOut);

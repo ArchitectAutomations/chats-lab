@@ -2045,6 +2045,37 @@
     return Object.keys(errors).length ? { ok: false, errors: errors } : { ok: true, body: body };
   }
 
+  /* ---------- text size (More > Text size, C8) ----------
+     A viewer preference, not lead data: ONE localStorage key on this device, one of three words. Anything else (missing, junk, storage blocked or
+     throwing) reads as Normal; a failed save is silent (the choice still applies until the page closes). It survives sign-out on purpose: it is
+     about the phone, not the person. page/styles.css turns the word into --type-scale (1 / 1.15 / 1.3) on <html data-text-size>. */
+  var TEXT_SIZE_KEY = 'cv_text_size_v1';
+  var TEXT_SIZES = ['normal', 'large', 'larger'];
+  function textSizeNormalize(v) { return typeof v === 'string' && TEXT_SIZES.indexOf(v) >= 0 ? v : 'normal'; }
+  // store = a localStorage-like { getItem, setItem }; omitted = the browser's. Reading the property itself can throw (blocked site data).
+  function textSizeStore(store) {
+    if (store) return store;
+    try { return typeof localStorage === 'undefined' ? null : localStorage; } catch (e) { return null; }
+  }
+  function textSizeLoad(store) {
+    try { var s = textSizeStore(store); return s ? textSizeNormalize(s.getItem(TEXT_SIZE_KEY)) : 'normal'; } catch (e) { return 'normal'; }
+  }
+  // -> true when saved. Normal removes the key (nothing to remember).
+  function textSizeSave(v, store) {
+    try {
+      var s = textSizeStore(store); if (!s) return false;
+      v = textSizeNormalize(v);
+      if (v === 'normal') { if (s.removeItem) s.removeItem(TEXT_SIZE_KEY); else s.setItem(TEXT_SIZE_KEY, v); } else s.setItem(TEXT_SIZE_KEY, v);
+      return true;
+    } catch (e) { return false; }
+  }
+  // Put the choice on the root element (<html>). A page with no root (a test rig) is left alone. -> the word applied.
+  function textSizeApply(root, v) {
+    v = textSizeNormalize(v);
+    try { if (root && root.setAttribute) root.setAttribute('data-text-size', v); } catch (e) { /* ignore */ }
+    return v;
+  }
+
   /* ---------- quote calculator draft (gap 2) ----------
      The unfinished calculator form is kept in localStorage so an app the phone killed mid-quote does not lose it. It holds the form
      fields and at most a lead id: NEVER a phone, a name, a message or a price. One key per signed-in user, 12 hours, removed on sign-out,
@@ -4429,6 +4460,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
     quoteDraftRead: quoteDraftRead,
     quoteDraftBlank: quoteDraftBlank,
     QDRAFT_PREFIX: QDRAFT_PREFIX,
+    TEXT_SIZE_KEY: TEXT_SIZE_KEY, TEXT_SIZES: TEXT_SIZES,
+    textSizeNormalize: textSizeNormalize, textSizeLoad: textSizeLoad, textSizeSave: textSizeSave, textSizeApply: textSizeApply,
     QDRAFT_TTL_MS: QDRAFT_TTL_MS,
     actions: actions,
     confirmText: confirmText,
