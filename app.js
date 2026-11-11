@@ -29,7 +29,7 @@
   var API_NAMES = {
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
     setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
-    quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test',
+    quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test', markSeen: 'cv_mark_seen', pushStatus: 'cv_push_status',
     supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', exportConfig: 'cv_config', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
   };
   function trackApi(api) {
@@ -134,7 +134,7 @@
     more: $('screen-more'), moreList: $('more-list'), moreBrand: $('more-brand'),
     needs: $('needs'), needsTitle: $('needs-title'), needsCount: $('needs-count'), needsList: $('needs-list'), filterNote: $('filter-note'),
     alerts: $('alerts'), alertsText: $('alerts-text'), alertsOn: $('alerts-on'), alertsRow: $('alerts-row'),
-    alertsHead: $('alerts-h'), alertsInfo: $('alerts-info'), alertsSum: $('alerts-sum'), alertsBody: $('alerts-body'), alertsTest: $('alerts-test'), alertsOff: $('alerts-off'), alertsMsg: $('alerts-msg'),
+    alertsHead: $('alerts-h'), alertsInfo: $('alerts-info'), alertsSum: $('alerts-sum'), alertsSumState: $('alerts-sum-state'), pushBanner: $('push-banner'), pushBannerOn: $('push-banner-on'), alertsBody: $('alerts-body'), alertsTest: $('alerts-test'), alertsOff: $('alerts-off'), alertsMsg: $('alerts-msg'),
     topbar: $('topbar'), back: $('btn-back'), title: $('title'), subtitle: $('subtitle'),
     live: $('live'), liveText: $('live-text'),
     roleScreen: $('screen-role'), roleTitle: $('role-title'), roleText: $('role-text'), roleRetry: $('role-retry'), roleSignout: $('role-signout'),
@@ -184,7 +184,7 @@
     addGuests: $('add-guests'), addArea: $('add-area'), addOccasion: $('add-occasion'), addContacted: $('add-contacted'),
     addEmail: $('add-email'), addSourceChips: $('add-source-chips'), addErr: $('add-error'), addSubmit: $('add-submit'), addCancel: $('add-cancel'),
     addDup: $('add-dup'), addDupList: $('add-dup-list'), addDupMore: $('add-dup-more'), addDupSame: $('add-dup-same'), addDupOpt: $('add-dup-opt'),
-    recSource: $('rec-source'), recNoauto: $('rec-noauto'), recPrice: $('rec-price'), priceLink: $('price-link'),
+    recSource: $('rec-source'), recNewText: $('rec-newtext'), recNoauto: $('rec-noauto'), recPrice: $('rec-price'), priceLink: $('price-link'),
     strip: $('strip'), stripChip: $('strip-chip'), sysFold: $('sys-fold'), hNotes: $('h-notes'),
     recordLoading: $('record-loading'), recHead: $('rec-head'), recName: $('rec-name'), recNext: $('rec-next'), recJob: $('rec-job'), recPhone: $('rec-phone'), recHistory: $('rec-history'),
     optoutBanner: $('optout-banner'), recContact: $('rec-contact'),
@@ -204,7 +204,7 @@
   var split = window.matchMedia('(min-width: 1200px)');
 
   function emptyThread(id) {
-    return { id: id || null, lead: null, rows: [], history: null, loaded: false, sig: '', count: 0, sysOpen: false };
+    return { id: id || null, lead: null, rows: [], history: null, loaded: false, sig: '', count: 0, sysOpen: false, newText: false };
   }
 
   var S = {
@@ -219,6 +219,7 @@
     listLoaded: false,
     listError: '',
     thread: emptyThread(),
+    seenLocal: {},       // C1: lead ids opened this session whose "New text" dot is cleared here (true = call in flight, 'done' = server answered)
     live: 'off',
     liveTimer: null,
     stopLive: null,
@@ -580,6 +581,9 @@
       },
       pushUnsubscribe: function (endpoint) { return client.rpc('cv_push_unsubscribe', { p_endpoint: endpoint }).then(ok); },
       pushTest: function () { return client.rpc('cv_push_test').then(ok); },
+      // R8: the server's view of this phone's alert subscription (compared by hash server side), and "the owner opened this lead" (C1).
+      pushStatus: function (endpoint) { return client.rpc('cv_push_status', { p_endpoint: endpoint }).then(ok); },
+      markSeen: function (id) { return client.rpc('cv_mark_seen', { p_lead_id: id }).then(ok); },
       // Help & support (owner-only RPCs, sql/012): config, send, the owner's own requests.
       supportConfig: function () { return client.rpc('cv_support_config').then(ok); },
       supportSubmit: function (args) { return client.rpc('cv_support_submit', args).then(ok); },
@@ -878,10 +882,12 @@
     }
     // Round 4: the server's counts ride along (owner only); a failed count falls back to counting the rows here.
     var counts = typeof S.api.listCounts === 'function' ? Promise.resolve().then(function () { return S.api.listCounts(); }).catch(function () { return null; }) : null;
+    var seenDone = Object.keys(S.seenLocal).filter(function (k) { return S.seenLocal[k] === 'done'; });   // answered before this fetch began: this fetch is the truth for them
     return Promise.all([S.api.fetchList(), counts]).then(function (res) {
       var rows = res[0];
       if (n !== S.seq.list || !S.signedIn) return;
-      S.leads = L.sortLeads(rows);
+      S.leads = L.sortLeads(isStaff() ? rows : L.clearUnseen(rows, S.seenLocal));   // C1: an in-flight "seen" keeps its dot cleared
+      seenDone.forEach(function (k) { if (S.seenLocal[k] === 'done') delete S.seenLocal[k]; });
       S.counts = res[1] || null;
       S.listLoaded = true;
       S.listError = '';
@@ -910,6 +916,16 @@
       S.optedAt = Date.now();
       if (L.setOptedOutPhones(S.optedPhones)) renderLeadScreens();
     }).catch(function () { /* keep what was known */ }).then(function () { S.optedBusy = false; });
+  }
+
+  // C1: opening a lead tells the server the owner has seen its texts (owner only), once per visit. Silent: a failure never shows or blocks;
+  // the dot is cleared here at once and the next list load says what the server says.
+  function markLeadSeen(id) {
+    if (!L.markSeenWanted(id, isStaff()) || !S.api || typeof S.api.markSeen !== 'function') return;
+    S.seenLocal[id] = true;
+    S.leads = L.clearUnseen(S.leads, S.seenLocal);
+    Promise.resolve().then(function () { return S.api.markSeen(id); })
+      .then(function () { if (S.seenLocal[id]) S.seenLocal[id] = 'done'; }, function () { delete S.seenLocal[id]; });
   }
 
   function refreshThread() {
@@ -1175,7 +1191,14 @@
     var a = make('a', 'lead-row' + (opts.needs ? ' is-needs' : '') + (opts.call ? ' has-call' : '') + (opts.cls ? ' ' + opts.cls : ''));
     a.href = '#/lead/' + encodeURIComponent(lead.lead_id);
     var top = make('span', 'row-top');
-    top.appendChild(make('span', 'lead-name', v.name));
+    var nameEl = make('span', 'lead-name', v.name);
+    // C1: a small dot (with a spoken label, so it is not colour alone) when a customer texted since the owner last opened the lead. Owner only.
+    if (L.newTextOn(lead, isStaff())) {
+      var dot = make('span', 'new-dot');
+      dot.setAttribute('role', 'img'); dot.setAttribute('aria-label', L.NEW_TEXT_LABEL); dot.title = L.NEW_TEXT_LABEL;
+      nameEl.insertBefore(dot, nameEl.firstChild);
+    }
+    top.appendChild(nameEl);
     if (v.money) top.appendChild(make('span', 'lead-money', v.money));
     a.appendChild(top);
     a.appendChild(make('span', 'row-job', v.job));
@@ -1391,6 +1414,7 @@
   }
 
   function showList() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);   // texts that came in while this lead was open were read: no dot for them
     S.thread.id = null;
     setScreen('list');
     renderList();
@@ -1407,11 +1431,16 @@
   /* ---------- More ---------- */
 
   function showMore() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('more');
     renderPush();
     loadAskConfig(); // once per sign-in: decides whether the Ask row shows
     refreshFollowUps(); // the held-alert and 9 am text lines in Alerts come from the follow-ups view
+    if (P.goAlerts) {   // C7: "Turn on" on the Home banner lands here: bring the Alerts section into view
+      P.goAlerts = false;
+      requestAnimationFrame(function () { if (S.screen === 'more' && !el.alerts.hidden) el.alerts.scrollIntoView({ block: 'start' }); });
+    }
   }
 
   /* ---------- quote calculator ---------- */
@@ -1951,6 +1980,7 @@
   }
 
   function showQuote() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('quote');
     var pre = S.quotePrefill;
@@ -2132,6 +2162,7 @@
   }
 
   function showExport() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('export');
     renderExportOff();
@@ -2219,6 +2250,7 @@
   }
 
   function showGuide() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('guide');
     if (!guideAvailable()) { location.replace('#/more'); return; }
@@ -2413,6 +2445,7 @@
   }
 
   function showAsk() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('ask');
     var a = S.ask;
@@ -2507,6 +2540,7 @@
   }
 
   function showTeam() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('team');
     if (!teamAvailable()) { location.replace('#/more'); return; }
@@ -2806,6 +2840,7 @@
   }
 
   function showSupport() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('support');
     renderSupport();
@@ -2990,6 +3025,7 @@
   }
 
   function showCalendar() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('calendar');
     renderCalendar();
@@ -3428,6 +3464,7 @@
   }
 
   function showFollowUps() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('followups');
     renderFollowUps();
@@ -3698,6 +3735,7 @@
   }
 
   function showMetrics() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
     setScreen('metrics');
     renderMetrics();
@@ -4320,6 +4358,7 @@
     // Date and guests live in the Event card; the header keeps the one figure (owner only, staff stay money-free).
     setText(el.recJob, isStaff() ? '' : L.headMoney(lead));
     fillSource(lead);
+    show(el.recNewText, !isStaff() && S.thread.newText === true);
     setText(el.recNoauto, L.noAutoLine(lead));
     show(el.recHead, true);
     el.optoutBanner.textContent = L.stopBanner(isStaff());   // B2: the owner may still text them; the system will not
@@ -4503,6 +4542,8 @@
     setScreen('thread');
     if (S.thread.id !== id) {
       S.thread = emptyThread(id);
+      S.thread.newText = L.newTextOn(L.leadIndex(S.leads)[id], isStaff());   // C1: the "New text" line stays for this visit; the dot is cleared below
+      markLeadSeen(id);
       S.pending = null;
       S.historyOpen = false;
       closeFullSilently();
@@ -4718,7 +4759,8 @@
     // Session ended (expiry, other tab): drop this phone's browser subscription locally. The server call may no longer be authorised;
     // a leftover server row is removed on the push service's next 404/410.
     if (P.sub) { try { Promise.resolve(P.sub.unsubscribe()).catch(function () { /* ignore */ }); } catch (e) { /* ignore */ } }
-    P.seq++; P.cfg = null; P.sub = null; P.busy = false; P.open = false; pushMsg(''); renderPush();
+    S.seenLocal = {};
+    P.seq++; P.cfg = null; P.sub = null; P.subKnown = false; P.status = null; P.busy = false; P.goAlerts = false; P.open = false; pushMsg(''); renderPush();
     clearStoredTargets();
     resetSupport();
     resetExport();
@@ -4839,7 +4881,7 @@
   /* ---------- alerts on this phone (push) ---------- */
 
   // Service worker: registered at page load (harmless when push is off). It shows notifications and, offline only, a fixed "No signal" page for page opens; it caches and stores nothing.
-  var P = { open: false, cfg: null, sub: null, busy: false, seq: 0, reg: Promise.resolve(null) };
+  var P = { open: false, cfg: null, sub: null, subKnown: false, status: null, busy: false, seq: 0, reg: Promise.resolve(null), goAlerts: false };   // status = cv_push_status answer (cleaned) or null
   function registerWorker() {
     if (!('serviceWorker' in navigator)) return;
     P.reg = navigator.serviceWorker.register('sw.js', { scope: '/' }).catch(function () { return null; });
@@ -4851,6 +4893,7 @@
     var ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     var standalone = navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
     var env = {
+      staff: isStaff(), subKnown: P.subKnown, status: P.status,
       featureOn: HAS_PUSH, serverEnabled: P.cfg ? P.cfg.enabled : null, ios: ios, standalone: standalone,
       supported: pushSupported(), permission: 'Notification' in window ? Notification.permission : 'default', subscribed: !!P.sub
     };
@@ -4877,10 +4920,16 @@
     return [L.heldLine(g.held), L.digestLine(g.digest)].filter(Boolean).map(function (t) { return t + '.'; });
   }
 
-  function renderPush() {
+  // C7: Home banner "Alerts are off on this phone" + Turn on (to the alerts setup in More). Rules: L.pushBannerShow.
+  function renderAlertsBanner() {
+    show(el.pushBanner, !isStaff() && L.pushBannerShow(pushEnv()));
+  }
+  function renderPush() { renderPushPanel(); renderAlertsBanner(); }
+
+  function renderPushPanel() {
     if (isStaff()) { show(el.alerts, false); return; }   // alerts and the owner's text list are owner-only
     var st = L.pushState(pushEnv());
-    var info = alertInfoLines();
+    var info = L.pushServerLines(P.status).concat(alertInfoLines());   // C7: what the server says about this phone first
     var f = document.createDocumentFragment();
     info.forEach(function (t) { f.appendChild(make('p', 'alerts-info', t)); });
     el.alertsInfo.replaceChildren(f);
@@ -4897,9 +4946,12 @@
     // Switched on: one line ("Alerts on this phone  On"); the text, test button and Turn off open on a tap.
     var on = st === 'on';
     if (!on) P.open = false;
+    var sumState = L.pushSumState(P.status);
+    setText(el.alertsSumState, sumState);
+    var shut = on && !P.open && sumState === 'On';   // a phone the server cannot reach opens its details, so the fix and Send test alert are in view
     show(el.alertsSum, on);
-    el.alertsSum.setAttribute('aria-expanded', String(on && P.open));
-    show(el.alertsBody, !on || P.open);
+    el.alertsSum.setAttribute('aria-expanded', String(on && !shut));
+    show(el.alertsBody, !shut);
     show(el.alertsHead, !on);
     show(el.alertsOn, st === 'off');
     show(el.alertsRow, on);
@@ -4907,7 +4959,7 @@
   }
 
   function loadPush() {
-    P.sub = null;
+    P.sub = null; P.subKnown = false; P.status = null;
     if (!HAS_PUSH || !S.api || !S.api.pushConfig) { renderPush(); return; }
     var seq = ++P.seq;
     Promise.resolve().then(function () { return S.api.pushConfig(); })
@@ -4918,11 +4970,27 @@
         if (!cfg || cfg.enabled !== true || !pushSupported()) { renderPush(); return; }
         // Never wait forever on the worker: after 4 s the panel shows as "not subscribed".
         var lookup = P.reg.then(function (reg) { return reg ? reg.pushManager.getSubscription() : null; });
-        var giveUp = new Promise(function (res) { setTimeout(function () { res(null); }, 4000); });
+        var TIMED_OUT = {};   // a timeout or an error is "unknown", not "no subscription": the banner must not claim alerts are off
+        var giveUp = new Promise(function (res) { setTimeout(function () { res(TIMED_OUT); }, 4000); });
         return Promise.race([lookup, giveUp])
-          .catch(function () { return null; })
-          .then(function (sub) { if (seq === P.seq) { P.sub = sub; renderPush(); } });
+          .catch(function () { return TIMED_OUT; })
+          .then(function (sub) {
+            if (seq !== P.seq) return;
+            var known = sub !== TIMED_OUT;
+            P.sub = known ? sub : null; P.subKnown = known; renderPush(); loadPushStatus();
+          });
       });
+  }
+
+  // C7: ask the server whether it can reach THIS phone. Owner only, and only when the phone has a local subscription. Any error = no
+  // server part (the banner and the Alerts lines stay quiet about it); it never blocks anything.
+  function loadPushStatus() {
+    var fake = MOCK && qs.get('pushenv') === 'on';   // mock only: ?pushenv=on pretends this phone is subscribed
+    if (isStaff() || !HAS_PUSH || (!P.sub && !fake) || !S.api || typeof S.api.pushStatus !== 'function') return;
+    var seq = P.seq, endpoint = P.sub ? P.sub.endpoint : 'https://mock.invalid/push';
+    Promise.resolve().then(function () { return S.api.pushStatus(endpoint); })
+      .then(function (r) { return L.pushStatusClean(r); }, function () { return null; })
+      .then(function (st) { if (seq === P.seq) { P.status = st; renderPush(); } });
   }
 
   // Sign-out: tell the server, then drop the browser subscription. Resolves whatever happens.
@@ -4959,9 +5027,10 @@
       if (!k) throw {};
       return S.api.pushSubscribe(k, navigator.userAgent || '');
     }).then(function () {
-      P.sub = created;
+      P.sub = created; P.subKnown = true; P.status = null;
       pushBusy(false);
       pushMsg('Alerts are on.');
+      loadPushStatus();
     }).catch(function (e) {
       if (created) { try { created.unsubscribe(); } catch (x) { /* ignore */ } }
       P.sub = null;
@@ -4975,7 +5044,7 @@
     pushMsg('');
     pushBusy(true);
     Promise.resolve().then(function () { return S.api.pushTest(); }).then(function (r) {
-      pushBusy(false); pushMsg(L.pushTestMessage(r), !(r && r.ok === true));
+      pushBusy(false); pushMsg(L.pushTestMessage(r), !(r && r.ok === true)); loadPushStatus();
     }, function () { pushBusy(false); pushMsg(L.pushTestMessage(null), true); });
   }
 
@@ -4985,7 +5054,7 @@
     pushMsg('');
     pushBusy(true);
     Promise.resolve(sub.unsubscribe()).catch(function () { /* the server call below still runs */ })
-      .then(function () { P.sub = null; return S.api.pushUnsubscribe(endpoint); })
+      .then(function () { P.sub = null; P.status = null; return S.api.pushUnsubscribe(endpoint); })
       .then(function () { pushBusy(false); pushMsg('Alerts are off on this phone.'); },
         function () { pushBusy(false); pushMsg("Alerts are off on this phone. We couldn't tell the server, so it may still try once.", true); });
   }
@@ -5012,6 +5081,7 @@
     el.alertsOn.addEventListener('click', onAlertsOn);
     el.alertsTest.addEventListener('click', onAlertsTest);
     el.alertsOff.addEventListener('click', onAlertsOff);
+    el.pushBannerOn.addEventListener('click', function () { P.goAlerts = true; location.hash = navFor('more').href; });
 
     el.signout.addEventListener('click', doSignOut);
     el.roleSignout.addEventListener('click', doSignOut);

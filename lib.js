@@ -1867,6 +1867,62 @@
     return 'No phone is signed up for alerts yet. Turn alerts on first.';
   }
 
+  /* ---------- R8: "New text" marker (C1) and the "Alerts are off" banner (C7) ---------- */
+
+  // C1: lead_list.unseen_text is true when a contacted / booked / lost / won / dormant customer texted since the owner last opened
+  // the lead (or opted back in with START). Owner only: a staff sign-in never shows the marker and never marks anything seen.
+  var NEW_TEXT_LABEL = 'New text';
+  function newTextOn(lead, staff) { return !staff && !!lead && lead.unseen_text === true; }
+  // Does opening this lead call cv_mark_seen? Owner only, and only for a real uuid.
+  function markSeenWanted(id, staff) { return !staff && isUuid(id); }
+  // The list rows with the marker cleared locally for these ids (a new array; rows that do not change are the same objects).
+  function clearUnseen(rows, ids) {
+    return (Array.isArray(rows) ? rows : []).map(function (r) {
+      return r && r.unseen_text === true && ids && ids[r.lead_id] ? Object.assign({}, r, { unseen_text: false }) : r;
+    });
+  }
+
+  // C7: cv_push_status answer -> { push_on, device, working_devices } or null (an error or an odd answer = no server part).
+  function pushStatusClean(r) {
+    if (!r || typeof r !== 'object') return null;
+    var d = r.device === 'ok' || r.device === 'failing' || r.device === 'missing' ? r.device : null;
+    if (!d) return null;
+    var n = typeof r.working_devices === 'number' && r.working_devices >= 0 ? Math.floor(r.working_devices) : 0;
+    return { push_on: r.push_on === true, device: d, working_devices: n };
+  }
+
+  // Show the Home banner? env = { featureOn, staff, serverEnabled, supported, permission, subscribed, subKnown, status }.
+  // Owner mode only, the client's push switch on (feature + server), a browser that can do push at all, and either the phone side
+  // is not set up (permission not granted, or no local subscription) or the server says this phone is missing or failing.
+  // The server part is quiet when cv_push_status gave nothing (status null).
+  function pushBannerShow(env) {
+    env = env || {};
+    if (env.staff || env.featureOn !== true || env.serverEnabled !== true || !env.supported) return false;
+    if (env.permission !== 'granted') return true;
+    if (!env.subKnown) return false;   // the local subscription has not been looked up yet: no flash
+    if (!env.subscribed) return true;
+    var st = env.status;
+    return !!st && st.push_on === true && (st.device === 'missing' || st.device === 'failing');
+  }
+  var PUSH_BANNER = { text: 'Alerts are off on this phone', action: 'Turn on' };
+
+  // More > Alerts: what the server says about this phone and the owner's phones, in plain words. [] when it said nothing.
+  function pushServerLines(status) {
+    var s = pushStatusClean(status);
+    if (!s || !s.push_on) return [];
+    var out = [];
+    if (s.device === 'ok') out.push('This phone: alerts are working.');
+    else if (s.device === 'failing') out.push('This phone: alerts are failing. Turn alerts off, then on again.');
+    else out.push('This phone: not signed up for alerts yet. Tap Turn on alerts.');
+    out.push(s.working_devices === 0 ? 'No phone is getting alerts right now.' : s.working_devices === 1 ? '1 phone is getting alerts.' : s.working_devices + ' phones are getting alerts.');
+    return out;
+  }
+  // The word on the collapsed "Alerts on this phone" line: "On", or "Not working" when the server cannot reach this phone.
+  function pushSumState(status) {
+    var s = pushStatusClean(status);
+    return s && s.push_on && (s.device === 'failing' || s.device === 'missing') ? 'Not working' : 'On';
+  }
+
   /* ---------- quote calculator (Edge Function cv-quote) ---------- */
 
   var PLACE_RE = /^[\p{L}\p{M}0-9 .,'()&\/-]{2,80}$/u;
@@ -4424,6 +4480,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
     pushSubKeys: pushSubKeys,
     pushPayload: pushPayload,
     pushTestMessage: pushTestMessage,
+    NEW_TEXT_LABEL: NEW_TEXT_LABEL, newTextOn: newTextOn, markSeenWanted: markSeenWanted, clearUnseen: clearUnseen,
+    pushStatusClean: pushStatusClean, pushBannerShow: pushBannerShow, PUSH_BANNER: PUSH_BANNER, pushServerLines: pushServerLines, pushSumState: pushSumState,
     appName: appName,
     shortName: shortName,
     quoteRequest: quoteRequest,

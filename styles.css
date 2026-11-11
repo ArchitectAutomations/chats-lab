@@ -1152,3 +1152,15 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 /* R2 / D3: the Lost chip's toggle (Lost / Old lead / Opted out): three pills that wrap rather than overflow at 320 px. */
 .lost-parts { flex-wrap: wrap; }
 .lost-parts .filter.filter-extra { flex: 1 1 auto; padding: 4px 10px; gap: 6px; justify-content: center; }
+
+/* R8 C1: "New text" marker. Row: a small dot before the name (spoken label on it); lead page: the dot + the words (never colour alone). */
+.new-dot { display: inline-block; flex: none; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; background: var(--accent-strong); box-shadow: 0 0 0 2px var(--accent-tint); vertical-align: baseline; }
+.rec-newtext { display: flex; align-items: center; margin: var(--sp-1) 0 0; font-size: var(--fs-sm); font-weight: 700; color: var(--on-primary); }
+.rec-newtext .new-dot { background: var(--accent-light); box-shadow: none; }
+
+/* R8 C7: Home banner when alerts are off on this phone. */
+.push-banner { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); max-width: var(--content); margin: var(--sp-3) calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left)); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); background: var(--secondary-deep); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 650; }
+.push-banner[hidden] { display: none; }
+.push-banner-btn { flex: none; min-height: 44px; }
+.rec-newtext[hidden] { display: none; }
+@media (min-width: 784px) { .push-banner { margin-left: auto; margin-right: auto; } }

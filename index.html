@@ -97,6 +97,11 @@
         <ul class="lead-list" id="search-results" aria-label="Search results" hidden></ul>
       </div>
       <div id="browse-box">
+      <!-- C7: alerts are off on this phone (owner only, push switched on for the client). Shown by renderAlertsBanner(). -->
+      <div class="push-banner" id="push-banner" hidden>
+        <span class="push-banner-text">Alerts are off on this phone</span>
+        <button type="button" class="btn push-banner-btn" id="push-banner-on">Turn on</button>
+      </div>
       <!-- Needs you: the newest few waiting on the owner as one-line rows (round 4, review r4 item 3), "See all" for the rest, and
            "N waiting over a day" when the older ones are not in the block (review r4 item 4). Built by renderNeeds(). -->
       <section class="needs" id="needs" aria-labelledby="needs-h" hidden>
@@ -201,7 +206,7 @@
           <!-- Once alerts are on, the section is this one line (tap to open the details). -->
           <button type="button" class="alerts-sum" id="alerts-sum" aria-expanded="false" aria-controls="alerts-body" hidden>
             <span class="alerts-sum-label">Alerts on this phone</span>
-            <span class="alerts-sum-state">On</span>
+            <span class="alerts-sum-state" id="alerts-sum-state">On</span>
             <svg class="alerts-sum-chev" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
           <div class="alerts-body" id="alerts-body">
@@ -525,6 +530,7 @@
             <span class="chip" id="strip-chip"></span>
             <p class="rec-next" id="rec-next" hidden></p>
           </div>
+          <p class="rec-newtext" id="rec-newtext" hidden><span class="new-dot" aria-hidden="true"></span><span>New text</span></p>
           <p class="rec-job" id="rec-job" hidden></p>
           <p class="rec-source" id="rec-source" hidden></p>
           <p class="rec-noauto" id="rec-noauto" hidden></p>
