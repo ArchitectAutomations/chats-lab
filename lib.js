@@ -670,7 +670,7 @@
   var HISTORY_ACTIONS = {
     'new': 'New lead', engaged: 'Started texting', quoted: 'Quoted', handed_off: 'Asked for you',
     contacted: 'Contacted', booked: 'Booked', lost: 'Lost', opted_out: 'Opted out', reopened: 'Reopened',
-    quote_priced: 'Priced by you', quote_sent: 'Quote sent'
+    quote_priced: 'Priced by you', quote_sent: 'Quote sent', edited: 'Details edited'
   };
   var HISTORY_SOURCES = {
     page: 'from the page', sms: 'by text', text: 'by text', owner_sms: 'by text', bulk: 'bulk clear',
@@ -682,11 +682,58 @@
   function historyLine(h, now) {
     if (!h) return '';
     var a = String(h.action || '').toLowerCase();
+    // R4 (A2): an owner's edit reads "Changed date: Jun 12 \u2192 Jun 19". Owner only: callers drop these rows for staff (historyRows).
+    if (a === 'edited') {
+      var lines = editLines(h, now);
+      var srcE = String(h.source || '').toLowerCase();
+      return [lines.length ? lines.join('; ') : HISTORY_ACTIONS.edited, fmtStamp(h.at, now), HISTORY_SOURCES[srcE] || ''].filter(Boolean).join(' \u00b7 ');
+    }
     var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
     var s = String(h.source || '').toLowerCase();
     var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
     var extra = a === 'booked' || a === 'quote_priced' || a === 'quote_sent' ? fmtMoney(h.amount) : a === 'lost' ? lostReasonLabel(h.reason) : a === 'contacted' ? NO_FOLLOWUP_HISTORY[h.no_followup] || '' : '';
     return [label, extra, fmtStamp(h.at, now), src].filter(Boolean).join(' \u00b7 ');
+  }
+
+  // lead_history.changes (sql/032): { field: [old, new] }. One short phrase per field, in the order an owner reads a lead.
+  var EDIT_FIELDS = ['name', 'phone', 'email', 'event_date', 'start_time', 'end_time', 'guests', 'event_address', 'occasion'];
+  var EDIT_LABELS = { name: 'name', phone: 'phone', email: 'email', event_date: 'date', start_time: 'start time', end_time: 'end time', guests: 'guests', event_address: 'area', occasion: 'occasion' };
+  function ymdShort(ymd, now) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd == null ? '' : ymd));
+    if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return '';
+    return MONTHS[Number(m[2]) - 1] + ' ' + Number(m[3]) + (Number(m[1]) !== partsOf(nowDate(now)).y ? ', ' + m[1] : '');
+  }
+  function editValue(field, v, now) {
+    if (v === null || v === undefined || String(v).trim() === '') return 'none';
+    var out = field === 'event_date' ? ymdShort(v, now) : field === 'start_time' || field === 'end_time' ? fmtTime(v)
+      : field === 'phone' ? fmtPhoneNational(v) || String(v) : String(v);
+    return out || 'none';
+  }
+  function editLines(h, now) {
+    var ch = h && h.changes && typeof h.changes === 'object' && !Array.isArray(h.changes) ? h.changes : null;
+    if (!ch) return [];
+    var keys = EDIT_FIELDS.filter(function (k) { return Object.prototype.hasOwnProperty.call(ch, k); })
+      .concat(Object.keys(ch).filter(function (k) { return EDIT_FIELDS.indexOf(k) === -1; }));
+    return keys.filter(function (k) { return Array.isArray(ch[k]) && ch[k].length === 2; }).map(function (k) {
+      return 'Changed ' + (EDIT_LABELS[k] || String(k).replace(/_/g, ' ')) + ': ' + editValue(k, ch[k][0], now) + ' \u2192 ' + editValue(k, ch[k][1], now);
+    });
+  }
+  // The rows the History list draws: newest first; staff never see an edit (old email and phone values are the owner's); an edit that
+  // changed several fields becomes one row per field, side by side, so each reads on its own line.
+  function historyRows(rows, opts) {
+    var staff = !!(opts && opts.staff);
+    var list = sortHistory((Array.isArray(rows) ? rows : []).filter(function (h) { return !(staff && h && String(h.action || '').toLowerCase() === 'edited'); }));
+    var out = [];
+    list.forEach(function (h) {
+      var ch = String(h.action || '').toLowerCase() === 'edited' && h.changes && typeof h.changes === 'object' && !Array.isArray(h.changes) ? h.changes : null;
+      var keys = ch ? Object.keys(ch) : [];
+      if (!ch || keys.length < 2) { out.push(h); return; }
+      EDIT_FIELDS.filter(function (k) { return keys.indexOf(k) !== -1; }).concat(keys.filter(function (k) { return EDIT_FIELDS.indexOf(k) === -1; })).forEach(function (k) {
+        var one = {}; one[k] = ch[k];
+        out.push(Object.assign({}, h, { changes: one }));
+      });
+    });
+    return out;
   }
 
   function sortHistory(rows) {
@@ -1408,6 +1455,16 @@
     return { days: days, text: 'Priced ' + plural(days, 'day', 'days') + ' ago. ' + (canSend ? 'Check it before you send it. It cannot be texted after 30 days.' : 'Check it is still right before you use it.') };
   }
 
+  // R4 (A2): the owner edited the guests, date, times or address after saving this price (sql/032 answers send_block 'details_changed'), or a form
+  // came in since. Said whether or not sending is on. Where sending is on, the note already says it ("... Price it again before sending."), so it
+  // is not said twice. A price that already went out cannot be worked out again: it says only that the details moved on.
+  var DETAILS_CHANGED_LINE = 'Details changed after this price. Check it in the calculator.';
+  var DETAILS_CHANGED_SENT = 'Details changed after this price went out.';
+  function detailsChangedLine(block, state, canSend) {
+    if (block !== 'details_changed' || canSend) return '';
+    return OWNER_REPRICE_STATES[state] ? DETAILS_CHANGED_LINE : state === 'sent' ? DETAILS_CHANGED_SENT : '';
+  }
+
   // lead_detail.owner_quote -> what the lead page shows. null = nothing saved.
   function ownerQuoteView(lead, canSend, now) {
     var o = lead && lead.owner_quote;
@@ -1441,6 +1498,7 @@
       showDetails: state !== 'sent' && !resend,
       // sending / unknown / an earlier maybe-sent text: it may have reached them, and that is said first whatever else is true
       note: [first, ownerBlockNote(block, resend ? 'sent' : state, !!canSend)].filter(Boolean).join(' '),
+      stale: detailsChangedLine(block, state, canSend),
       reprice: !!canSend && !!BLOCK_REPRICE[block] && !resend && !!OWNER_REPRICE_STATES[state],
       canSend: !!canSend && !block && !resend && (state === 'saved' || state === 'failed'),
       canResend: !!canSend && !block && (state === 'sent' || state === 'unknown' || (resend && state === 'failed')),
@@ -1456,8 +1514,20 @@
     var text = function (v) { return v === null || v === undefined ? '' : String(v).trim(); };
     if (inp) {
       var promo = text(inp.promo_code).toLowerCase();
-      return { guests: text(inp.guests), hours: quoteHoursValue(inp.service_hours), bar: inp.bar_rental === true ? true : inp.bar_rental === false ? false : null,
+      var out = { guests: text(inp.guests), hours: quoteHoursValue(inp.service_hours), bar: inp.bar_rental === true ? true : inp.bar_rental === false ? false : null,
         area: text(inp.event_city), km: Number(inp.distance_km) > 0 ? text(inp.distance_km) : '', date: dateOnly(inp.event_date), occasion: text(inp.occasion), promo: promo };
+      // R4 (A2): the details moved on after this price was saved (send_block 'details_changed': an edit, or a form since). The guests, date and
+      // area the lead holds NOW win over the old answers; a blank on the lead keeps the saved one (nothing is lost). A new area drops the saved
+      // distance, so the calculator works it out again. Everything else (hours, bar, occasion, promo) stays as it was priced.
+      if (String(o.send_block || '') === 'details_changed' && lead) {
+        var g = Number(lead.guests) > 0 ? text(lead.guests) : '';
+        if (g) out.guests = g;
+        var d = dateOnly(lead.event_date);
+        if (d) out.date = d;
+        var a = text(lead.event_area);
+        if (a) { if (a.toLowerCase() !== out.area.toLowerCase()) out.km = ''; out.area = a; }
+      }
+      return out;
     }
     var code = text(lead && lead.promo_code).toLowerCase();
     return { guests: lead && Number(lead.guests) > 0 ? text(lead.guests) : '', hours: quoteHoursValue(lead && lead.service_hours_label),
@@ -1779,13 +1849,185 @@
     return [displayName(lead), fmtEventDate(lead.event_date) || 'no date', statusInfo(lead.status).label].join(' · ');
   }
   var DUP_TEXT = {
-    same: 'Same date as a lead on file: saving opens that lead (blank details are filled in, nothing is overwritten).',
+    same: 'Same date as a lead on file: saving opens that lead. If your details differ, you choose whether to update it.',
     other: 'A different date from the leads on file: saving adds a new event for the same person.',
     // 024: the number is on file, but not under the typed first name (or no name typed yet): never claim the same person.
     otherPerson: 'This number is already on file under another name: saving adds a separate lead with this number.',
     otherUnknown: 'A different date from the leads on file: saving adds a new lead with this number.',
     optedOut: 'This number opted out of texts.'
   };
+
+  /* ---------- edit details (session 6, round R4: A2 owner edits a lead, B7 a duplicate + Add lead) ----------
+     The server (cv_edit_lead, sql/032) is the authority; validateEditLead mirrors its checks only to save a round trip. Owner only: staff are
+     blocked in STAFF_BLOCKED, never see the button, never call the RPC and never get an edit in their history (historyRows). */
+
+  var EDIT_ORDER = ['name', 'phone', 'email', 'event_date', 'start_time', 'end_time', 'guests', 'event_address', 'occasion'];
+  // The phone is the key a conversation hangs on. The page says why before the server has to: only a hand-added lead a form never upgraded.
+  var PHONE_LOCKED_FORM = "The number can't be changed on a lead that came from your website form. Add a new lead with the new number instead.";
+  var PHONE_LOCKED_TEXTS = "The number can't be changed once there are texts on this lead. Add a new lead with the new number instead.";
+  function editPhoneState(lead) {
+    var ok = !!lead && lead.source === 'manual' && lead.auto_texts === false;
+    return { editable: ok, why: ok ? '' : PHONE_LOCKED_FORM };
+  }
+
+  function hhmm(v) {
+    var m = /^([01]?\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/.exec(String(v == null ? '' : v).trim());
+    return m ? (m[1].length === 1 ? '0' : '') + m[1] + ':' + m[2] : null;
+  }
+  function okYmd(s, now) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (!m) return false;
+    var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    var real = new Date(Date.UTC(y, mo - 1, d));
+    var t = today(now);
+    return real.getUTCFullYear() === y && real.getUTCMonth() === mo - 1 && real.getUTCDate() === d && s >= '2020-01-01' && s <= ymd(t.y + 5, t.m, t.d);
+  }
+  // lead_detail -> what the Edit sheet starts with (all strings; '' = blank).
+  function editPrefill(lead) {
+    var l = lead || {};
+    var g = Number(l.guests);
+    return {
+      name: cleanText(l.full_name) || '', phone: l.phone ? (fmtPhoneNational(l.phone) || String(l.phone)) : '', email: cleanText(l.email) || '',
+      event_date: dateOnly(l.event_date), start_time: hhmm(l.start_time) || '', end_time: hhmm(l.end_time) || '',
+      guests: l.guests !== null && l.guests !== undefined && l.guests !== '' && isFinite(g) && g > 0 ? String(g) : '',
+      event_address: cleanText(l.event_area) || '', occasion: cleanText(l.occasion) || ''
+    };
+  }
+  var EDIT_ERRORS = {
+    name_required: 'Add a name.', name_too_long: ADD_LEAD_ERRORS.name_too_long, bad_phone: ADD_LEAD_ERRORS.bad_phone, bad_email: ADD_LEAD_ERRORS.bad_email,
+    bad_date: ADD_LEAD_ERRORS.bad_date, bad_time: "That time doesn't look right.", bad_guests: ADD_LEAD_ERRORS.bad_guests,
+    area_too_long: ADD_LEAD_ERRORS.area_too_long, occasion_too_long: ADD_LEAD_ERRORS.occasion_too_long
+  };
+  var EDIT_ERROR_FIELD = { name_required: 'name', name_too_long: 'name', bad_phone: 'phone', bad_email: 'email', bad_date: 'event_date', bad_time: 'start_time',
+    bad_guests: 'guests', area_too_long: 'event_address', occasion_too_long: 'occasion' };
+  var EDIT_NOTHING = 'Nothing has changed yet.';
+
+  // form = the sheet's strings (same keys as editPrefill). -> { ok, errors: { field: code }, changes: { field: value } }.
+  // changes holds ONLY the fields that differ from the lead; a field cleared is null (a name and a phone cannot be cleared); guests a number.
+  // opts.phone false (a form lead, or texts on it): the phone is not looked at at all.
+  function validateEditLead(form, lead, opts, now) {
+    var f = form || {}, was = editPrefill(lead), errors = {}, changes = {};
+    var phoneOn = !(opts && opts.phone === false);
+    var v = {
+      name: cleanText(f.name), email: cleanText(f.email), event_date: cleanText(f.event_date), start_time: cleanText(f.start_time), end_time: cleanText(f.end_time),
+      guests: cleanText(f.guests), event_address: cleanText(f.event_address), occasion: cleanText(f.occasion)
+    };
+    if (!v.name) { if (was.name) errors.name = 'name_required'; }
+    else if (v.name.length > 120) errors.name = 'name_too_long';
+    else if (v.name !== was.name) changes.name = v.name;
+    if (phoneOn) {
+      var typedPhone = cleanText(f.phone);
+      var ph = typedPhone ? normalizeLeadPhone(typedPhone) : null;
+      if (!ph) { if (typedPhone || was.phone) errors.phone = 'bad_phone'; }
+      else if (phoneKey(ph) !== phoneKey(lead && lead.phone)) changes.phone = ph;
+    }
+    if (v.email && (v.email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email))) errors.email = 'bad_email';
+    else if ((v.email || '') !== was.email) changes.email = v.email;
+    if (v.event_date && !okYmd(v.event_date, now)) errors.event_date = 'bad_date';
+    else if ((v.event_date || '') !== was.event_date) changes.event_date = v.event_date;
+    ['start_time', 'end_time'].forEach(function (k) {
+      var t = v[k] === null ? '' : hhmm(v[k]);
+      if (t === null) errors[k] = 'bad_time';
+      else if (t !== was[k]) changes[k] = t || null;
+    });
+    if (v.guests !== null) {
+      if (/^\d{1,4}$/.test(v.guests) && Number(v.guests) >= 1 && Number(v.guests) <= 5000) { if (v.guests !== was.guests) changes.guests = Number(v.guests); }
+      else errors.guests = 'bad_guests';
+    } else if (was.guests) changes.guests = null;
+    if (v.event_address && v.event_address.length > 120) errors.event_address = 'area_too_long';
+    else if ((v.event_address || '') !== was.event_address) changes.event_address = v.event_address;
+    if (v.occasion && v.occasion.length > 80) errors.occasion = 'occasion_too_long';
+    else if ((v.occasion || '') !== was.occasion) changes.occasion = v.occasion;
+    // a cleared field goes to the server as null (blank = no value); only the ones that really changed are kept
+    Object.keys(changes).forEach(function (k) { if (changes[k] === '') changes[k] = null; });
+    return { ok: Object.keys(errors).length === 0, errors: errors, changes: changes };
+  }
+  function editFirstError(errors) {
+    for (var i = 0; i < EDIT_ORDER.length; i++) if (errors && errors[EDIT_ORDER[i]]) return EDIT_ORDER[i];
+    return '';
+  }
+  function editErrorText(code) { return EDIT_ERRORS[code] || 'Check this and try again.'; }
+
+  // A date_on_file answer: the other lead is on the SAME phone and date as the result of this edit (never merged).
+  function dateOnFileText(date, now) {
+    var d = ymdShort(date, now);
+    return d ? 'Another lead for this person is already on ' + d + '.' : 'Another lead for this person is already on file with no date.';
+  }
+  var DATE_ON_FILE_OPEN = 'Open that lead';
+
+  // A cv_edit_lead failure -> { kind, field, text, otherId }. The code is in message, the reason in details, the other lead's id in hint.
+  // ctx.date = the date (YYYY-MM-DD or '') this lead would have after the edit; it is the date the other lead is on.
+  // kind: field | date_on_file | phone | feature_off | not_owner | not_found | nothing | auth | network | other.
+  function editLeadError(err, ctx) {
+    var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).trim().toLowerCase();
+    var det = String((err && err.details) || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
+    var hint = String((err && err.hint) || '').trim();
+    var m = /\b(not_owner|not_allowed|not_found|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(raw);
+    if (m) {
+      var why = (m[2] ? String(m[2]).trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_') : '') || det;
+      if (m[1] === 'not_owner') return { kind: 'not_owner', field: '', text: "Your sign-in isn't linked to this business. Sign out, then sign in with your own number.", otherId: '' };
+      if (m[1] === 'not_found') return { kind: 'not_found', field: '', text: "This lead isn't there any more. Go back to your leads and try again.", otherId: '' };
+      if (m[1] === 'not_allowed') {
+        if (why === 'feature_off') return { kind: 'feature_off', field: '', text: 'Editing details is switched off.', otherId: '' };
+        if (why === 'date_on_file') return { kind: 'date_on_file', field: 'event_date', text: dateOnFileText(ctx && ctx.date), otherId: isUuid(hint) ? hint : '' };
+        if (why === 'phone_form_lead') return { kind: 'phone', field: 'phone', text: PHONE_LOCKED_FORM, otherId: '' };
+        if (why === 'phone_has_texts') return { kind: 'phone', field: 'phone', text: PHONE_LOCKED_TEXTS, otherId: '' };
+        return { kind: 'other', field: '', text: "You can't change that right now.", otherId: '' };
+      }
+      if (why === 'no_changes') return { kind: 'nothing', field: '', text: EDIT_NOTHING, otherId: '' };
+      if (EDIT_ERRORS[why]) return { kind: 'field', field: EDIT_ERROR_FIELD[why], text: EDIT_ERRORS[why], otherId: '' };
+      return { kind: 'other', field: '', text: 'Check the details and try again.', otherId: '' };
+    }
+    var status = err && err.status;
+    if (status === 401 || (err && err.code === 'PGRST301') || /jwt/.test(raw)) return { kind: 'auth', field: '', text: SESSION_RAN_OUT, otherId: '' };
+    if (/failed to fetch|network|load failed/.test(raw)) return { kind: 'network', field: '', text: "Can't reach the server. Check your connection and try again.", otherId: '' };
+    return { kind: 'other', field: '', text: "Couldn't save that. Try again in a moment.", otherId: '' };
+  }
+
+  // B7: the "+ Add lead" answer was created=false. The typed fields that differ from the lead on file (lead_detail), only the ones the owner
+  // actually filled in; case and spacing alone are not a difference. Never the source (manual_source / source stay what they were).
+  // values = validateAddLead(...).values. -> [{ field (the cv_edit_lead key), label, typed, onFile, value }]
+  var DUP_DIFF_FIELDS = [
+    { field: 'name', label: 'name' }, { field: 'email', label: 'email' }, { field: 'guests', label: 'guests' },
+    { field: 'event_address', label: 'area' }, { field: 'occasion', label: 'occasion' }
+  ];
+  function dupFold(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase(); }
+  function dupDiff(lead, values) {
+    var v = values || {}, was = editPrefill(lead), out = [];
+    var typed = { name: v.name, email: v.email, guests: v.guests === null || v.guests === undefined ? '' : String(v.guests), event_address: v.area, occasion: v.occasion };
+    DUP_DIFF_FIELDS.forEach(function (d) {
+      var t = typed[d.field] == null ? '' : String(typed[d.field]).trim();
+      if (!t || dupFold(t) === dupFold(was[d.field])) return;
+      out.push({ field: d.field, label: d.label, typed: t, onFile: was[d.field], value: d.field === 'guests' ? Number(t) : t });
+    });
+    return out;
+  }
+  var DUP_SHEET = { intro: 'You typed:', update: 'Update with my new details', keep: "Keep what's on file", noneOnFile: 'nothing' };
+  var DUP_SHEET_NOTE = "Update changes what's on file and keeps a record of it in the history.";
+  function dupHeading(lead, now) {
+    var d = fmtEventDate(lead && lead.event_date, now);
+    return d ? 'Already on file for ' + d + '.' : 'Already on file with no event date.';
+  }
+  // One line per difference: "guests 120 (on file: 80)".
+  function dupDiffLine(d) { return d.label + ' ' + d.typed + ' (on file: ' + (d.onFile || DUP_SHEET.noneOnFile) + ')'; }
+  // What happened to a ticked "Already talked to them" on a duplicate: '' = nothing to say. An open lead is offered the normal Contacted flow
+  // (the lead page then asks "Reached them?"); a lead that is already past that says so, so the tick is never lost without a word.
+  function dupContactedLine(lead, contacted) {
+    if (!contacted || !lead) return '';
+    var st = String(lead.status || '').toLowerCase();
+    if (reachedEligible(lead, false)) return 'You ticked Already talked to them. The lead will ask "Reached them?" so you can mark it ' + statusInfo('contacted').label + '.';
+    if (st === 'contacted') return '';
+    return 'You ticked Already talked to them, but this lead is already ' + statusInfo(st).label + ', so its status stays as it is.';
+  }
+  // The whole B7 sheet: { heading, intro, lines, changes (the cv_edit_lead argument), note, contacted, optedOut }. lines.length 0 = no sheet, today's toast.
+  function dupSheetView(lead, values, now) {
+    var diffs = dupDiff(lead, values), changes = {};
+    diffs.forEach(function (d) { changes[d.field] = d.value; });
+    return {
+      heading: dupHeading(lead, now), intro: DUP_SHEET.intro, diffs: diffs, lines: diffs.map(dupDiffLine), changes: changes,
+      contacted: dupContactedLine(lead, values && values.contacted === true), optedOut: isOptedOut(lead) ? DUP_TEXT.optedOut : ''
+    };
+  }
 
   // Where a lead came from, for the record header (Kevin 11-09: every lead, plain words, never a raw key).
   // leads.source: tally_form (WF1), sms_inbound (first text), manual (+ Add lead), demo-seed (lab data), NULL (old rows). Anything else = not recorded.
@@ -4266,7 +4508,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   // Things a staff member never gets, whatever the config says (the server is the real gate; this keeps the page honest).
-  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team', 'noQuoteFilter', 'quoteDraft', 'guide'];
+  var STAFF_BLOCKED = ['metrics', 'forecast', 'value', 'pastEvents', 'quote', 'ask', 'support', 'export', 'addLead', 'push', 'team', 'noQuoteFilter', 'quoteDraft', 'guide', 'editLead'];
 
   /* ---------- Team (More, owner only): the cv-team Edge Function (team/edge/cv-team) ---------- */
 
@@ -4486,6 +4728,10 @@ function renderPriceBlockSms(lineItems, total, currency) {
     STAFF_BLOCKED: STAFF_BLOCKED,
     historyLine: historyLine,
     sortHistory: sortHistory,
+    historyRows: historyRows,
+    editLines: editLines,
+    DETAILS_CHANGED_LINE: DETAILS_CHANGED_LINE,
+    DETAILS_CHANGED_SENT: DETAILS_CHANGED_SENT,
     toCents: toCents,
     fmtMoney: fmtMoney,
     effectiveTotal: effectiveTotal,
@@ -4540,6 +4786,25 @@ function renderPriceBlockSms(lineItems, total, currency) {
     addLeadErrorText: addLeadErrorText,
     addLeadArgs: addLeadArgs,
     addLeadError: addLeadError,
+    EDIT_ORDER: EDIT_ORDER,
+    EDIT_NOTHING: EDIT_NOTHING,
+    DATE_ON_FILE_OPEN: DATE_ON_FILE_OPEN,
+    PHONE_LOCKED_FORM: PHONE_LOCKED_FORM,
+    PHONE_LOCKED_TEXTS: PHONE_LOCKED_TEXTS,
+    editPhoneState: editPhoneState,
+    editPrefill: editPrefill,
+    validateEditLead: validateEditLead,
+    editFirstError: editFirstError,
+    editErrorText: editErrorText,
+    editLeadError: editLeadError,
+    dateOnFileText: dateOnFileText,
+    dupDiff: dupDiff,
+    dupDiffLine: dupDiffLine,
+    dupHeading: dupHeading,
+    dupContactedLine: dupContactedLine,
+    dupSheetView: dupSheetView,
+    DUP_SHEET: DUP_SHEET,
+    DUP_SHEET_NOTE: DUP_SHEET_NOTE,
     bubbleSender: bubbleSender,
     bubbleLabels: bubbleLabels,
     phoneKey: phoneKey,

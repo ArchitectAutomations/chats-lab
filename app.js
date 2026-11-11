@@ -28,7 +28,7 @@
   // Every backend call goes through one wrapper that records FAILURES only: the call's name, a status and a short code word.
   var API_NAMES = {
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
-    setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
+    setStatus: 'cv_set_lead_status', addLead: 'cv_add_lead', editLead: 'cv_edit_lead', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test', markSeen: 'cv_mark_seen', pushStatus: 'cv_push_status',
     supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', exportConfig: 'cv_config', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
   };
@@ -186,6 +186,11 @@
     addDlg: $('add-lead'), addForm: $('add-form'), addName: $('add-name'), addPhone: $('add-phone'), addDate: $('add-date'),
     addGuests: $('add-guests'), addArea: $('add-area'), addOccasion: $('add-occasion'), addContacted: $('add-contacted'),
     addEmail: $('add-email'), addSourceChips: $('add-source-chips'), addErr: $('add-error'), addSubmit: $('add-submit'), addCancel: $('add-cancel'),
+    btnEdit: $('btn-edit-lead'), editDlg: $('edit-lead'), editForm: $('edit-form'), editName: $('edit-name'), editPhone: $('edit-phone'), editPhoneWhy: $('edit-phone-why'),
+    editEmail: $('edit-email'), editDate: $('edit-date'), editStart: $('edit-start'), editEnd: $('edit-end'), editGuests: $('edit-guests'), editArea: $('edit-area'),
+    editOccasion: $('edit-occasion'), editErr: $('edit-error'), editOther: $('edit-other'), editOtherLink: $('edit-other-link'), editSubmit: $('edit-submit'), editCancel: $('edit-cancel'),
+    dupDlg: $('dup-lead'), dupTitle: $('dup-title'), dupIntro: $('dup-intro'), dupLines: $('dup-lines'), dupContacted: $('dup-contacted'), dupOpt: $('dup-opt'),
+    dupNote: $('dup-note'), dupErr: $('dup-error'), dupUpdate: $('dup-update'), dupKeep: $('dup-keep'),
     addDup: $('add-dup'), addDupList: $('add-dup-list'), addDupMore: $('add-dup-more'), addDupSame: $('add-dup-same'), addDupOpt: $('add-dup-opt'),
     recSource: $('rec-source'), recNewText: $('rec-newtext'), recNoauto: $('rec-noauto'), recPrice: $('rec-price'), priceLink: $('price-link'),
     strip: $('strip'), stripChip: $('strip-chip'), sysFold: $('sys-fold'), hNotes: $('h-notes'),
@@ -265,6 +270,7 @@
     confirming: null,    // status waiting in the confirm sheet
     historyOpen: false,
     addBusy: false,
+    editBusy: false, edit: null, dup: null,   // R4: the Edit sheet and the duplicate-add sheet
     toastTimer: null,
     quotePrefill: null,  // L.quotePrefill(lead) + fromLead + backTo: a lead's price link -> the quote calculator, used once
     nav: { cur: '', from: '', lead: null },  // screen before More / Help, and the lead record Help was reached from (same session)
@@ -573,6 +579,8 @@
         return page(null);
       },
       addLead: function (args) { return client.rpc('cv_add_lead', args).then(ok); },
+      // R4 (sql/032), owner only: changes = { field: value } with only the fields that differ. -> { lead_id, changes: { field: [old, new] }, details_edited_at, opted_out }.
+      editLead: function (id, changes) { return client.rpc('cv_edit_lead', { p_lead_id: id, p_changes: changes }).then(ok); },
       addNote: function (id, body) { return client.rpc('cv_add_note', { p_lead_id: id, p_body: body }).then(ok); },
       deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
@@ -791,6 +799,8 @@
     if (el.teamConfirm.open) closeTeamConfirm();
     if (el.bulk.open) closeBulk();
     if (el.addDlg.open) closeAdd();
+    if (el.editDlg.open) closeEdit();
+    if (el.dupDlg.open && !(S.dup && S.dup.busy)) { S.dup = null; closeDup(); }
     if (name !== 'thread') closeFullSilently();
     show(el.btnAdd, signedIn && name === 'list' && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');
     markTabs();
@@ -1357,9 +1367,8 @@
       if (!row || !L.isUuid(row.lead_id)) throw new Error('no lead id');
       setAddBusy(false);
       closeAdd();
-      showToast(row.created === false ? 'Already on file: opened it' : 'Lead added');
-      refreshList();
-      location.hash = '#/lead/' + row.lead_id;
+      if (row.created === false) { duplicateAdded(row.lead_id, res.values); return; }   // R4 (B7): the server changed nothing; the owner chooses
+      openLeadAfterAdd(row.lead_id, 'Lead added');
     }).catch(function (e) {
       setAddBusy(false);
       var er = L.addLeadError(e);
@@ -1368,6 +1377,199 @@
         var n = addFieldNode(er.field);
         if (n) try { n.focus(); } catch (x) { /* ignore */ }
       } else setText(el.addErr, er.text);
+    });
+  }
+
+  /* ---------- R4 (A2): Edit details on the lead page (owner only, behind features.editLead) ----------
+     A sheet prefilled from lead_detail. Only what changed is sent (L.validateEditLead); the server (cv_edit_lead) is the authority and keeps a
+     history row. A date or phone already on file for this person is never merged: the owner is offered "Open that lead". */
+
+  var EDIT_FIELD_EL = { name: 'editName', phone: 'editPhone', email: 'editEmail', event_date: 'editDate', start_time: 'editStart', end_time: 'editEnd',
+    guests: 'editGuests', event_address: 'editArea', occasion: 'editOccasion' };
+
+  function editFieldNode(f) { return el[EDIT_FIELD_EL[f]]; }
+  function setEditError(field, text) {
+    var p = $('edit-err-' + field);
+    if (p) setText(p, text);
+    var input = editFieldNode(field);
+    if (input) { if (text) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid'); }
+  }
+  function clearEditErrors() {
+    L.EDIT_ORDER.forEach(function (f) { setEditError(f, ''); });
+    setText(el.editErr, '');
+    show(el.editOther, false);
+  }
+  function setEditBusy(on) {
+    S.editBusy = on;
+    el.editSubmit.disabled = on;
+    el.editSubmit.classList.toggle('is-busy', on);
+    el.editCancel.disabled = on;
+  }
+  function readEditForm() {
+    return { name: el.editName.value, phone: el.editPhone.value, email: el.editEmail.value, event_date: el.editDate.value, start_time: el.editStart.value,
+      end_time: el.editEnd.value, guests: el.editGuests.value, event_address: el.editArea.value, occasion: el.editOccasion.value };
+  }
+  function editAvailable() {
+    return feature('editLead') && !isStaff() && !!S.api && typeof S.api.editLead === 'function';
+  }
+
+  function openEdit() {
+    var lead = S.thread.lead;
+    if (!lead || !editAvailable() || S.editBusy || !S.signedIn) return;
+    var f = L.editPrefill(lead), ph = L.editPhoneState(lead);
+    el.editForm.reset();
+    el.editName.value = f.name; el.editPhone.value = f.phone; el.editEmail.value = f.email; el.editDate.value = f.event_date;
+    el.editStart.value = f.start_time; el.editEnd.value = f.end_time; el.editGuests.value = f.guests; el.editArea.value = f.event_address; el.editOccasion.value = f.occasion;
+    // A form lead's number, or one with texts on it, is shown but cannot be changed: the reason sits right under it.
+    S.edit = { id: lead.lead_id, phone: ph.editable };
+    el.editPhone.readOnly = !ph.editable;
+    if (ph.editable) el.editPhone.removeAttribute('aria-readonly'); else el.editPhone.setAttribute('aria-readonly', 'true');
+    setText(el.editPhoneWhy, ph.why);
+    clearEditErrors();
+    if (typeof el.editDlg.showModal === 'function') el.editDlg.showModal();
+    else el.editDlg.setAttribute('open', '');
+    try { el.editName.focus(); } catch (e) { /* ignore */ }
+  }
+
+  function closeEdit() {
+    el.editForm.reset();   // the lead's email and phone do not stay in the form after it closes
+    if (el.editDlg.open) {
+      if (typeof el.editDlg.close === 'function') el.editDlg.close();
+      else el.editDlg.removeAttribute('open');
+    }
+  }
+
+  function submitEdit() {
+    if (S.editBusy || !S.edit) return;
+    var lead = S.thread.lead;
+    if (!lead || lead.lead_id !== S.edit.id) { closeEdit(); return; }
+    clearEditErrors();
+    var res = L.validateEditLead(readEditForm(), lead, { phone: S.edit.phone });
+    if (!res.ok) {
+      Object.keys(res.errors).forEach(function (f) { setEditError(f, L.editErrorText(res.errors[f])); });
+      var first = editFieldNode(L.editFirstError(res.errors));
+      if (first) try { first.focus(); } catch (e) { /* ignore */ }
+      return;
+    }
+    if (!Object.keys(res.changes).length) { setText(el.editErr, L.EDIT_NOTHING); return; }
+    var id = S.edit.id;
+    var after = res.changes.event_date !== undefined ? (res.changes.event_date || '') : String(lead.event_date || '').slice(0, 10);   // the date the other lead would be on
+    setEditBusy(true);
+    Promise.resolve().then(function () { return S.api.editLead(id, res.changes); }).then(function (out) {
+      setEditBusy(false);
+      closeEdit();
+      showToast(out && out.changes && Object.keys(out.changes).length === 0 ? 'Nothing changed' : 'Details updated');
+      if (id === S.thread.id) refreshThread();
+      refreshList();
+    }).catch(function (e) {
+      setEditBusy(false);
+      var er = L.editLeadError(e, { date: after });
+      if (er.kind === 'phone') {
+        // the server knows something the page did not (texts on the lead): the number is read-only from here on
+        S.edit.phone = false; el.editPhone.readOnly = true; el.editPhone.setAttribute('aria-readonly', 'true');
+        setText(el.editPhoneWhy, er.text);
+        setText(el.editErr, 'Nothing was saved. Your other changes are still here: save again to keep them.');
+        return;
+      }
+      if (er.kind === 'field') {
+        setEditError(er.field, er.text);
+        var n = editFieldNode(er.field);
+        if (n) try { n.focus(); } catch (x) { /* ignore */ }
+        return;
+      }
+      setText(el.editErr, er.text);
+      if (er.kind === 'date_on_file') {
+        var phoneOnly = res.changes.phone !== undefined && res.changes.event_date === undefined;
+        (phoneOnly ? el.editPhone : el.editDate).setAttribute('aria-invalid', 'true');
+        el.editOtherLink.textContent = L.DATE_ON_FILE_OPEN;
+        if (er.otherId) el.editOtherLink.href = '#/lead/' + encodeURIComponent(er.otherId);
+        show(el.editOther, !!er.otherId);
+      }
+    });
+  }
+
+  /* ---------- R4 (B7): "+ Add lead" found this phone and date already on file ----------
+     The server changed nothing. The page reads the lead on file, lists ONLY the fields that differ, and the owner picks:
+     "Update with my new details" (cv_edit_lead with the differing typed fields, never the source) or "Keep what's on file" (nothing). */
+
+  function openLeadAfterAdd(id, text) {
+    showToast(text);
+    refreshList();
+    location.hash = '#/lead/' + id;
+  }
+  // A ticked "Already talked to them" on a duplicate is never dropped silently: an open lead is offered the normal Contacted flow
+  // ("Reached them?" on the lead page, then the normal Contacted sheet).
+  function offerContacted(lead, contacted) {
+    var key = reachedKeyNow();
+    if (!contacted || !lead || !key) return;
+    var raw = L.reachedPack(lead, false, Date.now());
+    if (!raw) return;
+    store('set', key, raw);
+    RC.back = true;
+  }
+
+  function duplicateAdded(id, values) {
+    var plain = 'Already on file: opened it';
+    if (!editAvailable() || typeof S.api.fetchThread !== 'function') { openLeadAfterAdd(id, plain); return; }
+    Promise.resolve().then(function () { return S.api.fetchThread(id); }).then(function (res) {
+      var lead = res && res.lead;
+      if (!lead) { openLeadAfterAdd(id, plain); return; }
+      var view = L.dupSheetView(lead, values);
+      if (!view.lines.length) { offerContacted(lead, values.contacted); openLeadAfterAdd(id, plain); return; }   // no differences: today's toast
+      openDup(id, lead, values, view);
+    }).catch(function () { openLeadAfterAdd(id, plain); });
+  }
+
+  function openDup(id, lead, values, view) {
+    S.dup = { id: id, lead: lead, contacted: values.contacted === true, view: view, busy: false };
+    setText(el.dupTitle, view.heading);
+    setText(el.dupIntro, view.intro);
+    var frag = document.createDocumentFragment();
+    view.lines.forEach(function (t) { frag.appendChild(make('li', '', t)); });
+    el.dupLines.replaceChildren(frag);
+    setText(el.dupContacted, view.contacted);
+    setText(el.dupOpt, view.optedOut);
+    setText(el.dupNote, L.DUP_SHEET_NOTE);
+    setText(el.dupErr, '');
+    el.dupUpdate.textContent = L.DUP_SHEET.update;
+    el.dupKeep.textContent = L.DUP_SHEET.keep;
+    setDupBusy(false);
+    if (typeof el.dupDlg.showModal === 'function') el.dupDlg.showModal();
+    else el.dupDlg.setAttribute('open', '');
+    try { el.dupKeep.focus(); } catch (e) { /* ignore */ }   // neither button is the default: focus starts on the one that changes nothing
+  }
+  function closeDup() {
+    if (el.dupDlg.open) {
+      if (typeof el.dupDlg.close === 'function') el.dupDlg.close();
+      else el.dupDlg.removeAttribute('open');
+    }
+  }
+  function setDupBusy(on) {
+    if (S.dup) S.dup.busy = on;
+    el.dupUpdate.disabled = el.dupKeep.disabled = !!on;
+    el.dupUpdate.classList.toggle('is-busy', !!on);
+  }
+  function dupKeep() {
+    var d = S.dup;
+    if (!d || d.busy) return;
+    S.dup = null;
+    closeDup();
+    offerContacted(d.lead, d.contacted);
+    openLeadAfterAdd(d.id, "Kept what's on file");
+  }
+  function dupUpdate() {
+    var d = S.dup;
+    if (!d || d.busy) return;
+    setText(el.dupErr, '');
+    setDupBusy(true);
+    Promise.resolve().then(function () { return S.api.editLead(d.id, d.view.changes); }).then(function () {
+      S.dup = null;
+      closeDup();
+      offerContacted(d.lead, d.contacted);
+      openLeadAfterAdd(d.id, 'Updated with your new details');
+    }).catch(function (e) {
+      setDupBusy(false);
+      setText(el.dupErr, L.editLeadError(e, { date: String(d.lead.event_date || '').slice(0, 10) }).text);   // the sheet stays: Keep still works
     });
   }
 
@@ -3809,7 +4011,7 @@
   }
 
   function renderHistory() {
-    var all = L.sortHistory((S.thread.history || []).concat(L.ownerQuoteHistory(S.thread.lead)));
+    var all = L.historyRows((S.thread.history || []).concat(L.ownerQuoteHistory(S.thread.lead)), { staff: isStaff() });   // R4: staff never see an edit; several fields = several lines
     var rows = S.historyOpen ? all : all.slice(0, HISTORY_SHORT);
     var frag = document.createDocumentFragment();
     rows.forEach(function (h) {
@@ -4263,7 +4465,7 @@
       frag.appendChild(sums);
     }
     el.mqBody.replaceChildren(frag);
-    setText(el.mqNote, [q.note, q.age && q.age.text].filter(Boolean).join(' '));   // gap 3: how old the saved price is, in the same muted line
+    setText(el.mqNote, [q.note, q.stale, q.age && q.age.text].filter(Boolean).join(' '));   // R4: q.stale = "Details changed after this price. Check it in the calculator."   // gap 3: how old the saved price is, in the same muted line
     show(el.mqSend, q.canSend);
     el.mqSend.textContent = q.sendLabel;
     show(el.mqResend, q.canResend);
@@ -4404,6 +4606,7 @@
     show(el.recNewText, !isStaff() && S.thread.newText === true);
     setText(el.recNoauto, L.noAutoLine(lead));
     show(el.recHead, true);
+    show(el.btnEdit, editAvailable());   // R4 (A2): owner only, behind features.editLead and a server that has cv_edit_lead
     el.optoutBanner.textContent = L.stopBanner(isStaff());   // B2: the owner may still text them; the system will not
     show(el.optoutBanner, L.isOptedOut(lead));
     renderContact(lead);
@@ -4427,7 +4630,7 @@
     var mine = lead.owner_quote && typeof lead.owner_quote === 'object' ? lead.owner_quote : null;
     show(el.recPrice, TAB_ROUTES.indexOf('quote') !== -1 && noQuote && (!mine || mine.state === 'saved' || mine.state === 'failed' || mine.state === 'unknown'));
     var myView = L.ownerQuoteView(lead, feature('quote') && L.quoteSendFeatureOn(custom.features));
-    el.priceLink.textContent = myView && myView.reprice ? 'Price it again in the quote calculator' : mine ? 'Change this price in the quote calculator' : 'Price it in the quote calculator';
+    el.priceLink.textContent = myView && (myView.reprice || myView.stale) ? 'Price it again in the quote calculator' : mine ? 'Change this price in the quote calculator' : 'Price it in the quote calculator';
     renderOthers(lead);
   }
 
@@ -5181,6 +5384,17 @@
     el.addCancel.addEventListener('click', closeAdd);
     el.addDlg.addEventListener('click', function (e) { if (e.target === el.addDlg && !S.addBusy) closeAdd(); });
     el.addDlg.addEventListener('cancel', function (e) { if (S.addBusy) e.preventDefault(); });
+    // Edit details (a lead's page) and the duplicate-add sheet (R4)
+    el.btnEdit.addEventListener('click', openEdit);
+    el.editForm.addEventListener('submit', function (e) { e.preventDefault(); submitEdit(); });
+    el.editCancel.addEventListener('click', closeEdit);
+    el.editDlg.addEventListener('click', function (e) { if (e.target === el.editDlg && !S.editBusy) closeEdit(); });
+    el.editDlg.addEventListener('cancel', function (e) { if (S.editBusy) e.preventDefault(); });
+    el.editOtherLink.addEventListener('click', closeEdit);
+    L.EDIT_ORDER.forEach(function (f) { editFieldNode(f).addEventListener('input', function () { setEditError(f, ''); setText(el.editErr, ''); show(el.editOther, false); }); });
+    el.dupUpdate.addEventListener('click', dupUpdate);
+    el.dupKeep.addEventListener('click', dupKeep);
+    el.dupDlg.addEventListener('cancel', function (e) { e.preventDefault(); dupKeep(); });   // Esc = keep what is on file; nothing is ever changed by closing
     el.addPhone.addEventListener('blur', renderAddDup);
     el.addName.addEventListener('blur', function () { if (!el.addDup.hidden) renderAddDup(); });   // 024: the hint depends on the typed first name
     el.addPhone.addEventListener('input', function () { setAddError('phone', ''); });

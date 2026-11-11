@@ -551,6 +551,8 @@
             <div class="reach-row" id="rec-phone-row" hidden><dt>Phone</dt><dd><a class="rec-phone" id="rec-phone" hidden></a></dd></div>
             <div class="reach-row"><dt>Email</dt><dd class="rec-email" id="rec-email" hidden></dd></div>
           </dl>
+          <!-- R4 (A2): owner only, behind features.editLead. The sheet is #edit-lead below. -->
+          <button class="btn-edit" id="btn-edit-lead" type="button" aria-haspopup="dialog" hidden>Edit details</button>
         </header>
 
         <p class="stop-banner" id="optout-banner" role="note" hidden>Do not text: this person opted out.</p>
@@ -803,6 +805,87 @@
         <button class="btn quiet" id="add-cancel" type="button">Cancel</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- R4 (A2): Edit details, owner only. Same shape as the Add sheet: a form that scrolls inside itself, buttons stuck to the bottom. -->
+  <dialog class="sheet sheet-add sheet-edit" id="edit-lead" aria-labelledby="edit-title">
+    <form class="sheet-body" id="edit-form" novalidate>
+      <p class="sheet-text" id="edit-title">Edit details</p>
+      <p class="hint" id="edit-hint">Only what you change is saved, and each change is written in the history.</p>
+
+      <div class="sheet-field">
+        <label class="field-label" for="edit-name">Name</label>
+        <input class="field" id="edit-name" type="text" autocomplete="off" maxlength="120" aria-describedby="edit-err-name">
+        <p class="error" id="edit-err-name" role="alert" hidden></p>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="edit-phone">Phone</label>
+        <input class="field" id="edit-phone" type="tel" inputmode="tel" autocomplete="off" aria-describedby="edit-phone-why edit-err-phone">
+        <p class="hint" id="edit-phone-why" hidden></p>
+        <p class="error" id="edit-err-phone" role="alert" hidden></p>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="edit-email">Email</label>
+        <input class="field" id="edit-email" type="email" inputmode="email" autocomplete="off" autocapitalize="off" maxlength="254" aria-describedby="edit-err-email">
+        <p class="error" id="edit-err-email" role="alert" hidden></p>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="edit-date">Event date</label>
+        <input class="field" id="edit-date" type="date" aria-describedby="edit-err-event_date">
+        <p class="error" id="edit-err-event_date" role="alert" hidden></p>
+      </div>
+      <div class="edit-times">
+        <div class="sheet-field">
+          <label class="field-label" for="edit-start">Start time</label>
+          <input class="field" id="edit-start" type="time" aria-describedby="edit-err-start_time">
+          <p class="error" id="edit-err-start_time" role="alert" hidden></p>
+        </div>
+        <div class="sheet-field">
+          <label class="field-label" for="edit-end">End time</label>
+          <input class="field" id="edit-end" type="time" aria-describedby="edit-err-end_time">
+          <p class="error" id="edit-err-end_time" role="alert" hidden></p>
+        </div>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="edit-guests">Guests</label>
+        <input class="field" id="edit-guests" type="text" inputmode="numeric" autocomplete="off" maxlength="4" aria-describedby="edit-err-guests">
+        <p class="error" id="edit-err-guests" role="alert" hidden></p>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="edit-area">Event area</label>
+        <input class="field" id="edit-area" type="text" autocomplete="off" maxlength="120" aria-describedby="edit-err-event_address">
+        <p class="error" id="edit-err-event_address" role="alert" hidden></p>
+      </div>
+      <div class="sheet-field">
+        <label class="field-label" for="edit-occasion">Occasion</label>
+        <input class="field" id="edit-occasion" type="text" autocomplete="off" maxlength="80" aria-describedby="edit-err-occasion">
+        <p class="error" id="edit-err-occasion" role="alert" hidden></p>
+      </div>
+
+      <p class="error" id="edit-error" role="alert" hidden></p>
+      <p class="edit-other" id="edit-other" hidden><a class="add-dup-open" id="edit-other-link" href="#/">Open that lead</a></p>
+      <div class="sheet-actions">
+        <button class="btn primary" id="edit-submit" type="submit">Save changes</button>
+        <button class="btn quiet" id="edit-cancel" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- R4 (B7): "+ Add lead" found the same number and date already on file. Nothing changed yet; the owner picks. -->
+  <dialog class="sheet sheet-add sheet-dup" id="dup-lead" aria-labelledby="dup-title">
+    <div class="sheet-body">
+      <p class="sheet-text" id="dup-title"></p>
+      <p class="sheet-note" id="dup-intro"></p>
+      <ul class="dup-lines" id="dup-lines"></ul>
+      <p class="sheet-note" id="dup-contacted" hidden></p>
+      <p class="sheet-note" id="dup-opt" hidden></p>
+      <p class="hint" id="dup-note"></p>
+      <p class="error" id="dup-error" role="alert" hidden></p>
+      <div class="sheet-actions">
+        <button class="btn primary" id="dup-update" type="button"></button>
+        <button class="btn choice" id="dup-keep" type="button"></button>
+      </div>
+    </div>
   </dialog>
 
 </div>

@@ -997,6 +997,30 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .add-dup-open { flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; font-weight: 700; color: var(--link); text-underline-offset: 2px; }
 .add-dup-same, .add-dup-opt { font-weight: 600; }
 
+/* R4 (A2): "Edit details" under the lead header (owner only): an outlined pill on green, quiet next to the one purple action. */
+.btn-edit {
+  display: inline-flex; align-items: center; min-height: 44px; margin: var(--sp-3) 0 0; padding: 0 16px;
+  background: transparent; color: var(--on-primary); border: 1.5px solid var(--on-primary); border-radius: var(--r-pill);
+  font-size: var(--fs-md); font-weight: 650;
+}
+.btn-edit:active { background: var(--primary-deep); }
+.btn-edit:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+/* Edit sheet: the same tall scrolling form as Add; the two times share a row (they stack at the bigger text sizes). A date or phone already
+   on file for this person gets a line and the link to that lead under the field. */
+.sheet-edit .edit-times { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; }
+.sheet-edit .edit-times .field { min-width: 0; width: 100%; }
+.sheet-edit .field[readonly], .sheet-edit .field[disabled] { background: transparent; color: var(--muted-on-secondary); }
+@media (max-width: 399px) { .sheet-edit .edit-times { grid-template-columns: minmax(0, 1fr); } }   /* a time box needs ~9 em: "06:00 PM" was cut at 320 px */
+.edit-other { margin: 2px 0 0; }
+/* B7: what the owner typed against what is on file; two stacked buttons, neither is the default (focus starts on Keep). */
+.sheet-dup .sheet-body { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+.sheet-dup .sheet-text { margin: 0 0 6px; }
+.dup-lines { list-style: none; margin: 6px 0 0; padding: 0; }
+.dup-lines li { padding: 8px 12px; margin: 0 0 6px; border: 1.5px solid var(--muted-on-secondary); border-radius: var(--r-md); font-size: var(--fs-md); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.sheet-dup .sheet-actions .btn.primary { margin-top: 14px; }
+.sheet-dup .sheet-actions { position: static; margin: 0; padding: 0; }
+.sheet-dup .hint { margin-top: 10px; }
+
 /* Confirmation toast (outside every screen, so it survives the jump to the new lead). */
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 30; margin: 0;
@@ -1222,3 +1246,5 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 :root[data-text-size="large"] .ex-dates-row, :root[data-text-size="larger"] .ex-dates-row { grid-template-columns: minmax(0, 1fr); }
 /* Top-bar title: wraps to two lines instead of ending in an ellipsis ("Download spre…" at Larger). The wording is unchanged. */
 :root[data-text-size="large"] .titles h1, :root[data-text-size="larger"] .titles h1 { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+/* R4: the Edit sheet's two time boxes stack (a time box is ~9 em wide: side by side they would not fit a 320 px phone at these sizes). */
+:root[data-text-size="large"] .sheet-edit .edit-times, :root[data-text-size="larger"] .sheet-edit .edit-times { grid-template-columns: minmax(0, 1fr); }
