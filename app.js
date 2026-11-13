@@ -1029,7 +1029,7 @@
     noquote: 'Every open lead has a quote.'
   };
 
-  // Gap 1: the "No quote" chip and the "No quote sent" row tag. Owner only (a staff list has no prices), per-client switch
+  // Gap 1: the "Without a quote yet" chip and row tag (G6 11-13: were "No quote" / "No quote sent"; key stays 'noquote'). Owner only (a staff list has no prices), per-client switch
   // features.noQuoteFilter, and the rule is the Metrics one (L.noQuoteOpen). The chip shows only while it has leads in it.
   function noQuoteOn() { return !isStaff() && feature('noQuoteFilter'); }
   function noQuoteShown() { return noQuoteOn() && L.noQuoteCount(S.leads) > 0; }
@@ -1063,7 +1063,7 @@
     var frag = document.createDocumentFragment();
     L.filters().forEach(function (f) { frag.appendChild(filterButton(f, counts)); });
     el.filters.replaceChildren(frag);
-    // The "No quote" chip has its own row under the five (they must stay on one line at 320 px); only with the switch on and leads in it.
+    // The "Without a quote yet" chip has its own row under the five (they must stay on one line at 320 px); only with the switch on and leads in it.
     var extra = S.listLoaded && noQuoteShown();
     if (extra) { counts.noquote = L.noQuoteCount(S.leads); el.filtersExtra.replaceChildren(filterButton(L.noQuoteChip(), counts)); }
     else el.filtersExtra.replaceChildren();
@@ -1241,7 +1241,7 @@
         });
       });
     } else {
-      pg.rows.forEach(function (lead) { frag.appendChild(leadRow(lead, { mainList: true })); });   // G1: the only place the "No quote sent" tag shows
+      pg.rows.forEach(function (lead) { frag.appendChild(leadRow(lead, { mainList: true })); });   // G1: the only place the "Without a quote yet" tag shows
     }
     el.leadList.replaceChildren(frag);
     el.listMore.textContent = pg.moreText;
@@ -1253,7 +1253,7 @@
   // THE lead row (Home, search, Calendar day, Lead value, Follow-ups): name and one price on top, date and guests,
   // then status chip and "last text 15 min ago". opts.needs = Needs-you card (no chip, last text + wait line);
   // opts.lines = extra plain lines under the job line (Follow-ups); opts.quiet = no status chip / time (sent history);
-  // opts.mainList = this is the main list (or its No quote filter): only there does a row carry the "No quote sent" tag (G1).
+  // opts.mainList = this is the main list (or its No quote filter): only there does a row carry the "Without a quote yet" tag (G1).
   // Returns an <li>; its first child is the link.
   function leadRow(lead, opts) {
     opts = opts || {};
@@ -4767,7 +4767,7 @@
       facts.forEach(function (f) { fact(dl, f.label, f.value, { href: f.href, external: !!f.href, note: f.note, flag: f.flag }); });
     }
     fill(el.eventFacts, d.key.concat(d.more));
-    // In their words: in full when short; a long message opens at its start with Show all (kept open for this lead across refreshes).
+    // Additional details (their form text): in full when short; a long message opens at its start with Show all (kept open for this lead across refreshes).
     var w = L.wordsView(d.words);
     var open = w.long && S.eventMoreFor === lead.lead_id;
     el.eventDetails.textContent = open || !w.long ? w.full : w.short;
@@ -4963,7 +4963,7 @@
     if (el.recNext.textContent !== t || el.recNext.hidden !== !t) setText(el.recNext, t);
   }
 
-  // One line: where they came from, then (022) "no quote sent yet" when the server says so. Staff never see a form's title (it can hold a price).
+  // One line: where they came from, then (022) "without a quote yet" when the server says so. Staff never see a form's title (it can hold a price).
   function fillSource(lead) {
     var src = L.sourceLine(lead, { noFormName: isStaff() });
     var nq = isStaff() ? '' : L.noQuoteLine(lead);

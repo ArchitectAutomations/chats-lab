@@ -383,9 +383,9 @@
   }
 
   // Gap 1: an open lead the customer has not been quoted. The SAME rule as the Metrics count open_no_quote (sql/005: open = not booked / lost /
-  // opted out and opted_out false; no quote_total). A price the owner saved but has not sent (owner_price) does not change that: it is still "no quote sent".
+  // opted out and opted_out false; no quote_total). A price the owner saved but has not sent (owner_price) does not change that: it is still "without a quote yet" (G6: reworded 11-13 from "no quote sent", which was wrong while a text is sending or may have gone out).
   // lead_list has no opted_out column, and a STOP from a hand-added (or booked / lost) lead keeps its status. The app therefore also gives the numbers
-  // lead_detail says opted out (setOptedOutPhones, the lookup Add lead uses), and those leads are never "no quote sent" (Metrics leaves them out too).
+  // lead_detail says opted out (setOptedOutPhones, the lookup Add lead uses), and those leads are never "without a quote yet" (Metrics leaves them out too).
   var OPTED_KEYS = {};
   function setOptedOutPhones(phones) {
     var next = {};
@@ -400,20 +400,20 @@
     if (k && OPTED_KEYS[k]) return false;
     return lead.quote_total === null || lead.quote_total === undefined || lead.quote_total === '';
   }
-  // The "No quote sent" tag on a list row: owner only (a staff list has no prices, so every row would match), and only when the row
+  // The "Without a quote yet" tag on a list row (G6, Kevin 11-13 "reword only": was "No quote sent"; the rule is unchanged): owner only (a staff list has no prices, so every row would match), and only when the row
   // has no money text of its own (a saved price already reads "$X not sent" there).
   // G1 (Kevin 11-10): the tag is for the MAIN LIST (and its No quote filter) only. Search, Calendar, Follow-ups, See all and the Needs-you
   // cards ask without opts.mainList and get nothing. opts: { staff, hasMoney, mainList }.
   function noQuoteTag(lead, opts) {
     var o = opts || {};
     if (o.mainList !== true || o.staff || o.hasMoney || !noQuoteOpen(lead)) return '';
-    return 'No quote sent';
+    return 'Without a quote yet';
   }
   function noQuoteCount(leads) {
     return (Array.isArray(leads) ? leads : []).filter(noQuoteOpen).length;
   }
-  // The sixth chip: label "No quote", count from noQuoteCount (page side, over the rows loaded).
-  function noQuoteChip() { return { key: 'noquote', label: 'No quote' }; }
+  // The sixth chip: label "Without a quote yet" (G6; the key stays 'noquote'), count from noQuoteCount (page side, over the rows loaded).
+  function noQuoteChip() { return { key: 'noquote', label: 'Without a quote yet' }; }
 
   function matchesFilter(lead, key) {
     var st = String((lead && lead.status) || '').toLowerCase();
@@ -725,7 +725,7 @@
   };
 
   // lead_history.no_followup (sql/022): why a page Contacted took the day-5 text away.
-  var NO_FOLLOWUP_HISTORY = { chosen: 'No follow-up text (you chose)', no_quote: 'No follow-up text (no quote sent)', opted_out: 'No follow-up text (they texted STOP)' };
+  var NO_FOLLOWUP_HISTORY = { chosen: 'No follow-up text (you chose)', no_quote: 'No follow-up text (no quote then)', opted_out: 'No follow-up text (they texted STOP)' };
   function historyLine(h, now) {
     if (!h) return '';
     var a = String(h.action || '').toLowerCase();
@@ -1187,7 +1187,7 @@
     out.words = String(lead.additional_details || '').trim();
     return out;
   }
-  // "In their words" on the Event card: in full when short; a long message opens at its first ~300 characters with "Show all".
+  // "Additional Details" (what they wrote on the form) on the Event card: in full when short; a long message opens at its first ~300 characters with "Show all".
   var WORDS_SHORT = 300;
   function wordsView(text) {
     var t = String(text == null ? '' : text).trim();
@@ -2290,13 +2290,13 @@
   var CLOSED_FOR_QUOTE = { booked: 1, lost: 1, won: 1, dormant: 1, opted_out: 1 };
   function noQuoteLine(lead) {
     if (!lead || lead.quote_received !== false) return '';
-    return CLOSED_FOR_QUOTE[String(lead.status || '').toLowerCase()] ? 'no quote sent' : 'no quote sent yet';
+    return CLOSED_FOR_QUOTE[String(lead.status || '').toLowerCase()] ? 'without a quote' : 'without a quote yet';   // G6: was "no quote sent (yet)"
   }
   var NO_AUTO_TEXT = 'No automatic texts: you contact them yourself.';
   // B1: the same lead when the person already agreed to texts on another record: the assistant answers if they text.
   var NO_AUTO_TEXT_PERSON = 'The assistant answers if they text, but no automatic follow-up texts go to a lead you added.';
   // 022: after the owner's "no follow-up" (or none sent and no quote) the record says plainly that no text will go.
-  var NO_FOLLOWUP_LINE = { chosen: 'No follow-up text will go out: you chose not to send one.', no_quote: 'No follow-up text will go out: no quote was sent.', opted_out: 'No follow-up text will go out: they texted STOP.' };
+  var NO_FOLLOWUP_LINE = { chosen: 'No follow-up text will go out: you chose not to send one.', no_quote: 'No follow-up text will go out: there was no quote when you marked them Contacted.', opted_out: 'No follow-up text will go out: they texted STOP.' };
   function noAutoLine(lead) {
     if (!lead) return '';
     if (lead.auto_texts === false) return personConsent(lead) ? NO_AUTO_TEXT_PERSON : NO_AUTO_TEXT;
@@ -3926,7 +3926,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       { id: 'find', title: 'Find a lead', f: [], steps: [
         'On {tab_list}, tap a button near the top to narrow the list: Open, {contacted}, {booked}, {lost} or All.',
         { t: 'Or type a name, phone number or email in the search box at the top (Search name, phone or email).', f: ['search'] },
-        { t: 'The No quote button lists open leads with no quote yet. Their rows say No quote sent (this list only).', f: ['noQuoteFilter'] },
+        { t: 'The Without a quote yet button lists open leads with no quote. Their rows say the same (this list only).', f: ['noQuoteFilter'] },
         { t: 'Open one and tap Price it in the quote calculator.', f: ['noQuoteFilter', 'quote'] },
         { t: 'Leads you hid are not in lists or search: tap More, then Hidden leads.', f: ['hideLead'] },
         'At the end of longer lists, tap Show more for the next leads, or Back to top.'
