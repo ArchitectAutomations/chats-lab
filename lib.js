@@ -1649,7 +1649,8 @@
   var QUOTE_SEND_BLOCKS = { manual: "This lead has no consent on file, so nothing was sent.", opted_out: 'They opted out of texts, so nothing was sent.', stop: 'They asked not to be texted, so nothing was sent.',
     no_consent: 'There is no consent on file, so nothing was sent.', demo: 'This is a test lead, so nothing was sent.', bad_phone: "Their number can't be texted, so nothing was sent.",
     closed: 'This lead is finished, so nothing was sent.', has_quote: 'They already have a quote, so nothing was sent.', already_sent: 'It was already sent. Nothing new went out.',
-    already_sending: 'It is sending right now. Nothing new went out.', send_unknown: "We can't tell whether the last text went out, so nothing new was sent. Check the conversation.", too_many: 'This lead has had 3 texts that went out or may have, so nothing new was sent.',
+    already_sending: 'It is sending right now. Nothing new went out.', send_unknown: "We can't tell whether the last text went out, so nothing new was sent. Check the conversation.", too_many: 'This lead has reached its limit of send attempts, so nothing new was sent.',
+    newer_lead: 'They sent a newer form, so this older price was not sent. Check their newest lead.', stale_count: 'This price was sent or tried on another screen. Close and reopen the lead, then try again. Nothing went out.',
     event_passed: 'The event date has passed, so nothing was sent.', details_changed: 'The event details changed after you priced this, so nothing was sent. Price it again.',
     price_old: 'This price is more than 30 days old, so nothing was sent. Price it again.', rate_changed: 'Your prices changed after this was worked out, so nothing was sent. Price it again.',
     price_changed: 'The price changed after you opened it, so nothing was sent. Look at it again.', no_sender: 'There is no number to send from yet, so nothing was sent.' };
