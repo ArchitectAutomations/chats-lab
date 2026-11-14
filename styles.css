@@ -1169,6 +1169,9 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 
 /* sql/023: the owner's saved price on a lead, and the exact text in the send sheet */
 .mq-status { margin: 0 0 8px; font-weight: 600; }
+.mq-delivery { margin: -4px 0 8px; font-size: var(--fs-md); }
+.mq-delivery.error { margin-top: -4px; font-weight: 700; font-size: var(--fs-md); } /* same size as the other delivery lines: beats .rec-card .error (equal specificity, later) */
+.mq-delivery-code { font-size: var(--fs-sm); font-weight: 400; }
 .mq-btn { width: 100%; margin-top: 12px; }
 .q-add-box { margin-top: 14px; }
 .q-add-box .btn { width: 100%; }

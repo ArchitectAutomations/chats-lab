@@ -1189,12 +1189,20 @@
   }
   // "Additional Details" (what they wrote on the form) on the Event card: in full when short; a long message opens at its first ~300 characters with "Show all".
   var WORDS_SHORT = 300;
+  // Also long: more than 8 typed lines (a list of short lines is tall even when it is few characters); the cut keeps the first 6 lines.
+  var WORDS_LINES = 6;
   function wordsView(text) {
-    var t = String(text == null ? '' : text).trim();
-    if (t.length <= WORDS_SHORT + 40) return { full: t, short: t, long: false };
+    var full = String(text == null ? '' : text).replace(/\r\n?/g, '\n').trim();
+    var lines = full.split('\n');
+    var tall = lines.length > WORDS_LINES + 2;
+    if (!tall && full.length <= WORDS_SHORT + 40) return { full: full, short: full, long: false };
+    var t = tall ? lines.slice(0, WORDS_LINES).join('\n') : full;
     var cut = t.slice(0, WORDS_SHORT);
-    var sp = cut.search(/\s\S*$/);
-    return { full: t, short: (sp > WORDS_SHORT - 60 ? cut.slice(0, sp) : cut).replace(/[\s,;:.\-]+$/, '') + '\u2026', long: true };
+    if (t.length > WORDS_SHORT) {
+      var sp = cut.search(/\s\S*$/);
+      if (sp > WORDS_SHORT - 60) cut = cut.slice(0, sp);
+    }
+    return { full: full, short: cut.replace(/[\s,;:.\-]+$/, '') + '\u2026', long: true };
   }
   // Header money line (owner only): the ONE figure an owner needs before calling, above the fold. The Quote card below has the lines.
   function headMoney(lead) {
@@ -1523,6 +1531,17 @@
     return OWNER_REPRICE_STATES[state] ? DETAILS_CHANGED_LINE : state === 'sent' ? DETAILS_CHANGED_SENT : '';
   }
 
+  // Session 11 (delivery receipts): the one line under a page-sent price. state must be 'sent' and delivery one of the three words;
+  // anything else (older data, null, an unknown word) = no line. The code only shows when it is a positive whole number (never raw text).
+  var DELIVERY_LINES = { delivered: 'Delivered to their phone.', sent: 'Sent. Their phone company has not confirmed yet.',
+    not_delivered: 'Not delivered. Their phone company did not accept it. Call them or text from your phone.' };
+  function deliveryView(o, state) {
+    if (state !== 'sent' || !o || typeof o.delivery !== 'string' || !Object.prototype.hasOwnProperty.call(DELIVERY_LINES, o.delivery)) return null;
+    var c = o.delivery_error_code;
+    var code = o.delivery === 'not_delivered' && typeof c === 'number' && isFinite(c) && Math.floor(c) === c && c > 0 ? String(c) : '';
+    return { text: DELIVERY_LINES[o.delivery], bad: o.delivery === 'not_delivered', code: code };
+  }
+
   // lead_detail.owner_quote -> what the lead page shows. null = nothing saved.
   function ownerQuoteView(lead, canSend, now) {
     var o = lead && lead.owner_quote;
@@ -1549,6 +1568,7 @@
       : o.earlier_maybe_sent === true ? 'An earlier text with a price may have gone out. Check the conversation before sending.' : '';
     return {
       state: state, sent: state === 'sent' || resend, status: status, count: count, age: ownerQuoteAge(o, state, block, canSend, now),
+      delivery: deliveryView(o, state),
       total: fmtMoney(o.total), items: items,
       // the Subtotal / Travel fee / Total rows to draw ('' = left out): quoteSums, so delivery is never counted twice (review r3)
       subtotal: ownerSums.subtotal, travel: ownerSums.travel, totalRow: ownerSums.total,

@@ -156,7 +156,7 @@
     recMoney: $('rec-money'), moneyAi: $('money-ai'), moneyAiText: $('money-ai-text'), moneyAiSub: $('money-ai-sub'), moneyAiBtn: $('money-ai-btn'),
     moneyDepositRow: $('money-deposit-row'), moneyDeposit: $('money-deposit'), moneyDepositStamp: $('money-deposit-stamp'), moneyKept: $('money-kept'), moneyErr: $('money-error'),
     qAddBox: $('q-add-box'), qAdd: $('q-add'), qAddNote: $('q-add-note'), qAddErr: $('q-add-err'),
-    recMyQuote: $('rec-myquote'), mqStatus: $('mq-status'), mqBody: $('mq-body'), mqNote: $('mq-note'), mqSend: $('mq-send'), mqResend: $('mq-resend'), mqErr: $('mq-error'),
+    recMyQuote: $('rec-myquote'), mqStatus: $('mq-status'), mqDelivery: $('mq-delivery'), mqBody: $('mq-body'), mqNote: $('mq-note'), mqSend: $('mq-send'), mqResend: $('mq-resend'), mqErr: $('mq-error'),
     quote: $('screen-quote'), qForm: $('q-form'), qStale: $('q-stale'), qRestored: $('q-restored'), qPromoEnded: $('q-promo-ended'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
     qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qOccasionPick: $('q-occasion-pick'), qPromoPick: $('q-promo-pick'), qPromoGives: $('q-promo-gives'), qMore: $('q-more'),
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
@@ -4836,6 +4836,14 @@
     show(el.recMyQuote, !!q);
     if (!q) return;
     setText(el.mqStatus, q.status);
+    // Session 11: delivery line under the sent price (text nodes only; the code is a checked whole number)
+    show(el.mqDelivery, !!q.delivery);
+    el.mqDelivery.classList.toggle('error', !!(q.delivery && q.delivery.bad));
+    el.mqDelivery.replaceChildren();
+    if (q.delivery) {
+      el.mqDelivery.appendChild(document.createTextNode(q.delivery.text));
+      if (q.delivery.code) el.mqDelivery.appendChild(make('small', 'mq-delivery-code', ' (code ' + q.delivery.code + ')'));
+    }
     var frag = document.createDocumentFragment();
     if (q.showDetails) {
       if (q.items.length) {
