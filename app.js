@@ -397,6 +397,8 @@
   var DETAIL_MONEY = ',quoted_at,details_edited_at,deposit_received_at,kept_amount';
   // R5 (sql/034, A3): the three columns appended LAST to lead_detail. The first read tries them; a lab without 034 falls to the tiers below, and the lead is simply never hidden or hideable.
   var DETAIL_HIDE = ',hidden,hidden_at,hideable';
+  // S13 R1 (sql/042, STOP rule): the two columns appended after those. The first read tries them; a lab without 042 falls to the tiers below and the page shows the older STOP lines.
+  var DETAIL_STOP = ',opted_back_in_at,followup_soft_block';
   var SEARCH_BASE = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
   var SEARCH_COLUMNS = SEARCH_BASE + ',source,manual_source'; // sql/011 columns on lead_detail; the search falls back without them
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
@@ -483,7 +485,10 @@
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
-          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE).eq('lead_id', id).maybeSingle().then(function (rh) {
+          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE + DETAIL_STOP).eq('lead_id', id).maybeSingle().then(function (rst) {
+            if (!rst.error) return rst;   // S13 R1: a lab without the 042 columns falls to the next tier
+            return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE).eq('lead_id', id).maybeSingle();
+          }).then(function (rh) {
             if (!rh.error) return rh;   // R5: the 034 columns are the view's last three; a lab without them falls to the next tier
             return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY).eq('lead_id', id).maybeSingle();
           }).then(function (rm) {

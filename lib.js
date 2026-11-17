@@ -465,7 +465,7 @@
   var STOP_NO_FOLLOWUP = "They texted STOP, so they won't get a follow-up text.";
   // B2 (chair, 11-10): the red banner on the record. STOP only stops AUTOMATIC texts; the owner may still text them himself, so his banner says what the system does.
   // Staff keep the old words. The record's "next" line for a STOP lead who waits on the owner is never empty (owner only).
-  var STOP_BANNER_OWNER = 'They texted STOP: the system sends them nothing.';
+  var STOP_BANNER_OWNER = 'They texted STOP: the system sends them nothing. They can text START to get texts again.';
   var STOP_BANNER_STAFF = 'Do not text: this person opted out.';
   function stopBanner(staff) { return staff ? STOP_BANNER_STAFF : STOP_BANNER_OWNER; }
   // Same rule as Needs you (waitsOnOwner): only a STOP lead that really waits on the owner (a hand-added one), never a form lead with just the flag.
@@ -715,6 +715,7 @@
   var HISTORY_ACTIONS = {
     'new': 'New lead', engaged: 'Started texting', quoted: 'Quoted', handed_off: 'Asked for you',
     contacted: 'Contacted', booked: 'Booked', lost: 'Lost', opted_out: 'Opted out', reopened: 'Reopened',
+    stopped: 'Texted STOP', started: 'Texted START',   // S13 R1 (STOP rule, sql/042): they texted STOP / START; the status before STOP comes back after START
     quote_priced: 'Priced by you', quote_sent: 'Quote sent', edited: 'Details edited',
     deposit: 'Deposit received', deposit_undone: 'Deposit unticked',   // R7 (C5, sql/033): the owner's tick; owner history only
     hidden: 'Hidden by you', unhidden: 'Shown again by you'   // R5 (A3, sql/034); hideHistoryText words an automatic unhide
@@ -2318,10 +2319,26 @@
   var NO_AUTO_TEXT_PERSON = 'The assistant answers if they text, but no automatic follow-up texts go to a lead you added.';
   // 022: after the owner's "no follow-up" (or none sent and no quote) the record says plainly that no text will go.
   var NO_FOLLOWUP_LINE = { chosen: 'No follow-up text will go out: you chose not to send one.', no_quote: 'No follow-up text will go out: there was no quote when you marked them Contacted.', opted_out: 'No follow-up text will go out: they texted STOP.' };
+  // S13 R1 fix M3 / m4: lead_detail.followup_soft_block is set only when a day-5 text would otherwise be due (contacted, automatic
+  // texts on, none sent yet, not opted out): 'maybe_not' = something they texted, or the assistant's STOP line, reads like they may
+  // not want more (ONE neutral line, never "opted out"); 'stopped_before' = they texted STOP earlier, so START never re-arms it.
+  var FOLLOWUP_SOFT_BLOCK = { maybe_not: 'No automatic follow-up text: they may not want more texts. Read the chat.' };
+  function stoppedBeforeLine(lead) {
+    var back = lead.opted_back_in_at ? fmtShortDate(lead.opted_back_in_at) : '';
+    return back ? 'Opted back in on ' + back + '. No automatic follow-up text.' : 'They texted STOP earlier. No automatic follow-up text.';
+  }
   function noAutoLine(lead) {
     if (!lead) return '';
     if (lead.auto_texts === false) return personConsent(lead) ? NO_AUTO_TEXT_PERSON : NO_AUTO_TEXT;
-    return NO_FOLLOWUP_LINE[lead.no_followup] || '';
+    // S13 R1 (STOP rule): the STOP line shows only while they are opted out; after START it says so, with the date when the server has it.
+    if (lead.no_followup === 'opted_out') {
+      if (isOptedOut(lead)) return NO_FOLLOWUP_LINE.opted_out;
+      return stoppedBeforeLine(lead);
+    }
+    if (NO_FOLLOWUP_LINE[lead.no_followup]) return NO_FOLLOWUP_LINE[lead.no_followup];
+    // S13 R1 (Q1 / Q2): only the day-5 text is held back. Never the words "opted out".
+    if (lead.followup_soft_block === 'stopped_before' && !isOptedOut(lead)) return stoppedBeforeLine(lead);
+    return FOLLOWUP_SOFT_BLOCK[lead.followup_soft_block] || '';
   }
 
   // cv_metrics().sources -> the buckets that have leads, in the server's order, with plain labels.
