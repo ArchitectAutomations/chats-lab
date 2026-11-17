@@ -401,6 +401,8 @@
   var DETAIL_STOP = ',opted_back_in_at,followup_soft_block';
   // S13 R2 (sql/043, workflow-text receipts): the two columns appended after those. A lab without 043 falls back to the 042 tier and shows no failed-text lines.
   var DETAIL_RECEIPTS = ',auto_text_delivery,owner_alert_delivery';
+  // S13 item 4 (sql/044, W5 + F7): why the lead is waiting on the owner. A lab without 044 falls back to the 043 tier and the page shows the older line.
+  var DETAIL_WAIT = ',wait_reason,wait_since';
   var SEARCH_BASE = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
   var SEARCH_COLUMNS = SEARCH_BASE + ',source,manual_source'; // sql/011 columns on lead_detail; the search falls back without them
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
@@ -487,7 +489,10 @@
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
-          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE + DETAIL_STOP + DETAIL_RECEIPTS).eq('lead_id', id).maybeSingle().then(function (rrc) {
+          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE + DETAIL_STOP + DETAIL_RECEIPTS + DETAIL_WAIT).eq('lead_id', id).maybeSingle().then(function (rw) {
+            if (!rw.error) return rw;   // S13 item 4: a lab without the 044 columns falls to the 043 tier
+            return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE + DETAIL_STOP + DETAIL_RECEIPTS).eq('lead_id', id).maybeSingle();
+          }).then(function (rrc) {
             if (!rrc.error) return rrc;   // S13 R2: a lab without the 043 columns falls to the round-1 tier
             return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE + DETAIL_STOP).eq('lead_id', id).maybeSingle();
           }).then(function (rst) {

@@ -1008,6 +1008,17 @@
   // `nudge` (optional) is the lead's pending auto_nudge row from follow_ups: its exact due time wins.
   // opts.owner (R2, A1): the owner may mark a lead who texted STOP, so once marked it reads like any lead. Only status opted_out (nothing marked
   // yet) stays empty for him. Staff (no opts) keep the old empty line for every STOP lead.
+  // wait_reason -> the start of the line ("Added by you 2 days ago. Not contacted yet."); the since-text comes from fmtSince.
+  var WAIT_LINES = {
+    added_by_you: 'Added by you',
+    waiting_price: 'Waiting for your price.',
+    priced_not_sent: 'Priced by you, not sent yet.',
+    priced_maybe_sent: 'Priced by you, may have been sent. Check before you send again.',
+    price_sent: 'You sent your price',
+    auto_quote_sent: 'Quote sent automatically',
+    asked_for_you: 'Asked for you',
+    waiting: 'Waiting on you'
+  };
   function nextAction(lead, now, nudge, opts) {
     if (!lead || (opts && opts.owner === true ? String(lead.status || '').toLowerCase() === 'opted_out' : isOptedOut(lead))) return '';
     var st = String(lead.status || '').toLowerCase();
@@ -1028,6 +1039,17 @@
     }
     if (st === 'handed_off') {
       var since = lead.status_at || lead.created_at;
+      // S13 item 4 (W5 + F7): lead_detail.wait_reason says WHY the lead waits on the owner; absent (older server, staff) = the old line below.
+      var wr = String(lead.wait_reason || '');
+      if (WAIT_LINES[wr]) {
+        var ws = fmtSince(lead.wait_since || since, now);
+        var wr1 = WAIT_LINES[wr];
+        if (wr === 'priced_not_sent' || wr === 'priced_maybe_sent') return wr1;
+        if (wr === 'waiting') return 'Waiting on you' + (!ws || ws === 'just now' ? '' : ' for ' + ws.replace(/ ago$/, '')) + '. Not ' + lc('contacted') + ' yet.';
+        // "Form came in" only when the lead really came from the website form (lead_detail.source); text-first and hand-added leads read "Came in".
+        if (wr === 'waiting_price') return 'Waiting for your price. ' + (String(lead.source || '') === 'tally_form' ? 'Form came in' : 'Came in') + (ws ? ' ' + ws : '') + '.';
+        return wr1 + (ws ? ' ' + ws : '') + '. Not ' + lc('contacted') + ' yet.';
+      }
       return 'Asked for you' + (since ? ' ' + fmtSince(since, now) : '') + ', not ' + lc('contacted') + ' yet';
     }
     if (st === 'contacted') {
@@ -3049,7 +3071,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     if (b.event_city) head.push(b.event_city + (view.distance ? ' (' + view.distance + ')' : ''));
     // The text must never START like a web address ("Quote: ..." reads as scheme "Quote" and a phone can paste it percent-encoded):
     // line 1 is plain words, line 2 the details, and neither may begin with "word:".
-    var lines = ['Your quote'];
+    var lines = ['Your quote:'];
     if (head.length) {
       var detail = head.join(', ');
       lines.push(/^[A-Za-z][A-Za-z0-9+.\-]*:/.test(detail) ? 'For ' + detail : detail);
@@ -4526,7 +4548,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       if (f.sent_at) return 'Automatic text sent ' + exportLocal(f.sent_at);
       return reason;
     }
-    if (type === 'owner_callback') return reason ? 'You: ' + reason : 'You';
+    if (type === 'owner_callback') return reason ? (/^(you |waiting on you)/i.test(reason) ? reason : 'You: ' + reason) : 'You';
     return reason || humanize(type);
   }
   function exportHistory(r) {
