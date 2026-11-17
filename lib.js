@@ -1536,9 +1536,33 @@
   // anything else (older data, null, an unknown word) = no line. The code only shows when it is a positive whole number (never raw text).
   var DELIVERY_LINES = { delivered: 'Delivered to their phone.', sent: 'Sent. Their phone company has not confirmed yet.',
     not_delivered: 'Not delivered. Their phone company did not accept it. Call them or text from your phone.' };
+  // S13 R2 (workflow-text receipts): Twilio error 21610 on any text we sent them.
+  var OPTED_OUT_AT_CARRIER_CODE = 21610;
+  var OPTED_OUT_AT_CARRIER_LINE = 'They opted out with their phone company: ask them to text START.';
+  var AUTO_TEXT_FAILED_LINE = 'Our last automatic text did not reach them. Call them or text from your phone.';
+  var OWNER_ALERT_FAILED_LINE = 'Your text alert about this lead did not reach your phone.';
+  // review n10 (2026-11-16): a failed owner_confirm is the reply to the owner's own DONE / BOOKED / LOST text, not an alert
+  var OWNER_REPLY_FAILED_LINE = 'Your text reply about this lead did not reach your phone.';
+  function failedTextView(d, line, optOutAware) {
+    if (!d || typeof d !== 'object' || (d.status !== 'undelivered' && d.status !== 'failed')) return null;
+    var c = d.error_code;
+    var good = typeof c === 'number' && isFinite(c) && Math.floor(c) === c && c > 0;
+    if (optOutAware && c === OPTED_OUT_AT_CARRIER_CODE) return { text: OPTED_OUT_AT_CARRIER_LINE, bad: true, code: '' };
+    return { text: line, bad: true, code: good ? String(c) : '' };
+  }
+  // Owner only: staff never see these. NULL (or anything unrecognised) = no line.
+  // review M1 (2026-11-16): never an automatic-text line while the lead is opted out (the server sends none then either; this is the belt).
+  function receiptFailureLines(lead, staff) {
+    if (staff || !lead) return { auto: null, alert: null };
+    var a = lead.owner_alert_delivery;
+    return { auto: isOptedOut(lead) ? null : failedTextView(lead.auto_text_delivery, AUTO_TEXT_FAILED_LINE, true),
+      alert: failedTextView(a, a && a.kind === 'owner_confirm' ? OWNER_REPLY_FAILED_LINE : OWNER_ALERT_FAILED_LINE, false) };
+  }
   function deliveryView(o, state) {
     if (state !== 'sent' || !o || typeof o.delivery !== 'string' || !Object.prototype.hasOwnProperty.call(DELIVERY_LINES, o.delivery)) return null;
     var c = o.delivery_error_code;
+    // S13 R2: 21610 = they opted out with their phone company; say that (no code) instead of the generic sentence.
+    if (o.delivery === 'not_delivered' && c === OPTED_OUT_AT_CARRIER_CODE) return { text: OPTED_OUT_AT_CARRIER_LINE, bad: true, code: '' };
     var code = o.delivery === 'not_delivered' && typeof c === 'number' && isFinite(c) && Math.floor(c) === c && c > 0 ? String(c) : '';
     return { text: DELIVERY_LINES[o.delivery], bad: o.delivery === 'not_delivered', code: code };
   }
@@ -5233,6 +5257,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     noQuoteLine: noQuoteLine,
     followupChoice: followupChoice,
     noAutoLine: noAutoLine,
+    receiptFailureLines: receiptFailureLines,
     NO_AUTO_TEXT: NO_AUTO_TEXT,
     sourceRows: sourceRows,
     pushState: pushState,

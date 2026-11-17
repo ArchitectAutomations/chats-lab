@@ -199,7 +199,7 @@
     hidScreen: $('screen-hidden'), hidLoading: $('hid-loading'), hidList: $('hid-list'), hidEmpty: $('hid-empty'), hidEmptyText: $('hid-empty-text'), hidEmptyHint: $('hid-empty-hint'),
     hidError: $('hid-error'), hidReload: $('hid-reload'), hidMsg: $('hid-msg'),
     addDup: $('add-dup'), addDupList: $('add-dup-list'), addDupMore: $('add-dup-more'), addDupSame: $('add-dup-same'), addDupOpt: $('add-dup-opt'),
-    recSource: $('rec-source'), recNewText: $('rec-newtext'), recNoauto: $('rec-noauto'), recPrice: $('rec-price'), priceLink: $('price-link'),
+    recSource: $('rec-source'), recNewText: $('rec-newtext'), recNoauto: $('rec-noauto'), recAutoFail: $('rec-autofail'), recAlertFail: $('rec-alertfail'), recPrice: $('rec-price'), priceLink: $('price-link'),
     strip: $('strip'), stripChip: $('strip-chip'), sysFold: $('sys-fold'), hNotes: $('h-notes'),
     recordLoading: $('record-loading'), recHead: $('rec-head'), recName: $('rec-name'), recNext: $('rec-next'), recJob: $('rec-job'), recPhone: $('rec-phone'), recPhoneNone: $('rec-phone-none'), recHistory: $('rec-history'),
     optoutBanner: $('optout-banner'), recContact: $('rec-contact'),
@@ -399,6 +399,8 @@
   var DETAIL_HIDE = ',hidden,hidden_at,hideable';
   // S13 R1 (sql/042, STOP rule): the two columns appended after those. The first read tries them; a lab without 042 falls to the tiers below and the page shows the older STOP lines.
   var DETAIL_STOP = ',opted_back_in_at,followup_soft_block';
+  // S13 R2 (sql/043, workflow-text receipts): the two columns appended after those. A lab without 043 falls back to the 042 tier and shows no failed-text lines.
+  var DETAIL_RECEIPTS = ',auto_text_delivery,owner_alert_delivery';
   var SEARCH_BASE = 'lead_id,full_name,phone,email,status,event_date,quote_total,last_activity_at,status_at,guests';
   var SEARCH_COLUMNS = SEARCH_BASE + ',source,manual_source'; // sql/011 columns on lead_detail; the search falls back without them
   var FOLLOWUP_COLUMNS = 'lead_id,display_name,status,event_date,quote_total,follow_up_type,due_at,sent_at,reason';
@@ -485,7 +487,10 @@
       fetchThread: function (id) {
         return Promise.all([
           // lead_detail (explicit columns); falls back to lead_list if the view is not there yet.
-          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE + DETAIL_STOP).eq('lead_id', id).maybeSingle().then(function (rst) {
+          client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE + DETAIL_STOP + DETAIL_RECEIPTS).eq('lead_id', id).maybeSingle().then(function (rrc) {
+            if (!rrc.error) return rrc;   // S13 R2: a lab without the 043 columns falls to the round-1 tier
+            return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE + DETAIL_STOP).eq('lead_id', id).maybeSingle();
+          }).then(function (rst) {
             if (!rst.error) return rst;   // S13 R1: a lab without the 042 columns falls to the next tier
             return client.from('lead_detail').select(DETAIL_COLUMNS + DETAIL_EXTRA + DETAIL_SOURCE + DETAIL_SHARED + DETAIL_CONSENT + DETAIL_MONEY + DETAIL_HIDE).eq('lead_id', id).maybeSingle();
           }).then(function (rh) {
@@ -4835,6 +4840,18 @@
     show(el.recQuote, true);
   }
 
+  // S13 R2: failed automatic text / failed owner alert (owner only; text nodes only, the code is a checked whole number).
+  function renderReceiptFailures(lead) {
+    var r = L.receiptFailureLines(lead, isStaff());
+    [[el.recAutoFail, r.auto], [el.recAlertFail, r.alert]].forEach(function (p) {
+      p[0].replaceChildren();
+      show(p[0], !!p[1]);
+      if (!p[1]) return;
+      p[0].appendChild(document.createTextNode(p[1].text));
+      if (p[1].code) p[0].appendChild(make('small', 'mq-delivery-code', ' (code ' + p[1].code + ')'));
+    });
+  }
+
   // sql/023: the price the owner saved on this lead, its send state, and the send button.
   function renderMyQuote(lead) {
     var q = !isStaff() ? L.ownerQuoteView(lead, feature('quote') && L.quoteSendFeatureOn(custom.features)) : null;
@@ -5013,6 +5030,7 @@
     fillSource(lead);
     show(el.recNewText, !isStaff() && S.thread.newText === true);
     setText(el.recNoauto, L.noAutoLine(lead));
+    renderReceiptFailures(lead);
     show(el.recHead, true);
     show(el.btnEdit, editAvailable());   // R4 (A2): owner only, behind features.editLead and a server that has cv_edit_lead
     show(el.btnHide, hideAvailable() && L.hideOffered(lead, { staff: isStaff() }));   // R5 (A3): owner only, behind features.hideLead, and only while the server says hideable
@@ -5328,7 +5346,7 @@
     el.calAgendaWeek.replaceChildren(); el.calAgendaLater.replaceChildren(); el.metricsBody.replaceChildren();
     el.eventFacts.replaceChildren(); el.recEmail.replaceChildren(); S.eventMoreFor = null; el.quoteBody.replaceChildren(); el.othersList.replaceChildren(); el.sharedList.replaceChildren(); el.history.replaceChildren();
     el.recPhone.removeAttribute('href'); el.contactActions.replaceChildren();
-    ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recPhone', 'recEmail', 'eventDetails', 'confirmText', 'confirmNote', 'stripNote', 'actionErr', 'moneyErr', 'noteErr', 'contactNote']
+    ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recAutoFail', 'recAlertFail', 'recPhone', 'recEmail', 'eventDetails', 'confirmText', 'confirmNote', 'stripNote', 'actionErr', 'moneyErr', 'noteErr', 'contactNote']
       .forEach(function (k) { if (el[k]) el[k].textContent = ''; });
     el.noteText.value = ''; syncNoteSave();
     closeConfirm();

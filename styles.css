@@ -976,6 +976,8 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 /* Record header: where the lead came from, and the no-automatic-texts line (muted, on green). */
 .rec-source { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); line-height: 1.4; color: var(--muted-on-primary); }
 .rec-source-noquote { font-weight: 650; color: var(--on-primary); }
+.rec-receipt-fail { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); font-weight: 700; color: var(--muted-on-primary); }
+.rec-receipt-fail small { font-weight: 400; }
 .rec-noauto { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); color: var(--muted-on-primary); }
 .rec-price { margin: 0 0 var(--sp-2); padding: 0 var(--sp-1); }
 .rec-price .fact-link { color: var(--link); }
