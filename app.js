@@ -287,7 +287,7 @@
     nav: { cur: '', from: '', lead: null },  // screen before More / Help, and the lead record Help was reached from (same session)
     team: { view: null, listErr: '', listSeq: 0, addBusy: false, busy: {}, confirmPhone: '', confirmName: '', loading: false },  // Team: memory only
     support: { cfg: null, cfgState: 'idle', key: null, busy: false, removeLead: false, rows: null, listErr: false, listSeq: 0, cfgSeq: 0 },
-    ask: { cfg: null, cfgState: 'idle', cfgSeq: 0, cfgPromise: null, items: [], questions: [], busy: false, seq: 0, waitTimer: null },  // Ask your CRM: memory only, never stored
+    ask: { cfg: null, cfgState: 'idle', cfgSeq: 0, cfgPromise: null, items: [], turns: [], day: '', viaLead: false, busy: false, seq: 0, waitTimer: null },  // Ask your CRM: memory only, never stored
     exp: { busy: false, seq: 0, prepared: null, on: null, cfgSeq: 0 },  // spreadsheet download: the file made by tap 1, kept in memory for tap 2
     actionButtons: {}
   };
@@ -825,6 +825,12 @@
     var asking = !!S.confirming && S.confirming.kind === 'quote-leave';
     // Round 4: leaving the list (to a lead, a tab) keeps where it was; showList puts it back.
     if (S.screen === 'list' && name !== 'list') S.listTop = el.listScroll.scrollTop;
+    // W17 (s13 item 7): the Ask chat stays while the owner opens a lead from an answer and comes back; any other screen clears it.
+    if (S.ask) {
+      var askMv = L.askMove(S.screen, name, S.ask.viaLead);
+      S.ask.viaLead = askMv.viaLead;
+      if (askMv.clear) clearAskChat();
+    }
     S.screen = name;
     var signedIn = name !== 'signin' && name !== 'role';
     el.app.classList.toggle('signed-in', signedIn);
@@ -2810,7 +2816,10 @@
   /* ---------- Ask your CRM (More) ----------
      Read only: the question goes to the cv-ask Edge Function, the answer comes back as pieces (text, figures, lead chips) that are
      drawn with createElement / textContent only. The conversation is a plain array in memory: never written to storage, gone on
-     sign-out or reload. Only the owner's last two QUESTIONS go along with a new one, never the answers. */
+     sign-out or reload. W17 (cv-ask v20): the chat's earlier turns go along with a new question (at most 10: each question with long
+     digit runs masked, an outline of its answer with "[figure]" / "[lead A]" in place of every value and name, and the lead ids; see
+     L.askTurn / L.askRequest). The chat stays while the owner opens a lead from an answer and comes back with Back; it is cleared when
+     he goes to any other screen (setScreen -> L.askMove), when the Toronto day changed since the last question, and on sign-out. */
 
   var ASK_WAIT = 'Looking it up…';
   var ASK_WAIT_LONG = 'Still working…';
@@ -2950,7 +2959,8 @@
   function submitAsk(starter) {
     var a = S.ask, own = typeof starter === 'string';
     if (a.busy || !askOn()) return;
-    var r = own ? L.askRequest(starter, a.questions, a.cfg.max) : L.askRequest(el.askInput.value, a.questions, a.cfg.max);
+    if (L.askNewDay(a.day)) { clearAskChat(); renderAsk(); }   // W17: nothing carries across days
+    var r = own ? L.askRequest(starter, a.turns, a.cfg.max) : L.askRequest(el.askInput.value, a.turns, a.cfg.max);
     if (!r.ok) {
       if (r.error) { a.items.push({ role: 'err', text: r.error }); renderAsk(); }
       return;
@@ -2973,7 +2983,7 @@
     Promise.resolve().then(function () { return S.api.ask(r.body); }).then(function (res) {
       if (n !== a.seq) return;
       wait.role = 'a'; wait.res = res; wait.text = '';
-      a.questions.push(r.body.question); a.questions = a.questions.slice(-2);
+      a.turns.push(L.askTurn(r.body.question, res)); a.turns = a.turns.slice(-L.ASK_MEMORY); a.day = L.today().ymd;
       if (!own) el.askInput.value = '';
     }, function (err) {
       if (n !== a.seq) return;
@@ -2999,13 +3009,25 @@
     if (a.cfgState === 'ready' || a.cfgState === 'failed' || a.cfgState === 'off') {
       if (!askOn()) { location.replace('#/'); return; }
     }
+    if (!a.busy && L.askNewDay(a.day)) clearAskChat();   // W17: a chat from an earlier day is not shown or remembered
     renderAsk();
+  }
+
+  // W17: a fresh chat (the thread on screen and its memory). The switch, the box's draft and the config stay; an answer still on its
+  // way is dropped (the sequence number moves on).
+  function clearAskChat() {
+    var a = S.ask;
+    if (!a.items.length && !a.turns.length && !a.busy) { a.day = ''; return; }
+    clearTimeout(a.waitTimer);
+    a.items = []; a.turns = []; a.day = ''; a.viaLead = false; a.busy = false; a.seq++; a.waitTimer = null;
+    el.askThread.replaceChildren();
+    el.askInput.disabled = false; el.askSend.disabled = false;
   }
 
   function resetAsk() {
     var a = S.ask;
     clearTimeout(a.waitTimer);
-    S.ask = { cfg: null, cfgState: 'idle', cfgSeq: a.cfgSeq + 1, cfgPromise: null, items: [], questions: [], busy: false, seq: a.seq + 1, waitTimer: null };
+    S.ask = { cfg: null, cfgState: 'idle', cfgSeq: a.cfgSeq + 1, cfgPromise: null, items: [], turns: [], day: '', viaLead: false, busy: false, seq: a.seq + 1, waitTimer: null };
     el.askThread.replaceChildren(); el.askStarters.replaceChildren();
     el.askInput.value = ''; el.askInput.disabled = false; el.askSend.disabled = false;
     renderAskCount();

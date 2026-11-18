@@ -4697,24 +4697,29 @@ function renderPriceBlockSms(lineItems, total, currency) {
 
   /* ---------- Ask your CRM (session 3, round 4) ---------- */
 
-  // Contract: .workflow/scratch/crm-s3-r4-contract.md, section 9. The page sends the owner's question (plus the last two QUESTIONS, never answers)
-  // to the cv-ask Edge Function and renders the answer it gets back: text pieces, figure pieces (a value the server pulled from the database
+  // Contract: .workflow/scratch/crm-s3-r4-contract.md, section 9. The page sends the owner's question (plus, since cv-ask v20 / W17, the earlier
+  // turns of the chat on screen: up to 10, each = the question with long digit runs masked, an OUTLINE of the answer and the lead ids behind it;
+  // see askTurn / askRequest) to the cv-ask Edge Function and renders the answer it gets back: text pieces, figure pieces (a value the server pulled from the database
   // result, shown here with the page's own money / date / number helpers) and lead pieces (a tappable chip). The model's words are only ever
   // shown as plain text (textContent in app.js): no HTML, no links, no markdown.
   var ASK_MAX_DEFAULT = 300;
-  var ASK_HISTORY = 2;
+  // W17 (Kevin 11-15 "Yes, both"): the whole chat on screen goes along, at most ASK_MEMORY turns; the server takes 16 KB per body.
+  var ASK_MEMORY = 10;
+  var ASK_MEMORY_ANSWER = 400;   // characters of one answer outline (the server drops a longer one)
+  var ASK_BODY_MAX = 15000;      // bytes; the oldest turns go first when a body would be larger (server limit 16384)
   var ASK_STARTERS = ['How much did I book this month?', 'Who needs me right now?', 'What’s booked this weekend?', 'Where are my leads coming from?'];
   var ASK_STATUSES = ['answered', 'no_data', 'out_of_scope', 'unclear', 'invalid'];
   var ASK_FALLBACK = 'I couldn’t answer that one reliably. Try asking it another way, or check Metrics.';
   var ASK_FULL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  var ASK_KINDS = { auto_text: 'Automatic text', call_back: 'Call back', held_alert: 'Held alert', morning_list: 'Morning list' };
+  // F13 (s13 item 7): a lead waiting on the owner may have no phone at all, so the follow-up kind never says "Call back".
+  var ASK_KINDS = { auto_text: 'Automatic text', call_back: 'Waiting on you', held_alert: 'Held alert', morning_list: 'Morning list' };
   var ASK_QUOTE_STATES = { priced: 'Priced', needs_price: 'Needs a price' };
-  var ASK_WINDOWS = { due_now: 'Due now', next_7_days: 'Next 7 days', later: 'Later', call_backs: 'Call backs', sent_recently: 'Sent recently', all: 'All' };
+  var ASK_WINDOWS = { due_now: 'Due now', next_7_days: 'Next 7 days', later: 'Later', call_backs: 'Waiting on you', sent_recently: 'Sent recently', all: 'All' };
   // follow_ups.reason keys (sql/014 ask_reason_key) -> plain words.
   var ASK_REASONS = {
     auto_overdue: 'Automatic text is overdue', auto_day5: 'Day-5 follow-up text', auto_sent: 'Day-5 follow-up text sent',
     added_by_you: 'Added by you: contact them yourself', needs_price: 'Needs your price', priced_not_sent: 'Priced by you, not sent yet', priced_maybe_sent: 'Priced by you, may have been sent, check', asked_for_you: 'Asked for you in the chat',
-    new_quote_sent: 'Quote sent: waiting for your call', held_overnight: 'Alert held overnight', texted_overnight: 'Texted you overnight',
+    new_quote_sent: 'Quote sent: waiting on you', held_overnight: 'Alert held overnight', texted_overnight: 'Texted you overnight',
     morning_list: 'In your morning list', other: 'Other'
   };
   var ASK_SOURCES = { form: 'Your booking form', text: 'Texted you first', manual: 'Added by you' };
@@ -4741,19 +4746,105 @@ function renderPriceBlockSms(lineItems, total, currency) {
     return out.length ? out : ASK_STARTERS.slice();
   }
 
-  // The body sent to cv-ask. `history` = the owner's earlier questions in this session (newest last); only the last two go along.
+  // W17: a run of 7 or more digits (any script; spaces, dots, dashes, slashes, brackets or a plus between them) is a phone number or
+  // another long number the owner typed. In memory it becomes "[number]", so it goes to the AI once, with the question that held it,
+  // and never again. A real-looking date (2026-09-01: 19xx / 20xx year, month 1-12, day 1-31, ASCII digits) and shorter numbers
+  // ("2026", "50 guests", "ends in 0157") stay. The server masks again with the same rule.
+  // s14 fix F-C: x / X / × between digit groups joins them too ("416x555x0150"), and a date-shaped run that is no real date
+  // ("4165-55-01") is masked. Accepted, not masked: digits spelled out as words, runs joined by commas.
+  var ASK_DIGIT_RUN = /[+(]?\p{Nd}(?:[\s().+\/_\-xX\u2010-\u2015\u2212\uff0d\u00b7\u00d7]{0,3}\p{Nd})+/gu;   // review F1: + _ minus, fullwidth hyphen, middle dot (never a comma)
+  var ASK_REAL_DATE = /^(?:19|20)[0-9]{2}([-\/.])(?:0?[1-9]|1[0-2])\1(?:0?[1-9]|[12][0-9]|3[01])$/u;
+  function askMaskDigits(v) {
+    return String(v === null || v === undefined ? '' : v).replace(ASK_DIGIT_RUN, function (m) {
+      var n = (m.match(/\p{Nd}/gu) || []).length;
+      return n >= 7 && !ASK_REAL_DATE.test(m.replace(/^[+(]/, '')) ? '[number]' : m;
+    });
+  }
+
+  // W17: what the page remembers of one answered question: the question (digit runs masked) and an OUTLINE of the answer built from
+  // the server's own pieces: text pieces as they came (they already passed the server's checks: no digits, no names, no links), every
+  // figure as "[figure]", every lead chip as "[lead A]", "[lead B]" ... in order of first appearance, with the lead ids behind the
+  // letters. No figure value, no name, no city and no customer text ever enters memory. Only a real answer has an outline
+  // (answered / no_data / out_of_scope / unclear); the safe fallback and anything else keep an empty one. At most 400 characters,
+  // cut at a piece boundary; a lead whose chip falls past the cut is left out with it.
+  var ASK_OUTLINE_STATUSES = ['answered', 'no_data', 'out_of_scope', 'unclear'];
+  function askTurn(question, res) {
+    var r = res && typeof res === 'object' ? res : {};
+    var q = askMaskDigits(askPlain(question));
+    var turn = { q: q, a: '', leads: [] };
+    if (!q || ASK_OUTLINE_STATUSES.indexOf(r.status) === -1 || !Array.isArray(r.segments)) return turn;
+    var out = '', letters = {}, leads = [], full = false;
+    r.segments.slice(0, 80).forEach(function (s) {
+      if (full || !s || typeof s !== 'object') return;
+      var piece = '';
+      if (s.t === 'text') piece = String(s.v === null || s.v === undefined ? '' : s.v).replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, ' ');
+      else if (s.t === 'fig') piece = '[figure]';
+      else if (s.t === 'lead' && isUuid(s.id)) {
+        var id = s.id.toLowerCase();
+        if (!Object.prototype.hasOwnProperty.call(letters, id)) {
+          if (leads.length >= 10) { full = true; return; }
+          letters[id] = 'ABCDEFGHIJ'.charAt(leads.length);
+        }
+        piece = '[lead ' + letters[id] + ']';
+        var next = (out + piece).replace(/\s+/g, ' ').trim();
+        if (next.length > ASK_MEMORY_ANSWER) { full = true; if (leads.indexOf(id) === -1) delete letters[id]; return; }
+        if (leads.indexOf(id) === -1) leads.push(id);
+        out += piece;
+        return;
+      }
+      var cand = (out + piece).replace(/\s+/g, ' ').trim();
+      if (cand.length > ASK_MEMORY_ANSWER) { full = true; return; }
+      out += piece;
+    });
+    var a = out.replace(/\s+/g, ' ').trim();
+    if (/[0-9{}<>]/.test(a)) return turn;   // never happens with a real answer; the server would drop it anyway
+    turn.a = a; turn.leads = a ? leads : [];
+    return turn;
+  }
+
+  // UTF-8 length of a string (the server's 16 KB limit counts bytes).
+  function askBytes(s) { return encodeURIComponent(s).replace(/%[0-9A-F]{2}/gi, 'x').length; }
+
+  // The body sent to cv-ask. `turns` = the chat's earlier turns (askTurn objects, oldest first; a plain string counts as a question with
+  // no outline). The last ASK_MEMORY go along as previous_turns; if the body would pass ASK_BODY_MAX bytes the oldest are left out.
   // { ok: true, body } or { ok: false, error } (error '' = nothing to send).
-  function askRequest(question, history, max) {
+  function askRequest(question, turns, max) {
     var lim = isFinite(Number(max)) && Number(max) > 0 ? Math.floor(Number(max)) : ASK_MAX_DEFAULT;
     var q = askPlain(question);
     if (!q) return { ok: false, error: '' };
     if (q.length > lim) return { ok: false, error: 'Please shorten the question.' };
-    var prev = (Array.isArray(history) ? history : []).filter(function (x) { return typeof x === 'string'; })
-      .map(function (x) { return askPlain(x).slice(0, lim); }).filter(Boolean).slice(-ASK_HISTORY);
+    var prev = [];
+    (Array.isArray(turns) ? turns : []).forEach(function (x) {
+      var t = typeof x === 'string' ? { q: x, a: '', leads: [] } : x;
+      if (!t || typeof t !== 'object' || typeof t.q !== 'string') return;
+      var tq = Array.from(askMaskDigits(askPlain(t.q))).slice(0, lim).join('');   // cut on code points (never half an emoji)
+      if (!tq) return;
+      var ta = typeof t.a === 'string' ? askPlain(t.a) : '';
+      var tl = ta && Array.isArray(t.leads) ? t.leads.filter(isUuid).map(function (id) { return id.toLowerCase(); }).slice(0, 10) : [];
+      if (ta.length > ASK_MEMORY_ANSWER) { ta = ''; tl = []; }
+      prev.push({ q: tq, a: ta, leads: tl });
+    });
+    prev = prev.slice(-ASK_MEMORY);
     var body = { question: q };
-    if (prev.length) body.previous_questions = prev;
+    if (prev.length) body.previous_turns = prev;
+    while (body.previous_turns && askBytes(JSON.stringify(body)) > ASK_BODY_MAX) {
+      body.previous_turns.shift();
+      if (!body.previous_turns.length) delete body.previous_turns;
+    }
     return { ok: true, body: body };
   }
+
+  // W17 (Kevin, item 7 decision 3): the chat stays while the owner opens a lead from an answer and comes back; it is cleared when he goes
+  // to any other screen, on the next day (Toronto) and on sign-out. askMove(from, to, viaLead) -> { clear, viaLead }: viaLead = the owner
+  // is on a lead page he reached from Ask.
+  function askMove(from, to, viaLead) {
+    if (from === to) return { clear: false, viaLead: !!viaLead && to === 'thread' };
+    if (from === 'ask' && to === 'thread') return { clear: false, viaLead: true };
+    if (from === 'thread' && viaLead && to === 'ask') return { clear: false, viaLead: false };
+    return { clear: from === 'ask' || (from === 'thread' && !!viaLead), viaLead: false };
+  }
+  // True when `day` (the Toronto day of the chat's LAST answer) is not today: any question on a new day starts a fresh chat.
+  function askNewDay(day, now) { return typeof day === 'string' && day !== '' && day !== today(now).ymd; }
 
   function askNumber(v, digits) {
     var n = Number(v);
@@ -5428,6 +5519,13 @@ function renderPriceBlockSms(lineItems, total, currency) {
     askConfigView: askConfigView,
     askStarters: askStarters,
     askRequest: askRequest,
+    ASK_MEMORY: ASK_MEMORY,
+    ASK_MEMORY_ANSWER: ASK_MEMORY_ANSWER,
+    ASK_BODY_MAX: ASK_BODY_MAX,
+    askMaskDigits: askMaskDigits,
+    askTurn: askTurn,
+    askMove: askMove,
+    askNewDay: askNewDay,
     askLabel: askLabel,
     askFigure: askFigure,
     askView: askView,
