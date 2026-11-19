@@ -6,8 +6,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#193122">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#E9E4D8">
 <!--
   CSP: the page loads scripts only from itself and the one pinned jsDelivr file (also SRI-checked).
   connect-src allows any *.supabase.co project; at deploy, narrow it to the exact project host, e.g.
@@ -20,7 +20,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Leads">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -116,10 +116,9 @@
       <div class="filters filters-extra" id="filters-extra" role="group" aria-label="More ways to show leads" hidden></div>
       <!-- D3 (Kevin 11-10): under the Lost chip, Lost / Old lead / Opted out. Owner only; built by renderFilters(). -->
       <div class="filters filters-extra lost-parts" id="lost-parts" role="group" aria-label="Which kind of lost lead" hidden></div>
-      <!-- Item 9 (W11): Sort the chip's list (Newest first / Event date soonest / latest). Not in See all. Options built by app.js from L.listSorts(). -->
+      <!-- Item 9 (W11): Sort the chip's list. One pill ("Sort: Latest activity") opens the sort sheet at the end of this page. Not in See all. Text + options built by app.js from L.listSorts(). -->
       <div class="list-sort" id="list-sort-box" hidden>
-        <label class="field-label" for="list-sort">Sort</label>
-        <select class="field list-sort-select" id="list-sort"></select>
+        <button class="sort-pill" id="list-sort" type="button" aria-haspopup="dialog"><span class="sort-pill-text" id="list-sort-text">Sort</span></button>
       </div>
       <!-- The full Needs-you list ("See all"): its heading and the way back to the chips. -->
       <div class="list-head" id="list-head" hidden>
@@ -786,6 +785,17 @@
       <div class="sheet-actions">
         <button class="btn primary" id="bulk-yes" type="button" disabled></button>
         <button class="btn quiet" id="bulk-no" type="button">Cancel</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Sort sheet: opened by the Sort pill over the lead lists. The radio rows are rebuilt by app.js on every open from L.listSorts({ staff }). -->
+  <dialog class="sheet sheet-sort" id="sort-sheet" aria-labelledby="sort-title">
+    <div class="sheet-body">
+      <p class="sheet-text" id="sort-title">Sort leads</p>
+      <div class="sort-list" id="sort-list" role="radiogroup" aria-labelledby="sort-title"></div>
+      <div class="sheet-actions">
+        <button class="btn quiet" id="sort-close" type="button">Close</button>
       </div>
     </div>
   </dialog>

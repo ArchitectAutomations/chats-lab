@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261119-1236-6a23903e";
+window.CV_BUILD = "20261119-1853-91ad6002";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -26,14 +26,16 @@ window.CV_CUSTOM = {
 
   // Colours, rule 60 / 30 / 10: primary (page, header, menu) 60%, secondary (rows, cards, tiles,
   // sheet) 30%, accent (buttons, active tab, live dot, bars, links, focus) 10%. Hex only (#rgb / #rrggbb).
-  // Shades, text colours and tints are worked out from these three; any of them can also be set here
-  // (primaryDeep, onPrimary, mutedOnPrimary, secondaryDeep, onSecondary, mutedOnSecondary, accentStrong,
-  // accentLight, accentTint, accentInk, onAccent, dangerOnPrimary, dangerOnSecondary).
+  // Shades, text colours and tints are fixed hex values in styles.css (:root), tuned to this palette (cream / paper / ink blue); they do NOT follow these three.
+  // A client with another palette therefore needs the FULL token set here, not just these three: primaryDeep, primaryRaised, lineOnPrimary, onPrimary, mutedOnPrimary,
+  // secondaryDeep, onSecondary, mutedOnSecondary, accentStrong, accentLight, accentTint, accentInk, accentWash, onAccent, dangerOnPrimary, dangerOnSecondary,
+  // cardRing, bubbleOut, fieldBorder. Leaving one out keeps the cream default for it.
   // A new palette must be re-checked for WCAG AA contrast (see the note at the top of styles.css).
   theme: {
-    primary: '#1F3D2B',    // forest green
-    secondary: '#E8DCC4',  // sand beige
-    accent: '#8B5CF6'      // electric purple
+    primary: '#F3EEE2',    // cream paper
+    secondary: '#FBF8F1',  // paper (cards, rows, fields)
+    accent: '#2F4A73',     // ink blue
+    primaryDeep: '#E9E4D8' // header + bottom bar; also the browser bar colour (app.js sets theme-color from this, else from primary)
   },
 
   // Money and time.

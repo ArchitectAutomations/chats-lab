@@ -1,74 +1,67 @@
 /* Owner page. Phone first (360-430 px), system fonts, no third-party assets.
 
-   COLOUR RULE 60 / 30 / 10 (Kevin, 2026-11-06)
-     60%  primary   (forest green)  page background, header, bottom bar
-     30%  secondary (sand beige)    list rows, cards, tiles, lead bubbles, status strip, sheet, fields
-     10%  accent    (purple)        primary buttons, active tab + filter, links, focus (never status, never a destructive button)
-   One palette for light and dark OS settings. The three base colours (and any derived token) can be
-   overridden per client from CV_CUSTOM.theme in config.js; these defaults ARE Kevin's palette, so the
-   page looks right before any script runs. Contrast (WCAG 2.x) for the default palette:
-     sand on green 8.78, green on sand 8.78, sand on deep green 10.28,
-     muted-on-green #B6B49E 5.69, muted-on-sand #475D4A 5.27,
-     accent-light #C5AEFA on green 6.14 (links + focus on green),
-     accent-strong #6845B8: white on it 6.7, as text on sand 4.94 (small-text fills, links on sand),
-     white on accent #8B5CF6 4.23: AA for LARGE text only, so primary buttons use 19px bold labels.
-   Each derived token carries a static fallback line first (older browsers without color-mix). */
+   COLOUR RULE 60 / 30 / 10 (Kevin, 2026-11-06; palette changed to cream paper / ink / ink blue on 2026-11-19)
+     60%  primary   (cream #F3EEE2)   page background, header, bottom bar
+     30%  secondary (paper #FBF8F1)   list rows, cards, tiles, lead bubbles, status strip, sheet, fields
+     10%  accent    (ink blue #2F4A73) primary buttons, active tab + filter, links, focus, the Call / Text / Email outline (never status, never a destructive button)
+   Ink #2B2723 is the text colour on both surfaces and the fill of the "Needs you" chip, the Fixed chip and the secondary "Turn on" button.
+   ONE light palette (the page does not follow the OS dark setting). The three base colours (and any derived token) can be
+   overridden per client from CV_CUSTOM.theme in config.js; these defaults ARE Kevin's palette, so the page looks right before any
+   script runs. Every derived token is a hand-picked hex (no colour-mixing), so a client palette sets the tokens it needs to change.
+   Contrast (WCAG 2.x), asserted from these tokens by tools/tests/test_lib.js ("theme tokens"):
+     ink on cream 12.80, ink on paper 13.97, ink on the header 11.68, muted ink #5C554D on cream 6.34 / paper 6.92 / header 5.78 / raised 5.58,
+     ink blue #2F4A73: white on it 8.94, as text on cream 7.73 / paper 8.43 / header 7.05 (links, focus rings, Call / Text / Email text + outline),
+     blue ink #233856 on the tint #D9DEE8 8.79, brick red #9B2C18 on cream 6.56 / paper 7.15, white on the red banner 7.59,
+     field border #857D72 (UI parts need 3:1): 3.83 on paper, 3.51 on cream; the toggle OFF track is that colour (3.51 on cream, paper knob on it 3.83),
+     the toggle ON track is the blue (7.73 on cream, white knob on it 8.94).
+   Primary buttons use 19px bold labels (large text) but pass AA at normal size too.
+   Hairline rings (--card-ring) separate paper cards from cream: the two colours are close, so the rows carry a 1px ring.
+   Colours live in this :root block; the only hex outside it are the shadows' rgba(43, 39, 35, ..) and one ring on the wide calendar bars. */
 :root {
   /* base palette */
-  --primary: #1F3D2B;
-  --secondary: #E8DCC4;
-  --accent: #8B5CF6;
+  --primary: #F3EEE2;                   /* cream: the page */
+  --secondary: #FBF8F1;                 /* paper: cards, rows, fields, sheets */
+  --accent: #2F4A73;                    /* ink blue */
 
-  /* derived: green */
-  --primary-deep: #193122;
-  --primary-deep: color-mix(in srgb, var(--primary) 80%, #000);
-  --primary-raised: #37503D;            /* system text bubbles */
-  --primary-raised: color-mix(in srgb, var(--secondary) 12%, var(--primary));
-  --line-on-primary: #3E5745;
-  --line-on-primary: color-mix(in srgb, var(--secondary) 18%, var(--primary));
-  --on-primary: #E8DCC4;
-  --on-primary: var(--secondary);
-  --muted-on-primary: #B6B49E;
-  --muted-on-primary: color-mix(in srgb, var(--secondary) 75%, var(--primary));
+  /* cream surfaces */
+  --primary-deep: #E9E4D8;              /* header + bottom bar + conversation panel: a shade deeper than the page */
+  --primary-raised: #E5E0D5;            /* Needs you block, calendar cells, track of the journey bars, owner question bubbles */
+  --line-on-primary: #D3CCB9;           /* hairlines on cream */
+  --on-primary: #2B2723;                /* ink */
+  --muted-on-primary: #5C554D;          /* muted ink */
 
-  /* derived: sand */
-  --secondary-deep: #CAC4AD;            /* dividers on sand, pressed rows, lost chip */
-  --secondary-deep: color-mix(in srgb, var(--secondary) 85%, var(--primary));
-  --on-secondary: #1F3D2B;
-  --on-secondary: var(--primary);
-  --muted-on-secondary: #475D4A;
-  --muted-on-secondary: color-mix(in srgb, var(--primary) 80%, var(--secondary));
+  /* paper surfaces */
+  --secondary-deep: #E6DFCD;            /* dividers on paper, pressed rows, finished-lead chip */
+  --on-secondary: #2B2723;
+  --muted-on-secondary: #5C554D;
+  --card-ring: #DDD6C3;                 /* 1px ring round paper cards and lead bubbles */
+  --bubble-out: #DDD6C3;                /* texts the system sent: a shade deeper than the raised panel they sit on */
+  --field-border: #857D72;              /* boxes, toggle track: 3.8:1 on paper, 3.4:1 on cream */
 
-  /* derived: purple */
-  --accent-strong: #6845B8;             /* fills behind small text; purple text on sand */
-  --accent-strong: color-mix(in srgb, var(--accent) 75%, #000);
-  --accent-light: #C5AEFA;              /* purple text + focus rings on green */
-  --accent-light: color-mix(in srgb, var(--accent) 50%, #fff);
-  --accent-tint: #D5C2CE;               /* "Needs you" chip background */
-  --accent-tint: color-mix(in srgb, var(--accent) 20%, var(--secondary));
-  --accent-ink: #563999;                /* text on the tint */
-  --accent-ink: color-mix(in srgb, var(--accent) 62%, #000);
-  --accent-wash: #2E3948;               /* active tab background on deep green */
-  --accent-wash: color-mix(in srgb, var(--accent) 18%, var(--primary-deep));
+  /* ink blue */
+  --accent-strong: #2F4A73;             /* primary buttons, links on paper */
+  --accent-light: #2F4A73;              /* links, focus, active tab on cream (the same blue: cream needs no lighter one) */
+  --accent-tint: #D9DEE8;               /* "New text" tag, selected tints */
+  --accent-ink: #233856;                /* text on the tint, pressed button */
+  --accent-wash: #DFE3EA;               /* pressed / active background */
   --on-accent: #FFFFFF;
 
   /* messages */
-  --danger-on-primary: #FFB4A3;
-  --danger-on-secondary: #9A2A14;
+  --danger-on-primary: #9B2C18;         /* brick red */
+  --danger-on-secondary: #9B2C18;
 
-  /* contextual tokens: default = on green; sand surfaces override them below */
+  /* contextual tokens: default = on cream; paper surfaces override them below */
   --ink: var(--on-primary);
   --muted: var(--muted-on-primary);
   --line: var(--line-on-primary);
   --link: var(--accent-light);
   --focus: var(--accent-light);
   --danger: var(--danger-on-primary);
-  /* ONE purple for every primary button, the active filter chip and picked chips (white on it 6.7:1). The brighter
-     --accent stays for the active-tab bar, toggles and focus glow. */
+  /* ONE blue for every primary button, the active filter chip and picked chips (white on it 8.94:1). */
   --action: var(--accent-strong);
   --action-press: var(--accent-ink);
 
-  --scrim: rgba(8, 18, 12, 0.62);
+  --scrim: rgba(43, 39, 35, 0.45);
   --gutter: 16px;
 
   /* type scale (px at Normal): one step per job. --fs-cta is the large-text size primary buttons need for contrast (see note above).
@@ -97,12 +90,12 @@
   --r-sm: 10px; --r-md: 14px; --r-lg: 18px; --r-pill: 999px;
   --radius: var(--r-lg);
 
-  /* gentle depth: a hairline of contact shadow plus a soft lift. On green it reads as a slight raise, not a drop shadow. */
-  --shadow-card: 0 1px 2px rgba(5, 14, 9, 0.30), 0 3px 10px rgba(5, 14, 9, 0.16);
-  --shadow-bar: 0 -2px 14px rgba(5, 14, 9, 0.28);
+  /* gentle depth: a 1px ring (paper on cream), a hairline of contact shadow and a soft lift. A slight raise, not a drop shadow. */
+  --shadow-card: 0 0 0 1px var(--card-ring), 0 1px 2px rgba(43, 39, 35, 0.10), 0 3px 10px rgba(43, 39, 35, 0.07);
+  --shadow-bar: 0 -1px 8px rgba(43, 39, 35, 0.08);
   --content: 760px;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 /* Text size (More > Text size, saved on this device). Absent / unknown value = Normal = scale 1. */
@@ -110,18 +103,17 @@
 :root[data-text-size="large"] { --type-scale: 1.15; }   /* retired word: never applied now (lib.js reads a saved "large" as "larger") */
 :root[data-text-size="larger"] { --type-scale: 1.3; }
 
-/* Sand surfaces: text turns green, muted and dividers follow. */
+/* Paper surfaces: ink text, muted ink and dividers follow. */
 .lead-row, .need-link, .ag-row, .m-tile, .fc-note, .rec-card, .sheet, .field, .row.in .bubble, .waiting-row, .more-row, .alerts, .hidden-banner {
   --ink: var(--on-secondary);
   --muted: var(--muted-on-secondary);
   --line: var(--secondary-deep);
   --danger: var(--danger-on-secondary);
 }
-/* Focus + links INSIDE a sand surface sit on sand: use the dark purple. (A row or card's own ring
-   is drawn outside it, on green, so it keeps the light purple.) */
-.rec-card { color-scheme: light; }   /* W8 (s15): native tick boxes inside a sand card paint light, not dark */
-.rec-card, .sheet, .alerts, .fc-note { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* .fc-note: the forecast's cream card (its "Review them" link was 1.44:1 in the light green-surface purple) */
-.hidden-banner { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* R5: the hidden-lead card is a sand surface too: its error line and focus ring need the sand colours */
+/* Focus + links INSIDE a paper surface use the strong blue (the same hex as the cream one in this palette; kept apart so a client palette can split them). */
+.rec-card { color-scheme: light; }   /* W8 (s15): native tick boxes inside a card paint light (the whole page is light now; the rule stays harmless) */
+.rec-card, .sheet, .alerts, .fc-note { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* .fc-note: the forecast's paper card */
+.hidden-banner { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* R5: the hidden-lead card is a paper surface too: its error line and focus ring need the paper colours */
 .sheet, .field { color-scheme: light; }
 
 * { box-sizing: border-box; }
@@ -205,11 +197,11 @@ a { color: var(--link); }
 .field {
   width: 100%; min-height: 54px; padding: 0 14px;
   background: var(--secondary); color: var(--on-secondary);
-  border: 2px solid var(--secondary); border-radius: var(--r-md);
+  border: 2px solid var(--field-border); border-radius: var(--r-md);
   font-size: var(--fs-cta);
 }
 .field::placeholder { color: var(--muted-on-secondary); opacity: 1; }
-.field:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-light); }
+.field:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-light); }   /* 3px blue ring + blue edge */
 .field.code { font-size: var(--fs-2xl); letter-spacing: 0.4em; text-align: center; font-variant-numeric: tabular-nums; padding-left: calc(14px + 0.4em); }
 .hint { margin: 6px 0 0; color: var(--muted-on-primary); font-size: var(--fs-sm); }
 
@@ -219,7 +211,7 @@ a { color: var(--link); }
   border-radius: var(--r-md); border: 2px solid transparent;
   font-size: var(--fs-lg); font-weight: 650; text-decoration: none;
 }
-/* Primary = the one action purple (--action, white on it 6.7:1). Same fill on every screen. */
+/* Primary = the one action blue (--action, white on it 8.94:1). Same fill on every screen. */
 .btn.primary { background: var(--action); color: var(--on-accent); font-size: var(--fs-cta); font-weight: 750; }
 .btn.primary:active { background: var(--action-press); }
 .btn.primary[disabled] { opacity: 0.6; }
@@ -227,7 +219,7 @@ a { color: var(--link); }
 .btn.quiet[disabled] { color: var(--muted); }
 .stack-actions { margin-top: 10px; }
 
-/* ---------- lead list: sand rows on green ---------- */
+/* ---------- lead list: paper rows on cream ---------- */
 .lead-list { list-style: none; margin: 0 auto; padding: var(--sp-2) calc(12px + env(safe-area-inset-right)) var(--sp-5) calc(12px + env(safe-area-inset-left)); max-width: var(--content); }
 .lead-list li { list-style: none; margin: 0 0 8px; }
 .lead-row {
@@ -270,11 +262,11 @@ a { color: var(--link); }
 .empty h2 { margin: 0 0 8px; font-size: var(--fs-xl); }
 .empty p { margin: 0 auto; color: var(--muted); max-width: 32ch; }
 
-/* ---------- status chips: three looks by meaning (no purple, never colour alone: the words are always there) ----------
-   needs action   (Needs you)                 filled forest, sand text      8.78
-   in progress    (New, Talking, Quoted, Contacted)   outline, green text   8.78
-   finished       (Booked with a check, Lost, Opted out)   quiet sand, green text   6.82
-   On the green page (the record header) the same three looks swap to sand / outline / raised green. */
+/* ---------- status chips: three looks by meaning (no blue, never colour alone: the words are always there) ----------
+   needs action   (Needs you)                 filled ink, paper text        13.97
+   in progress    (New, Talking, Quoted, Contacted)   outline, ink text     12.80 (on cream)
+   finished       (Booked with a check, Lost, Opted out)   quiet paper-deep, ink text   11.15
+   On the cream page (the record header) the same three looks are: ink fill / outline / raised. */
 .chip {
   --chip-bg: var(--secondary-deep); --chip-fg: var(--on-secondary); --chip-bd: transparent;
   display: inline-flex; align-items: center; gap: 5px; padding: 1px 10px; border-radius: var(--r-pill);
@@ -282,10 +274,10 @@ a { color: var(--link); }
   border: 1.5px solid var(--chip-bd); background: var(--chip-bg); color: var(--chip-fg);
 }
 .chip-icon { flex: none; }
-.chip.tone-needs { --chip-bg: var(--primary); --chip-fg: var(--secondary); }
+.chip.tone-needs { --chip-bg: var(--on-secondary); --chip-fg: var(--secondary); }
 .chip.tone-active { --chip-bg: transparent; --chip-fg: var(--on-secondary); --chip-bd: var(--on-secondary); }
 .rec-status .chip { --chip-bg: var(--primary-raised); --chip-fg: var(--on-primary); --chip-bd: transparent; }
-.rec-status .chip.tone-needs { --chip-bg: var(--secondary); --chip-fg: var(--on-secondary); }
+.rec-status .chip.tone-needs { --chip-bg: var(--on-primary); --chip-fg: var(--secondary); }
 .rec-status .chip.tone-active { --chip-bg: transparent; --chip-fg: var(--on-primary); --chip-bd: var(--on-primary); }
 
 /* ---------- lead record ---------- */
@@ -300,7 +292,7 @@ a { color: var(--link); }
 .rec-next { margin: 0; font-size: var(--fs-md); line-height: 1.4; color: var(--on-primary); flex: 1 1 12em; }
 .rec-job { margin: var(--sp-3) 0 0; font-size: var(--fs-xl); font-weight: 700; line-height: 1.2; color: var(--on-primary); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 /* How to reach them (Kevin 11-09): a label / value grid under a hairline, the same shape as the Event card's facts.
-   The number is plain green-on-green text (Call below dials it): never purple, never a second button. */
+   The number is plain ink text (Call below dials it): never blue, never a second button. */
 .rec-reach { display: grid; grid-template-columns: minmax(56px, max-content) minmax(0, 1fr); column-gap: var(--sp-4); align-items: center;
   margin: var(--sp-3) 0 0; padding-top: var(--sp-2); border-top: 1px solid var(--line-on-primary); }
 .reach-row { display: contents; }
@@ -313,7 +305,7 @@ a { color: var(--link); }
 .rec-email-none, .rec-phone-none { display: inline-flex; align-items: center; min-height: 40px; color: var(--muted-on-primary); }
 .more-toggle { display: inline-flex; align-items: center; min-height: 44px; margin: var(--sp-1) 0 0; padding: 0; background: transparent; border: 0; color: var(--link); font-size: var(--fs-md); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 
-/* Do-not-text banner: the one place red is used, because it must not be missed (white on #9A2A14 = 7.73:1). */
+/* Do-not-text banner: the one place red is used, because it must not be missed (white on brick red #9B2C18 = 7.7:1). */
 .stop-banner {
   margin: 0 0 12px; padding: 12px 14px; border-radius: var(--r-md);
   background: var(--danger-on-secondary); color: #fff; font-weight: 700; font-size: var(--fs-md);
@@ -343,13 +335,14 @@ a { color: var(--link); }
 .contact-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 48px; padding: 0 var(--sp-3); border-radius: var(--r-md);
-  background: var(--primary-raised); color: var(--secondary); box-shadow: var(--shadow-card);
+  background: var(--secondary); color: var(--accent-strong); border: 2px solid var(--accent-strong); box-shadow: var(--shadow-card);
   font-size: var(--fs-md); font-weight: 700; text-decoration: none;
 }
-.contact-btn:active { background: var(--primary); }
-/* On a lead, Call / Text / Email are all the same raised green (Kevin 11-09, reversing 11-06). The purple Call stays only on Help & support. */
-.sp-contact .contact-btn.contact-call { background: var(--action); color: var(--on-accent); }
-.sp-contact .contact-btn.contact-call:active { background: var(--action-press); }
+.contact-btn:active { background: var(--accent-wash); color: var(--accent-ink); border-color: var(--accent-ink); }
+/* On a lead, Call / Text / Email are all the same: paper with an ink-blue outline and ink-blue text (8.43:1; they were pale on cream in the first preview).
+   Kevin 11-09 (reversing 11-06): none of the three is the filled one. The filled blue Call stays only on Help & support. */
+.sp-contact .contact-btn.contact-call { background: var(--action); color: var(--on-accent); border-color: var(--action); }
+.sp-contact .contact-btn.contact-call:active { background: var(--action-press); border-color: var(--action-press); color: var(--on-accent); }
 .contact-btn svg { flex: none; }
 
 
@@ -423,9 +416,9 @@ a { color: var(--link); }
   border-radius: var(--radius);
   overflow-wrap: anywhere;
 }
-/* lead texts: sand; system texts: raised green; texts to the owner: dashed outline on green */
-.row.in .bubble { background: var(--secondary); color: var(--on-secondary); border-bottom-left-radius: 6px; }
-.row.out .bubble { background: var(--primary-raised); color: var(--on-primary); border-bottom-right-radius: 6px; }
+/* lead texts: paper with a ring; system texts: a shade deeper than the panel; texts to the owner: dashed outline */
+.row.in .bubble { background: var(--secondary); color: var(--on-secondary); border-bottom-left-radius: 6px; box-shadow: 0 0 0 1px var(--card-ring); }
+.row.out .bubble { background: var(--bubble-out); color: var(--on-primary); border-bottom-right-radius: 6px; }   /* ink on it 9.6:1 */
 .row.out.owner .bubble { background: transparent; color: var(--on-primary); border: 1.5px dashed var(--muted-on-primary); }
 .label { font-size: var(--fs-xs); font-weight: 700; margin: 0 0 2px; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .row.in .label { color: var(--muted-on-secondary); }
@@ -446,12 +439,12 @@ a { color: var(--link); }
   position: absolute; left: 50%; bottom: var(--sp-4); transform: translateX(-50%);
   min-height: 44px; padding: 0 20px; border-radius: var(--r-pill); border: 0;
   background: var(--action); color: var(--on-accent); font-weight: 700; font-size: var(--fs-md);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  box-shadow: 0 6px 18px rgba(43, 39, 35, 0.28);
 }
 
 .noscript { padding: 24px var(--gutter); color: var(--on-primary); }
 
-/* ---------- list filters (on green): five chips that always fit (round 4) ----------
+/* ---------- list filters (on cream): five chips that always fit (round 4) ----------
    Count over label, each chip as wide as its label needs plus a share of the rest: Open / Contacted / Booked / Lost / All
    fit one row at 320 px (the widest label, "Contacted", needs about 64 px at 13 px). */
 .filters {
@@ -509,7 +502,7 @@ a { color: var(--link); }
 .row-new { white-space: nowrap; }
 .filter-note { max-width: var(--content); margin: 0 auto; padding: 0 calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-2) calc(var(--gutter) + env(safe-area-inset-left)); color: var(--muted-on-primary); font-size: var(--fs-sm); }
 
-/* ---------- thread: status actions (on the sand strip) ---------- */
+/* ---------- thread: status actions (on the paper strip) ---------- */
 .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
 .action {
   position: relative;
@@ -542,12 +535,12 @@ a { color: var(--link); }
   background: none; border: 0; color: var(--link); font-size: var(--fs-sm); font-weight: 650;
 }
 
-/* ---------- confirm sheet (sand) ---------- */
+/* ---------- confirm sheet (paper) ---------- */
 .sheet {
   border: 0; padding: 0; margin: auto auto 0; width: 100%; max-width: 100%;
   background: var(--secondary); color: var(--on-secondary);
   border-radius: var(--r-lg) var(--r-lg) 0 0;
-  box-shadow: 0 -8px 32px rgba(0,0,0,0.35);
+  box-shadow: 0 -8px 32px rgba(43, 39, 35, 0.22);
 }
 .sheet::backdrop { background: var(--scrim); }
 .sheet-body { padding: 24px calc(var(--gutter) + 4px) calc(16px + env(safe-area-inset-bottom)); max-width: 480px; margin: 0 auto; }
@@ -557,7 +550,7 @@ a { color: var(--link); }
 /* 022: the two follow-up choices carry the same weight; neither is the default. */
 .sheet-actions .btn.choice { background: transparent; border-color: currentColor; color: var(--on-secondary); margin-top: 10px; font-size: var(--fs-md); line-height: 1.25; }
 .sheet .btn.quiet { color: var(--on-secondary); }
-/* Lost and Delete are not the primary action: outlined, never purple (destructive is not primary). */
+/* Lost and Delete are not the primary action: outlined, never blue (destructive is not primary). */
 .sheet.sheet-lost #confirm-yes, .sheet.sheet-note #confirm-yes { background: transparent; color: var(--on-secondary); border-color: var(--on-secondary); }
 .sheet.sheet-lost #confirm-yes:active, .sheet.sheet-note #confirm-yes:active { background: var(--secondary-deep); }
 .money-wrap { position: relative; }
@@ -577,7 +570,9 @@ a { color: var(--link); }
 }
 .toggle { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; font-size: var(--fs-md); font-weight: 600; cursor: pointer; }
 .toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.toggle-track { position: relative; width: 44px; height: 26px; border-radius: var(--r-pill); background: var(--line-on-primary); border: 1.5px solid var(--muted-on-primary); flex: none; transition: background 0.15s; }
+/* On/off: OFF = a mid-brown track (--field-border, 3.4:1 on cream, 3.8:1 on paper) with a paper knob on the left (3.8:1 on the track);
+   ON = an ink-blue track with a white knob on the right. Both states are visible without colour: the knob side says which. */
+.toggle-track { position: relative; width: 44px; height: 26px; border-radius: var(--r-pill); background: var(--field-border); border: 1.5px solid var(--field-border); flex: none; transition: background 0.15s; }
 .toggle-thumb { position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; border-radius: 50%; background: var(--secondary); transition: transform 0.15s; }
 .toggle input:checked + .toggle-track { background: var(--accent); border-color: var(--accent); }
 .toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(18px); background: var(--on-accent); }
@@ -605,7 +600,7 @@ a { color: var(--link); }
 .fc-head { margin: 14px 0 6px; font-weight: 650; }
 .fc-head:first-of-type { margin-top: 0; }
 .m-big.fc-open, .m-big.fc-range { font-size: var(--fs-2xl); overflow-wrap: anywhere; }
-.fc-note { margin-top: 14px; padding: 10px 12px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); }
+.fc-note { margin-top: 14px; padding: 10px 12px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); box-shadow: var(--shadow-card); }
 .fc-note .m-line { color: var(--on-secondary); }
 .fc-note .m-line { margin: 0 0 6px; font-size: var(--fs-md); }
 .fc-note .m-line:last-child { margin-bottom: 0; }
@@ -626,13 +621,13 @@ a { color: var(--link); }
 .m-tile-count { font-size: var(--fs-sm); color: var(--muted); }
 @media (max-width: 359px) { .m-tiles { grid-template-columns: 1fr; } }
 
-/* journey bars: forest on a sand track; each row also states its numbers in text */
+/* journey bars: ink blue on a raised track; each row also states its numbers in text */
 .funnel { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .funnel-top { display: flex; justify-content: space-between; gap: 10px; font-size: var(--fs-md); margin-bottom: 4px; }
 .funnel-label { font-weight: 600; }
 .funnel-num { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .funnel-track { height: 10px; border-radius: var(--r-pill); background: var(--primary-raised); overflow: hidden; }
-.funnel-bar { height: 100%; border-radius: var(--r-pill); background: var(--secondary); min-width: 0; }
+.funnel-bar { height: 100%; border-radius: var(--r-pill); background: var(--accent-strong); min-width: 0; }
 
 .waiting { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .waiting-row {
@@ -667,7 +662,7 @@ a { color: var(--link); }
 .pe-rule { margin: -4px 0 var(--sp-2); }
 .pe-top-line { margin: -4px 0 var(--sp-1); }
 .pe-err { margin: 0 0 var(--sp-2); }
-.pe-row { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); }
+.pe-row { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); box-shadow: 0 0 0 1px var(--card-ring); }
 .pe-row.is-busy { opacity: 0.6; }
 .pe-who { display: grid; gap: 2px; min-width: 0; color: inherit; text-decoration: none; }
 .pe-name { font-weight: 650; font-size: var(--fs-lg); overflow-wrap: anywhere; }
@@ -695,17 +690,17 @@ a { color: var(--link); }
 .bulk-meta { font-size: var(--fs-sm); color: var(--muted-on-secondary); }
 .sheet .sheet-note#bulk-head { font-weight: 650; }
 .sheet.sheet-bulk { max-height: 94vh; max-height: 94dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
-/* The confirm is a solid forest-green button (clear, but never purple: this one changes many leads). Mark and Cancel are pinned to the foot of the
+/* The confirm is a solid ink button (clear, but never blue: this one changes many leads). Mark and Cancel are pinned to the foot of the
    sheet, so they are on screen at 375x667 whatever the preview list holds; only the content above them scrolls (same footer as the Add lead sheet). */
 .sheet.sheet-bulk #bulk-yes { background: var(--on-secondary); color: var(--secondary); border-color: var(--on-secondary); margin-top: 12px; }
-.sheet.sheet-bulk #bulk-yes:active { background: var(--primary-deep); }
+.sheet.sheet-bulk #bulk-yes:active { background: var(--muted-on-secondary); }
 .sheet.sheet-bulk #bulk-yes[disabled] { opacity: 0.5; }
 .sheet-bulk .sheet-body { padding-bottom: 0; }
 .sheet-bulk .sheet-actions { position: sticky; bottom: 0; margin: 12px calc(-1 * (var(--gutter) + 4px)) 0; padding: 0 calc(var(--gutter) + 4px) calc(8px + env(safe-area-inset-bottom)); background: var(--secondary); box-shadow: 0 -1px 0 var(--secondary-deep); }
 .sheet-bulk .sheet-actions .btn.quiet { margin-top: 2px; }
 .fc-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 650; color: var(--link); text-decoration: underline; cursor: pointer; min-height: 24px; }
 
-/* ---------- search (Leads, on green) ---------- */
+/* ---------- search (Leads, on cream) ---------- */
 .search { max-width: var(--content); margin: 0 auto; padding: 12px calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left)); }
 .search-field {
   width: 100%; min-height: 48px; padding: 0 14px;
@@ -717,11 +712,11 @@ a { color: var(--link); }
 .search-field:focus { outline: 3px solid var(--focus); outline-offset: 1px; border-color: var(--accent-light); }
 #search-box .status-line { padding: 14px var(--gutter) 8px; text-align: left; max-width: var(--content); margin: 0 auto; }
 
-/* ---------- sheet fields: final price + lost reason (on sand) ---------- */
+/* ---------- sheet fields: final price + lost reason (on paper) ---------- */
 .sheet-field { margin: 16px 0 0; padding: 0; border: 0; min-width: 0; }
 .sheet .field-label { color: var(--on-secondary); }
 .sheet .hint { color: var(--muted-on-secondary); }
-.sheet .field { border-color: var(--muted-on-secondary); min-height: 50px; font-size: var(--fs-lg); }
+.sheet .field { min-height: 50px; font-size: var(--fs-lg); }
 .sheet .field[aria-invalid="true"] { border-color: var(--danger-on-secondary); }
 .money-field { font-variant-numeric: tabular-nums; }
 .reason-box legend { padding: 0; margin-bottom: 8px; }
@@ -742,7 +737,7 @@ a { color: var(--link); }
 .note-field { min-height: 72px; padding: 10px 12px; font-size: var(--fs-md); line-height: 1.4; resize: vertical; display: block; }
 .sheet .error { color: var(--danger-on-secondary); }
 
-/* ---------- lead record: lost note + notes (on sand) ---------- */
+/* ---------- lead record: lost note + notes (on paper) ---------- */
 .strip-note { margin: 6px 0 0; font-size: var(--fs-sm); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
 .notes { list-style: none; margin: 0 0 12px; padding: 0; }
 .note { padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -751,7 +746,6 @@ a { color: var(--link); }
 .note-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 2px; }
 .note-time { font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
 .note-del { min-height: 44px; min-width: 44px; padding: 0 4px; background: none; border: 0; color: var(--link); font-size: var(--fs-sm); font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
-.rec-card .note-field { border-color: var(--muted-on-secondary); }
 .rec-card .note-field:focus { border-color: var(--accent-strong); box-shadow: 0 0 0 3px var(--accent-light); }
 .note-count { color: var(--muted); font-size: var(--fs-sm); }
 .note-save { margin-top: 10px; min-height: 48px; }
@@ -760,14 +754,14 @@ a { color: var(--link); }
 .note-field:focus, .note-field:not(:placeholder-shown) { min-height: 96px; }
 .reason-box .note-field, #reason-note { min-height: 72px; resize: vertical; }
 
-/* ---------- calendar (green page, sand day cells) ---------- */
+/* ---------- calendar (cream page, raised day cells) ---------- */
 .cal-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 0 2px; }
 .cal-title { margin: 0; font-size: var(--fs-xl); font-weight: 750; letter-spacing: -0.01em; color: var(--on-primary); text-align: center; flex: 1; }
-.cal-nav { border: 1.5px solid var(--line-on-primary); }
+.cal-nav { border: 1.5px solid var(--muted-on-primary); }   /* 6.34:1 on cream (the hairline was 1.38:1) */
 .cal-toggle { margin: 6px 0 0; }
 .cal-legend { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: var(--fs-sm); color: var(--muted-on-primary); }
 .cal-key { width: 10px; height: 10px; border-radius: 50%; flex: none; }
-.cal-key.is-booked { background: var(--secondary); }
+.cal-key.is-booked { background: var(--on-primary); }
 .cal-key.is-possible { border: 1.5px solid var(--muted-on-primary); margin-left: var(--sp-3); }
 
 /* ---------- calendar: the list above the grid ---------- */
@@ -806,9 +800,9 @@ a { color: var(--link); }
 .cal-cell.is-today .cal-num { font-weight: 800; }
 .cal-cell[aria-pressed="true"] { border-color: var(--accent-light); background: var(--accent-wash); }
 .cal-marks { display: flex; flex-wrap: wrap; justify-content: center; gap: 3px; min-height: 8px; }
-/* Phones: dots. Booked = solid sand; possible = faint outline. */
+/* Phones: dots. Booked = solid ink (paper would vanish on cream); possible = faint outline. */
 .cal-ev { width: 8px; height: 8px; border-radius: 50%; }
-.cal-ev.is-booked { background: var(--secondary); }
+.cal-ev.is-booked { background: var(--on-primary); }
 .cal-ev.is-possible { border: 1.5px solid var(--muted-on-primary); opacity: 0.8; }
 .cal-ev-name { display: none; }
 .cal-more { font-size: var(--fs-xs); line-height: 8px; color: var(--muted-on-primary); }
@@ -823,12 +817,12 @@ a { color: var(--link); }
   .cal-marks { flex-direction: column; flex-wrap: nowrap; justify-content: flex-start; gap: 3px; }
   .cal-ev { width: auto; height: auto; border-radius: 6px; padding: 1px 6px; font-size: var(--fs-xs); line-height: 1.35; }
   .cal-ev-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cal-ev.is-booked { color: var(--on-secondary); font-weight: 650; }
+  .cal-ev.is-booked { background: var(--secondary); box-shadow: inset 0 0 0 1px #C9C1AD; color: var(--on-secondary); font-weight: 650; }   /* wide screens draw named bars: paper with a ring + ink text */
   .cal-ev.is-possible { color: var(--muted-on-primary); border-style: dashed; opacity: 1; }
   .cal-more { line-height: 1.3; font-size: var(--fs-xs); }
 }
 
-/* ---------- quote calculator (form on green, result on sand) ---------- */
+/* ---------- quote calculator (form on cream, result on paper) ---------- */
 .q-form { padding: 6px 0 4px; max-width: 520px; }
 .q-lede { margin: 10px 0 4px; color: var(--muted); font-size: var(--fs-md); }
 .q-field { margin: 16px 0 0; padding: 0; border: 0; min-width: 0; }
@@ -869,7 +863,7 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .q-stale { margin: 14px 0 0; }
 .q-restored { margin: 0 0 var(--sp-3); font-weight: 650; }
 
-/* Alerts on this phone (More tab). A sand card; same panel and logic as before. */
+/* Alerts on this phone (More tab). A paper card; same panel and logic as before. */
 .alerts { margin: 0 0 var(--sp-3); padding: var(--sp-4); border-radius: var(--r-lg); background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card); }
 .alerts-h { margin: 0 0 var(--sp-1); font-size: var(--fs-md); font-weight: 700; color: var(--ink); }
 .alerts-sum {
@@ -888,14 +882,14 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .alerts-text { margin: 0; font-size: var(--fs-sm); line-height: 1.4; color: var(--muted); }
 .alerts .btn { margin-top: var(--sp-3); min-height: 48px; }
 .alerts .btn.primary { font-size: var(--fs-cta); }
-.alerts-sec { background: var(--primary); color: var(--secondary); font-size: var(--fs-md); }
+.alerts-sec { background: var(--on-secondary); color: var(--secondary); font-size: var(--fs-md); }   /* ink fill, paper text (14:1) */
 .alerts .btn.quiet { margin-top: var(--sp-1); min-height: 44px; color: var(--link); }
 .alerts-msg { margin: var(--sp-2) 0 0; font-size: var(--fs-sm); color: var(--ink); }
 .alerts-msg.bad { color: var(--danger); }
 
 /* ---------- bottom bar ----------
-   Always visible once signed in. Active tab = the one purple spot (light purple text + a short bar above, on deep green).
-   Targets are 56 px tall; the bar pads for the iPhone home indicator. The only badge in the page lives on Leads (sand, not purple). */
+   Always visible once signed in. Active tab = the one blue spot (blue text + a short bar above, on the deeper cream).
+   Targets are 56 px tall; the bar pads for the iPhone home indicator. The only badge in the page lives on Leads (paper, not blue). */
 .tabbar { flex: none; background: var(--primary-deep); border-top: 1px solid var(--line-on-primary); box-shadow: var(--shadow-bar); padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); position: relative; z-index: 5; }
 .tabbar-list { list-style: none; margin: 0 auto; padding: 0; display: flex; max-width: 560px; }
 .tabbar-list li { flex: 1; min-width: 0; }
@@ -960,13 +954,13 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .more-chev { color: var(--muted); }
 .record-rest { padding-top: var(--sp-3); }
 
-/* gentle depth for the other sand surfaces; history-style rows stay flat */
+/* gentle depth for the other paper surfaces; history-style rows stay flat */
 .m-tile, .waiting-row { box-shadow: var(--shadow-card); }
 .more-brand { margin: var(--sp-1) var(--sp-1) var(--sp-3); font-size: var(--fs-sm); color: var(--muted-on-primary); }
 .more-brand:empty { display: none; }
 
 /* ---------- add a lead by hand + repeat customers (session 3, round 1) ---------- */
-/* "+ Add lead" in the Leads header: the one purple action on the screen (accent only, 60/30/10). */
+/* "+ Add lead" in the Leads header: the one blue action on the screen (accent only, 60/30/10). */
 .btn-add {
   flex: none; min-height: 44px; margin-right: var(--sp-2); padding: 0 16px;
   background: var(--action); color: var(--on-accent); border: 2px solid transparent; border-radius: var(--r-pill);
@@ -975,14 +969,14 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .btn-add:active { background: var(--action-press); }
 .btn-add:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 
-/* "Added by you": sand-tone tag, never purple (purple is for actions). */
+/* "Added by you": paper-tone tag, never blue (blue is for actions). */
 .row-tag {
   align-self: flex-start; display: inline-flex; margin-top: var(--sp-1); padding: 0 8px; border-radius: var(--r-pill);
   background: var(--secondary-deep); color: var(--on-secondary); font-size: var(--fs-sm); font-weight: 600; line-height: 1.5;
 }
 .lead-row .row-tag { display: inline-flex; width: fit-content; }
 
-/* Record header: where the lead came from, and the no-automatic-texts line (muted, on green). */
+/* Record header: where the lead came from, and the no-automatic-texts line (muted, on cream). */
 .rec-source { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); line-height: 1.4; color: var(--muted-on-primary); }
 .rec-source-noquote { font-weight: 650; color: var(--on-primary); }
 .rec-receipt-fail { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); font-weight: 700; color: var(--muted-on-primary); }
@@ -1009,7 +1003,7 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .add-dup-open { flex: none; display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; font-weight: 700; color: var(--link); text-underline-offset: 2px; }
 .add-dup-same, .add-dup-opt { font-weight: 600; }
 
-/* R4 (A2): "Edit details" under the lead header (owner only): an outlined pill on green, quiet next to the one purple action. */
+/* R4 (A2): "Edit details" under the lead header (owner only): an outlined pill on cream, quiet next to the one blue action. */
 .btn-edit {
   display: inline-flex; align-items: center; min-height: 44px; margin: var(--sp-3) 0 0; padding: 0 16px;
   background: transparent; color: var(--on-primary); border: 1.5px solid var(--on-primary); border-radius: var(--r-pill);
@@ -1037,7 +1031,7 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
    under each other at the bigger text sizes and at 320 px. */
 .btn-hide { margin-left: var(--sp-2); border-color: var(--muted-on-primary); color: var(--muted-on-primary); }
 .btn-hide:first-child, .btn-edit[hidden] + .btn-hide { margin-left: 0; }
-/* A hidden lead's record: a plain sand card above the rest, words first, one button under them. */
+/* A hidden lead's record: a plain paper card above the rest, words first, one button under them. */
 .hidden-banner { margin: 0 0 12px; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); box-shadow: var(--shadow-card); }
 .hidden-banner[hidden] { display: none; }
 .hidden-banner-text { margin: 0 0 var(--sp-2); font-size: var(--fs-md); font-weight: 700; overflow-wrap: anywhere; }
@@ -1053,8 +1047,8 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 30; margin: 0;
   bottom: calc(76px + env(safe-area-inset-bottom)); max-width: calc(100% - 32px);
-  padding: 10px 18px; border-radius: var(--r-pill); background: var(--secondary); color: var(--on-secondary);
-  font-size: var(--fs-md); font-weight: 650; box-shadow: 0 4px 16px rgba(0,0,0,0.35); text-align: center;
+  padding: 10px 18px; border-radius: var(--r-pill); background: var(--on-secondary); color: var(--secondary);
+  font-size: var(--fs-md); font-weight: 650; box-shadow: 0 4px 16px rgba(43, 39, 35, 0.30); text-align: center;   /* ink toast, paper text */
 }
 @media (min-width: 600px) {
   .sheet.sheet-add { max-height: 90vh; max-height: 90dvh; }
@@ -1081,9 +1075,9 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .sp-urgent { margin: 14px 0 0; }
 .sp-urgent .hint { margin: 0 0 0 54px; }
 .sp-disclose { margin: 16px 0 0; }
-.sp-nosend { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2, rgba(127,127,127,.12)); font-size: var(--fs-note); line-height: 1.4; }
+.sp-nosend { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--primary-raised); font-size: var(--fs-note); line-height: 1.4; }
 .sp-form .btn.primary { margin-top: 14px; }
-.sp-done { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; }
+.sp-done { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; box-shadow: 0 0 0 1px var(--card-ring); }
 .sp-done:focus { outline: none; }
 .sp-requests { margin: 28px 0 0; }
 .sp-status { padding: 14px 0; text-align: left; }
@@ -1097,7 +1091,7 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .sp-note { margin: 6px 0 0; font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; }
 .sp-chip { flex: none; display: inline-flex; padding: 1px 10px; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 650; line-height: 1.5; white-space: nowrap; border: 1.5px solid var(--on-secondary); background: transparent; color: var(--on-secondary); }
 .sp-chip.is-working { background: var(--secondary-deep); border-color: var(--secondary-deep); color: var(--on-secondary); }
-.sp-chip.is-fixed { background: var(--primary); border-color: var(--primary); color: var(--on-accent); }
+.sp-chip.is-fixed { background: var(--on-secondary); border-color: var(--on-secondary); color: var(--secondary); }   /* ink fill, paper text */
 
 /* ---------- Download spreadsheet (More) ---------- */
 .ex-dates-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-3); }   /* W7: minmax(0,..) so a date box's own width cannot stretch a column */
@@ -1105,12 +1099,12 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .ex-dates-row .field { min-height: 52px; font-size: var(--fs-lg); }
 @media (max-width: 359px) { .ex-dates-row { grid-template-columns: minmax(0, 1fr); } }   /* W7: at 320 px a 138 px date box cuts the date; stack From / To (as Large does) */
 .export-screen .q-more .hint { margin: 0; }
-.ex-status { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; }
+.ex-status { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; box-shadow: 0 0 0 1px var(--card-ring); }
 .export-screen .hint { margin-top: 10px; }
 
 /* ---------- Ask your CRM (More) ----------
-   Owner questions: raised green, right. Answers: sand, left, figures in bold, lead names as purple-outlined chips.
-   Purple is only the Ask button and the chips (10% rule). The composer and the honest lines stay above the tab bar. */
+   Owner questions: raised cream, right. Answers: paper, left, figures in bold, lead names as blue-outlined chips.
+   Blue is only the Ask button and the chips (10% rule). The composer and the honest lines stay above the tab bar. */
 .ask-screen .scroller { display: flex; flex-direction: column; }   /* W9 (s15): bottom-anchor the chat; the auto top margin (not justify-content:flex-end) keeps the top reachable when it overflows */
 .ask-wrap { width: 100%; max-width: var(--content); margin: auto auto 0; padding: 0 calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-4) calc(var(--gutter) + env(safe-area-inset-left)); }
 .ask-thread { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -1118,7 +1112,7 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .ask-row.is-q { justify-content: flex-end; }
 .ask-bubble { max-width: 88%; min-width: 0; padding: 10px 14px; border-radius: var(--r-lg); overflow-wrap: anywhere; font-size: var(--fs-md); line-height: 1.45; }
 .ask-row.is-q .ask-bubble { background: var(--primary-raised); color: var(--on-primary); border-bottom-right-radius: 6px; white-space: pre-wrap; }
-.ask-row.is-a .ask-bubble { background: var(--secondary); color: var(--on-secondary); border-bottom-left-radius: 6px; }
+.ask-row.is-a .ask-bubble { background: var(--secondary); color: var(--on-secondary); border-bottom-left-radius: 6px; box-shadow: 0 0 0 1px var(--card-ring); }
 .ask-row.is-wait .ask-bubble { animation: pulse 1.2s ease-in-out infinite; }
 .ask-text { margin: 0; white-space: pre-wrap; }
 .ask-fig { font-weight: 750; font-variant-numeric: tabular-nums; }
@@ -1158,7 +1152,7 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 /* ---------- Team (More, owner only) ---------- */
 .tm-form { margin-top: 18px; }
 .tm-share { margin: 26px 0 0; }
-.tm-link { margin: 6px 0 10px; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.tm-link { margin: 6px 0 10px; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; box-shadow: 0 0 0 1px var(--card-ring); }
 .tm-copy, .tm-reload { width: 100%; }
 .tm-actions { display: flex; gap: var(--sp-2); margin-top: 8px; }
 .tm-btn { flex: 1; min-height: 44px; padding: 0 14px; border-radius: var(--r-md); border: 1.5px solid var(--on-secondary); background: transparent; color: var(--on-secondary); font: inherit; font-weight: 700; cursor: pointer; }
@@ -1173,8 +1167,8 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .convo-full-bar { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: var(--sp-2) var(--sp-3); min-height: 56px; padding: var(--sp-2) calc(12px + env(safe-area-inset-right)) var(--sp-2) calc(12px + env(safe-area-inset-left)); padding-top: calc(var(--sp-2) + env(safe-area-inset-top)); background: var(--primary-deep); border-bottom: 1px solid var(--line-on-primary); }
 .convo-full .sys-fold { order: 3; flex: 1 0 100%; justify-content: center; }
 .convo-full-h { margin: 0; font-size: var(--fs-lg); font-weight: 700; color: var(--on-primary); min-width: 0; overflow-wrap: anywhere; }
-.convo-full-close { flex: none; display: inline-flex; align-items: center; min-height: 44px; margin: 0; padding: 0 var(--sp-4); background: var(--primary-raised); border: 0; border-radius: var(--r-pill); color: var(--secondary); font-size: var(--fs-md); font-weight: 700; }
-.convo-full-close:active { background: var(--primary); }
+.convo-full-close { flex: none; display: inline-flex; align-items: center; min-height: 44px; margin: 0; padding: 0 var(--sp-4); background: var(--secondary); border: 2px solid var(--accent-strong); border-radius: var(--r-pill); color: var(--accent-strong); font-size: var(--fs-md); font-weight: 700; }   /* same look as Call / Text / Email: paper, blue outline, blue text */
+.convo-full-close:active { background: var(--accent-wash); color: var(--accent-ink); border-color: var(--accent-ink); }
 .convo-full-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding-bottom: env(safe-area-inset-bottom); }
 .convo-full-scroll:focus-visible { outline-offset: -3px; }
 .convo-full .thread { overflow-wrap: anywhere; }
@@ -1192,8 +1186,8 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .sheet-quote .sheet-note { white-space: pre-wrap; max-height: 44vh; overflow-y: auto; padding: 10px 12px; border-radius: 10px; font-size: var(--fs-sm); }
 
 /* ---------- How to use the CRM (More) ----------
-   Sand cards (rec-card) on the green page; each is a native details/summary, no script needed to open or close. The only purple is the
-   chevron and the step numbers (accent-strong on sand, 4.94:1). */
+   Paper cards (rec-card) on the cream page; each is a native details/summary, no script needed to open or close. The only blue is the
+   chevron and the step numbers (accent-strong on paper, 8.43:1). */
 .guide-wrap { padding-bottom: var(--sp-6); }
 .guide-list { margin: 14px 0 0; display: grid; gap: var(--sp-2); }
 .guide-sec { margin: 0; padding: 0; overflow: hidden; }
@@ -1223,15 +1217,41 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .lost-parts { flex-wrap: wrap; }
 .lost-parts .filter.filter-extra { flex: 1 1 auto; padding: 4px 10px; gap: 6px; justify-content: center; }
 
-/* Item 9 (W11): the Sort box over the chip lists. A native select (the phone's own picker); label and box on one line, wrapping
-   under the label at Large text. Same side padding as the chips. */
+/* Item 9 (W11) + sort round: the Sort pill over the chip lists ("Sort: Latest activity" + a chevron) opens the sort sheet. Same side padding
+   as the chips. A non-default pick is filled (.is-set), like a pressed chip, so it is clear a sort is on. A button, so no iOS focus zoom. */
 .list-sort {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
   max-width: var(--content); margin: 0 auto;
   padding: 0 calc(12px + env(safe-area-inset-right)) var(--sp-2) calc(12px + env(safe-area-inset-left));
 }
-.list-sort .field-label { margin: 0; }
-.list-sort .list-sort-select { width: auto; flex: 0 1 auto; min-width: 0; max-width: 100%; min-height: 44px; font-size: var(--fs-md); }   /* at Small it gets --fs-lg (the W18 rule below): iOS zooms on a box under 16 px */
+.sort-pill {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 44px; max-width: 100%; margin: 0; padding: 0 16px;
+  background: transparent; color: var(--on-primary); border: 1.5px solid var(--on-primary); border-radius: var(--r-pill);
+  font-size: var(--fs-md); font-weight: 650; text-align: left;
+}
+.sort-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* the ellipsis needs a block-level text box inside the flex pill */
+.sort-pill::after { content: ''; flex: none; width: 8px; height: 8px; margin-top: -3px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg); }
+.sort-pill:active { background: var(--primary-deep); }
+.sort-pill.is-set { background: var(--action); border-color: var(--action); color: var(--on-accent); }
+.sort-pill:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+/* The sort sheet: one radio row per sort (label + helper line + a tick when picked), on the paper .sheet. The radio itself is hidden like .reason-chip input. */
+.sort-list { margin: 8px 0 0; }
+.sort-opt { position: relative; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 4px; border-bottom: 1px solid var(--secondary-deep); cursor: pointer; }
+.sort-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.sort-opt-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sort-opt-label { font-size: var(--fs-lg); line-height: 1.25; overflow-wrap: anywhere; }
+.sort-opt-sub { font-size: var(--fs-sm); line-height: 1.3; color: var(--muted-on-secondary); overflow-wrap: anywhere; }
+.sort-check { flex: none; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
+.sort-opt input:checked ~ .sort-check::after { content: ""; width: 6px; height: 12px; border: solid var(--accent-strong); border-width: 0 3px 3px 0; transform: translateY(-1px) rotate(45deg); }
+.sort-opt input:checked ~ .sort-opt-main .sort-opt-label { font-weight: 700; }
+.sort-opt:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: -3px; border-radius: var(--r-sm); }
+@supports not selector(:has(*)) { .sort-opt input:focus-visible ~ .sort-check { outline: 3px solid var(--focus); outline-offset: 2px; } }   /* older browsers (no :has): ring the tick instead; never both rings */
+.sort-opt:active { background: var(--secondary-deep); }
+/* Like the bulk sheet: capped to the screen; only the rows scroll, Close stays pinned at the foot (on screen at 375x667, also at Larger text). */
+.sheet.sheet-sort { max-height: 94vh; max-height: 94dvh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.sheet-sort .sheet-body { padding-bottom: 0; }
+.sheet-sort .sheet-actions { position: sticky; bottom: 0; margin: 8px calc(-1 * (var(--gutter) + 4px)) 0; padding: 0 calc(var(--gutter) + 4px) calc(8px + env(safe-area-inset-bottom)); background: var(--secondary); box-shadow: 0 -1px 0 var(--secondary-deep); }
+.sheet-sort .sheet-actions .btn.quiet { margin-top: 2px; }
 
 /* R8 C1: "New text" marker. Row: a small dot before the name (spoken label on it); lead page: the dot + the words (never colour alone). */
 .new-dot { display: inline-block; flex: none; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; background: var(--accent-strong); box-shadow: 0 0 0 2px var(--accent-tint); vertical-align: baseline; }
@@ -1290,7 +1310,7 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
   border: 2px solid currentColor; border-radius: 6px; background: transparent; cursor: pointer;
 }
 .money-deposit input:checked, .add-check input:checked, .sp-check input:checked { background: var(--action); border-color: var(--action); }
-.sp-check input:checked { border-color: currentColor; }   /* on the raised-green Help & support box the purple edge disappears; keep the label colour as the edge */
+.sp-check input:checked { border-color: currentColor; }   /* on the raised Help & support box the blue edge disappears; keep the label colour as the edge */
 .money-deposit input:checked::after, .add-check input:checked::after, .sp-check input:checked::after {
   content: ""; width: 6px; height: 12px; border: solid var(--on-accent); border-width: 0 3px 3px 0; transform: translateY(-1px) rotate(45deg);
 }
@@ -1299,16 +1319,17 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 
 /* ---------- W7 (s15): iOS date + time boxes keep their own width; fit them to the box they sit in (covers every date/time box, incl. later ones) ---------- */
 input.field[type="date"], input.field[type="time"] {
-  -webkit-appearance: none; appearance: none; display: block; width: 100%; min-width: 0; max-width: 100%;
-  min-inline-size: 0; text-align: left; line-height: 1.2;
+  -webkit-appearance: none; appearance: none; display: flex; align-items: center; width: 100%; min-width: 0; max-width: 100%;
+  min-inline-size: 0; text-align: left; line-height: normal;
+  height: var(--date-h, 54px); padding-top: 0; padding-bottom: 0;   /* iOS: a FIXED height equal to the select beside it (min-height alone let it grow) and the value centred */
 }
-input.field[type="date"]::-webkit-date-and-time-value, input.field[type="time"]::-webkit-date-and-time-value { text-align: left; min-width: 0; margin: 0; }
-input.field[type="date"]::-webkit-datetime-edit, input.field[type="time"]::-webkit-datetime-edit { padding: 0; }
+input.field[type="date"]::-webkit-date-and-time-value, input.field[type="time"]::-webkit-date-and-time-value { text-align: left; min-width: 0; min-height: 1.2em; margin: 0; }   /* min-height: an EMPTY box keeps its height */
+input.field[type="date"]::-webkit-datetime-edit, input.field[type="time"]::-webkit-datetime-edit { padding: 0; display: flex; align-items: center; }
+.q-form input.field[type="date"], .ex-dates-row input.field[type="date"] { --date-h: 52px; }   /* = their min-height (.q-form .field / .ex-dates-row .field) */
+.sheet input.field[type="date"], .sheet input.field[type="time"] { --date-h: 50px; }   /* = .sheet .field */
 
 /* W18 (s15): at Small (0.92) these boxes (Ask, Leads search, the three note boxes) would fall under 16 px, and iOS zooms the page when a box under 16 px gets the cursor. --fs-lg = 16.56 px at Small. */
 :root[data-text-size="small"] .ask-input, :root[data-text-size="small"] .search-field, :root[data-text-size="small"] .note-field { font-size: var(--fs-lg); }
-/* Item 9 (W11): the Sort box the same way (a select under 16 px also makes iOS zoom). */
-:root[data-text-size="small"] .list-sort-select { font-size: var(--fs-lg); }
 
 /* ---------- bigger text sizes (More > Text size: Large, Larger): layout only. Nothing here applies at Normal. ---------- */
 /* Five filter chips: one row at Normal; at Large / Larger they wrap onto a second row rather than clip ("Contacted" is ~81 px at Larger). */

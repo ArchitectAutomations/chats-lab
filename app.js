@@ -181,7 +181,7 @@
     formPhone: $('form-phone'), phone: $('phone'), phoneErr: $('phone-error'), btnSend: $('btn-send'),
     formCode: $('form-code'), code: $('code'), codePhone: $('code-phone'), codeErr: $('code-error'), codeNote: $('code-note'),
     btnVerify: $('btn-verify'), btnResend: $('btn-resend'), btnChange: $('btn-change'), configErr: $('config-error'),
-    listScroll: $('list-scroll'), filters: $('filters'), filtersExtra: $('filters-extra'), lostParts: $('lost-parts'), listSort: $('list-sort'), listSortBox: $('list-sort-box'), listLoading: $('list-loading'), leadList: $('lead-list'),
+    listScroll: $('list-scroll'), filters: $('filters'), filtersExtra: $('filters-extra'), lostParts: $('lost-parts'), listSort: $('list-sort'), listSortText: $('list-sort-text'), listSortBox: $('list-sort-box'), sortSheet: $('sort-sheet'), sortList: $('sort-list'), sortClose: $('sort-close'), listLoading: $('list-loading'), leadList: $('lead-list'),
     listEmpty: $('list-empty'), filterEmpty: $('filter-empty'), listErr: $('list-error'),
     needsMore: $('needs-more'), needsLate: $('needs-late'), listHead: $('list-head'), listHeadTitle: $('list-head-title'), listBack: $('list-back'), listTrunc: $('list-trunc'), listMore: $('list-more'), listTop: $('list-top'),
     bulk: $('bulk'), bulkDate: $('bulk-date'), bulkHead: $('bulk-head'), bulkSample: $('bulk-sample'), bulkMore: $('bulk-more'), bulkNote: $('bulk-note'),
@@ -229,7 +229,7 @@
     signedIn: false,
     leads: [],
     counts: null,        // cv_list_counts (sql/025) from the last refresh; null = count the rows the page has
-    sort: L.listSortLoad(),   // item 9 (W11): the chip lists' order (newest | event_soon | event_late), remembered on this phone
+    sort: L.listSortLoad(),   // item 9 (W11): the chip lists' order (newest | quiet | event_soon | event_late | quote_high | customer_text | name_az), remembered on this phone
     lostPart: 'real',    // D3: which part of the Lost chip is showing (real | old | optout); owner only
     shown: {},           // list key -> rows drawn so far ("Show more", round 4); kept while the page is open
     listTop: 0,          // the list's scroll position when a lead was opened, put back on return
@@ -869,6 +869,7 @@
     else if (!asking && el.confirm.open) el.confirm.close();
     if (askAdd) askAddBeforeLeaving();
     if (el.teamConfirm.open) closeTeamConfirm();
+    if (el.sortSheet.open) closeSortSheet();
     if (el.bulk.open) closeBulk();
     if (el.addDlg.open) closeAdd();
     if (el.editDlg.open) closeEdit();
@@ -1221,6 +1222,63 @@
     if (link) try { link.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
   }
 
+  // The Sort pill: "Sort: Latest activity"; a non-default pick shows filled (the .is-set look) so it is clear a sort is on.
+  function renderSortPill(key) {
+    el.listSortText.textContent = 'Sort: ' + L.listSortShort(key, isStaff());
+    el.listSort.classList.toggle('is-set', key !== 'newest');
+  }
+  // The sort sheet (a bottom .sheet like the others): radio rows from L.listSorts({staff}), rebuilt on every open. A tap applies and closes.
+  function openSortSheet() {
+    var cur = L.listSortEffective(S.sort, isStaff());
+    el.sortList.textContent = '';
+    L.listSorts({ staff: isStaff() }).forEach(function (o) {
+      var row = make('label', 'sort-opt');
+      var inp = make('input'); inp.type = 'radio'; inp.name = 'list-sort'; inp.value = o.key; inp.checked = o.key === cur;
+      var main = make('span', 'sort-opt-main');
+      main.appendChild(make('span', 'sort-opt-label', o.label));
+      main.appendChild(make('span', 'sort-opt-sub', o.sub));
+      var tick = make('span', 'sort-check'); tick.setAttribute('aria-hidden', 'true');
+      row.appendChild(inp); row.appendChild(main); row.appendChild(tick);
+      el.sortList.appendChild(row);
+    });
+    if (typeof el.sortSheet.showModal === 'function') el.sortSheet.showModal();
+    else el.sortSheet.setAttribute('open', '');
+    var on = el.sortList.querySelector('input:checked');
+    try { if (on) on.focus(); } catch (e) { /* ignore */ }
+  }
+  // Sheet input rules (one delegated set on the radio list): a tap / click / Space on a row applies it and closes, EVEN on the row already
+  // checked (a radio fires no 'change' then); Enter applies the focused row; the arrow keys only move the selection (browse), they never close.
+  var sortArrowKey = false;
+  function sortRadio(e) { var t = e && e.target; return t && t.type === 'radio' && t.name === 'list-sort' ? t : null; }
+  function onSortListKeydown(e) {
+    var k = e && e.key;
+    if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'ArrowLeft' || k === 'ArrowRight') { sortArrowKey = true; return; }
+    if (k === 'Enter') { var r = sortRadio(e); if (r) { if (e.preventDefault) e.preventDefault(); applySort(r.value); } }
+  }
+  function onSortListKeyup() { sortArrowKey = false; }
+  function onSortListClick(e) {
+    var r = sortRadio(e);
+    if (!r) return;
+    if (sortArrowKey) return;   // an arrow key moves the radio (the browser sends it as a click): selection only
+    applySort(r.value);
+  }
+  function closeSortSheet() {
+    if (el.sortSheet.open) {
+      if (typeof el.sortSheet.close === 'function') el.sortSheet.close();
+      else el.sortSheet.removeAttribute('open');
+    }
+  }
+  // A pick: remembered on this phone, the list starts again at the top, the sheet closes and focus goes back to the pill.
+  function applySort(key) {
+    S.sort = L.listSortNormalize(key);
+    L.listSortSave(S.sort);
+    S.shown[S.filter] = L.LIST_PAGE;
+    renderList();
+    el.listScroll.scrollTop = 0; S.listTop = 0;
+    closeSortSheet();
+    try { el.listSort.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+  }
+
   function renderList() {
     renderFilters();
     if (!S.listLoaded) {
@@ -1238,9 +1296,10 @@
     var needsMode = S.filter === 'needs';
     var view = L.homeView(S.leads, S.filter, undefined, lostPartsOn() ? S.lostPart : null);
     // Item 9 (W11): the chip's rows in the picked order; S.leads itself stays in activity order (Needs you, counts, Calendar read it).
-    var leads = needsMode ? view.rest : L.sortLeadsBy(view.rest, S.sort);
+    var sortKey = L.listSortEffective(S.sort, isStaff());   // a saved sort this viewer is not offered (staff + Highest quote) reads as Latest activity; storage untouched
+    var leads = needsMode ? view.rest : L.sortLeadsBy(view.rest, sortKey, isStaff());
     show(el.listSortBox, !needsMode && S.leads.length > 1);
-    if (el.listSort.value !== S.sort) el.listSort.value = S.sort;
+    renderSortPill(sortKey);
     renderNeeds(view.needs, view.needsAll.length, view.needsAll);
     show(el.listHead, needsMode);
     if (needsMode) el.listHeadTitle.textContent = L.statusInfo('handed_off').label + ': ' + view.needsAll.length + ', newest first';
@@ -1249,7 +1308,7 @@
     setText(el.filterEmpty, S.leads.length > 0 && leads.length === 0 ? none : '');
     // D3: with the toggle showing (owner) each part says what it is; staff, who have no toggle, keep the one line.
     setText(el.filterNote, S.filter === 'lost' && S.leads.length > 0 && !lostPartsOn() ? 'Includes people who opted out.' : '');
-    setText(el.listTrunc, L.listTruncNote(S.leads.length, S.counts && S.counts.all, needsMode ? 'newest' : S.sort));
+    setText(el.listTrunc, L.listTruncNote(S.leads.length, S.counts && S.counts.all, needsMode ? 'newest' : sortKey));
     var pg = L.listPage(needsMode ? view.needsAll : leads, S.shown[S.filter]);
     show(el.leadList, pg.rows.length > 0);
     var frag = document.createDocumentFragment();
@@ -5871,16 +5930,16 @@
       var a = e.target && e.target.closest ? e.target.closest('a.tab') : null;
       if (a && a.getAttribute('data-route') === 'list' && location.hash === '#/needs') { e.preventDefault(); leaveSeeAll(); }
     });
-    // Item 9 (W11): the Sort box. Options once from L.listSorts(); a pick is saved on this phone and the list starts again at the top.
-    L.listSorts().forEach(function (o) { var op = make('option', '', o.label); op.value = o.key; el.listSort.appendChild(op); });
-    el.listSort.value = S.sort;
-    el.listSort.addEventListener('change', function () {
-      S.sort = L.listSortNormalize(el.listSort.value);
-      L.listSortSave(S.sort);
-      S.shown[S.filter] = L.LIST_PAGE;
-      renderList();
-      el.listScroll.scrollTop = 0; S.listTop = 0;
-    });
+    // Item 9 (W11): the Sort pill opens the sort sheet (rows built on open from L.listSorts); a pick is saved on this phone and the list starts again at the top.
+    renderSortPill(L.listSortEffective(S.sort, isStaff()));
+    el.listSort.addEventListener('click', openSortSheet);
+    el.sortClose.addEventListener('click', closeSortSheet);
+    el.sortList.addEventListener('click', onSortListClick);
+    el.sortList.addEventListener('keydown', onSortListKeydown);
+    el.sortList.addEventListener('keyup', onSortListKeyup);
+    el.sortList.addEventListener('pointerdown', onSortListKeyup);
+    el.sortSheet.addEventListener('click', function (e) { if (e.target === el.sortSheet) closeSortSheet(); });
+    el.sortSheet.addEventListener('close', function () { try { el.listSort.focus({ preventScroll: true }); } catch (e) { /* ignore */ } });
     el.listMore.addEventListener('click', function () {
       S.shown[S.filter] = Math.max(L.LIST_PAGE, S.shown[S.filter] || 0) + L.LIST_PAGE;
       renderList();

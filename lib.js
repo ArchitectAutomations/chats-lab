@@ -197,7 +197,8 @@
     secondaryDeep: '--secondary-deep', onSecondary: '--on-secondary', mutedOnSecondary: '--muted-on-secondary',
     accentStrong: '--accent-strong', accentLight: '--accent-light', accentTint: '--accent-tint',
     accentInk: '--accent-ink', accentWash: '--accent-wash', onAccent: '--on-accent',
-    dangerOnPrimary: '--danger-on-primary', dangerOnSecondary: '--danger-on-secondary'
+    dangerOnPrimary: '--danger-on-primary', dangerOnSecondary: '--danger-on-secondary',
+    cardRing: '--card-ring', bubbleOut: '--bubble-out', fieldBorder: '--field-border'
   };
   var HEX_RE = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 
@@ -3862,36 +3863,65 @@ function renderPriceBlockSms(lineItems, total, currency) {
     if (!/^[0-9TZ:.+ -]{10,40}$/.test(t)) throw new Error('keyset: bad time');
     return col + '.lt."' + t + '",and(' + col + '.eq."' + t + '",' + idCol + '.gt.' + id + '),' + col + '.is.null';
   }
-  // Item 9 (W11): with a date sort picked, the note also says what the sort covers (the loaded set = the most recent leads).
+  // Item 9 (W11) + sort round: with another sort picked, the note also says what the sort covers (the loaded set = the most recent leads).
+  var TRUNC_PHRASE = {
+    quiet: 'longest quiet', event_soon: 'event date', event_late: 'event date',
+    quote_high: 'quote', customer_text: 'latest customer text', name_az: 'name'
+  };
   function listTruncNote(loaded, total, sortKey) {
     var a = Number(loaded) || 0, b = Number(total) || 0;
     if (!(b > a)) return '';
-    if (listSortNormalize(sortKey) !== 'newest') return 'Sorted by event date across your ' + a.toLocaleString('en-CA') + ' most recent leads of ' + b.toLocaleString('en-CA') + '. Search finds any lead.';
+    var phrase = TRUNC_PHRASE[listSortNormalize(sortKey)];
+    if (phrase) return 'Sorted by ' + phrase + ' across your ' + a.toLocaleString('en-CA') + ' most recent leads of ' + b.toLocaleString('en-CA') + '. Search finds any lead.';
     return 'Showing your ' + a.toLocaleString('en-CA') + ' most recent leads of ' + b.toLocaleString('en-CA') + '. Search finds any lead.';
   }
 
-  /* ---------- list sort (item 9 / W11, Kevin 2026-11-18) ----------
-     A "Sort" box over the chip lists: Newest first (the default, today's order), Event date soonest first, Event date latest first.
-     The page already holds every lead it shows (up to LIST_CAP) before it draws a list, so the sort is done here, exactly, on the
-     rows of the chip; the Needs-you block and See all keep their own (waiting-line) order. Leads with no event date (or a bad one)
-     always go last. A viewer preference: ONE localStorage key on this phone (like Text size); Newest first removes the key. */
+  /* ---------- list sort (item 9 / W11, Kevin 2026-11-18; more sorts + sheet 2026-11-19) ----------
+     A "Sort" pill over the chip lists opens a sheet: Latest activity (the default, today's order; the stored key stays 'newest'),
+     Longest quiet first, Event date soonest / latest, Highest quote first (owner only: staff rows carry no money), Customer texted
+     last, Name A to Z. The page already holds every lead it shows (up to LIST_CAP) before it draws a list, so the sort is done here,
+     exactly, on the rows of the chip; the Needs-you block and See all keep their own (waiting-line) order. A lead with no value for
+     the sort always goes last (in both directions); ties fall to the activity order. A viewer preference: ONE localStorage key on this
+     phone (like Text size); the default removes the key. A stored key this user cannot use (staff + quote_high) reads as the default
+     at draw time and is not erased. */
   var LIST_SORT_KEY = 'cv_list_sort';
   var LIST_SORTS = [
-    { key: 'newest', label: 'Newest first' },
-    { key: 'event_soon', label: 'Event date: soonest first' },
-    { key: 'event_late', label: 'Event date: latest first' }
+    { key: 'newest', label: 'Latest activity', short: 'Latest activity', sub: 'Last text or change' },
+    { key: 'quiet', label: 'Longest quiet first', short: 'Longest quiet', sub: 'Nothing new for the longest time' },
+    { key: 'event_soon', label: 'Event date: soonest first', short: 'Soonest event', sub: 'Nearest event on top' },
+    { key: 'event_late', label: 'Event date: latest first', short: 'Latest event', sub: 'Furthest event on top' },
+    { key: 'quote_high', label: 'Highest quote first', short: 'Highest quote', sub: 'Booked price, else the quote', ownerOnly: true },
+    { key: 'customer_text', label: 'Customer texted last', short: 'Customer texted', sub: 'Their own latest text' },
+    { key: 'name_az', label: 'Name A to Z', short: 'Name A to Z', sub: 'Unnamed leads last' }
   ];
-  function listSorts() {
-    return LIST_SORTS.map(function (r) { return { key: r.key, label: CUSTOM.sortLabels[r.key] || r.label }; });
+  // opts.staff = true hides the owner-only sorts. -> [{ key, label, short, sub }]
+  function listSorts(opts) {
+    var staff = !!(opts && opts.staff);
+    return LIST_SORTS.filter(function (r) { return !(staff && r.ownerOnly); }).map(function (r) {
+      var custom = CUSTOM.sortLabels[r.key];
+      return { key: r.key, label: custom || r.label, short: custom || r.short, sub: r.sub };
+    });
   }
   function listSortNormalize(v) {
     for (var i = 0; i < LIST_SORTS.length; i++) if (LIST_SORTS[i].key === v) return v;
     return 'newest';
   }
+  // The key to draw with for this viewer: unknown or not offered to staff = 'newest' (storage untouched).
+  function listSortEffective(v, staff) {
+    var k = listSortNormalize(v);
+    for (var i = 0; i < LIST_SORTS.length; i++) if (LIST_SORTS[i].key === k && LIST_SORTS[i].ownerOnly && staff) return 'newest';
+    return k;
+  }
+  // The short label for the pill ("Latest activity", "Highest quote", ...).
+  function listSortShort(v, staff) {
+    var k = listSortEffective(v, staff), all = listSorts();
+    for (var i = 0; i < all.length; i++) if (all[i].key === k) return all[i].short;
+    return all[0].short;
+  }
   function listSortLoad(store) {
     try { var s = textSizeStore(store); return s ? listSortNormalize(s.getItem(LIST_SORT_KEY)) : 'newest'; } catch (e) { return 'newest'; }
   }
-  // -> true when saved. Newest first removes the key (nothing to remember).
+  // -> true when saved. The default removes the key (nothing to remember).
   function listSortSave(v, store) {
     try {
       var s = textSizeStore(store); if (!s) return false;
@@ -3900,6 +3930,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       return true;
     } catch (e) { return false; }
   }
+  function sortTime(v) { var t = v ? new Date(v).getTime() : NaN; return isNaN(t) ? null : t; }
   // newest = last_activity_at descending, no time last, then lead_id ascending (the server's own keyset order).
   function sortActivityCmp(a, b) {
     var ta = a && a.last_activity_at ? new Date(a.last_activity_at).getTime() : NaN;
@@ -3915,18 +3946,45 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var d = dateOnly(v);
     return d && !isNaN(Date.parse(d + 'T00:00:00Z')) ? d : '';
   }
-  // -> a NEW array (the input is never touched).
-  function sortLeadsBy(rows, key) {
-    var k = listSortNormalize(key);
-    var list = (Array.isArray(rows) ? rows : []).slice();
-    if (k === 'newest') return list.sort(sortActivityCmp);
-    var dir = k === 'event_soon' ? 1 : -1;
+  // The money a lead is worth for sorting, in cents: a booked lead's final price, else the quote, else the saved price. null = none (zero counts as none).
+  function leadMoneyCents(lead) {
+    if (!lead) return null;
+    var order = [];
+    if (statusGroup(lead.status) === 'booked') order.push(lead.booked_amount);
+    order.push(lead.quote_total, lead.owner_price);
+    for (var i = 0; i < order.length; i++) { var c = toCents(order[i]); if (c !== null && c > 0) return c; }
+    return null;
+  }
+  // A real name, or '' for the stand-ins ("Lead ending 1234", "Unnamed lead").
+  function sortNameKey(lead) {
+    var n = displayName(lead);
+    return /^(Lead ending \d{4}|Unnamed lead)$/i.test(n) ? '' : n;
+  }
+  // value-first comparator: va / vb null = no value (last in both directions); equal values fall to the activity order.
+  function sortByValue(list, val, cmp) {
     return list.sort(function (a, b) {
-      var da = sortDateKey(a && a.event_date), db = sortDateKey(b && b.event_date);
-      if (!da !== !db) return da ? -1 : 1;   // no date: last, in both directions
-      if (da !== db) return (da < db ? -1 : 1) * dir;
+      var va = val(a), vb = val(b);
+      var ha = va !== null && va !== undefined, hb = vb !== null && vb !== undefined;
+      if (ha !== hb) return ha ? -1 : 1;
+      if (ha) { var c = cmp(va, vb); if (c) return c; }
       return sortActivityCmp(a, b);
     });
+  }
+  // -> a NEW array (the input is never touched). staff = true: owner-only sorts read as the default.
+  function sortLeadsBy(rows, key, staff) {
+    var k = listSortEffective(key, staff);
+    var list = (Array.isArray(rows) ? rows : []).slice();
+    var num = function (x, y) { return x - y; };
+    if (k === 'newest') return list.sort(sortActivityCmp);
+    if (k === 'quiet') return sortByValue(list, function (r) { return sortTime(r && r.last_activity_at); }, num);
+    if (k === 'event_soon' || k === 'event_late') {
+      var dir = k === 'event_soon' ? 1 : -1;
+      return sortByValue(list, function (r) { return sortDateKey(r && r.event_date) || null; }, function (x, y) { return x === y ? 0 : (x < y ? -1 : 1) * dir; });
+    }
+    if (k === 'quote_high') return sortByValue(list, leadMoneyCents, function (x, y) { return y - x; });
+    if (k === 'customer_text') return sortByValue(list, function (r) { return sortTime(r && r.last_in_at); }, function (x, y) { return y - x; });
+    // name_az
+    return sortByValue(list, function (r) { return sortNameKey(r) || null; }, function (x, y) { return x.localeCompare(y, 'en-CA', { sensitivity: 'base', numeric: true }); });
   }
 
   // "Sat, Nov 14", "40 guests", "$650": the job in three bits. money:false leaves the price out.
@@ -5579,6 +5637,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     listTruncNote: listTruncNote,
     LIST_SORT_KEY: LIST_SORT_KEY, LIST_SORTS: LIST_SORTS, listSorts: listSorts, listSortNormalize: listSortNormalize,
     listSortLoad: listSortLoad, listSortSave: listSortSave, sortLeadsBy: sortLeadsBy,
+    listSortEffective: listSortEffective, listSortShort: listSortShort, leadMoneyCents: leadMoneyCents,
     keysetAfter: keysetAfter,
     leadIndex: leadIndex,
     BULK_REASON_KEY: BULK_REASON_KEY,

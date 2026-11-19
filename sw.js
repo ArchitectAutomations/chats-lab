@@ -30,9 +30,8 @@ self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim(
 
 // Offline fallback: fixed text, no data, no external resources, no script. 503 = honest "unavailable" (never mistaken for the app).
 var OFFLINE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No signal</title>' +
-  '<style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;box-sizing:border-box;text-align:center;font:17px/1.4 -apple-system,system-ui,sans-serif;background:#fff;color:#1a1a1a}' +
-  '@media(prefers-color-scheme:dark){body{background:#111;color:#f2f2f2}}p{margin:0;max-width:20em}a{display:inline-block;padding:12px 24px;border-radius:12px;background:#1a1a1a;color:#fff;text-decoration:none;font-weight:600}' +
-  '@media(prefers-color-scheme:dark){a{background:#f2f2f2;color:#111}}</style></head><body><p>No signal. Your leads load when you\u2019re back.</p><a href="/">Try again</a></body></html>';
+  '<style>:root{color-scheme:light}body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;box-sizing:border-box;text-align:center;font:17px/1.4 -apple-system,system-ui,sans-serif;background:#f3eee2;color:#2b2723}' +
+  'p{margin:0;max-width:20em}a{display:inline-block;padding:12px 24px;border-radius:12px;background:#2f4a73;color:#fff;text-decoration:none;font-weight:600}a:focus-visible{outline:3px solid #2f4a73;outline-offset:2px}</style></head><body><p>No signal. Your leads load when you\u2019re back.</p><a href="/">Try again</a></body></html>';
 
 function offlineResponse() {
   return new Response(OFFLINE_HTML, {
