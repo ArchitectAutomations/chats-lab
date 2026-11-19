@@ -116,6 +116,11 @@
       <div class="filters filters-extra" id="filters-extra" role="group" aria-label="More ways to show leads" hidden></div>
       <!-- D3 (Kevin 11-10): under the Lost chip, Lost / Old lead / Opted out. Owner only; built by renderFilters(). -->
       <div class="filters filters-extra lost-parts" id="lost-parts" role="group" aria-label="Which kind of lost lead" hidden></div>
+      <!-- Item 9 (W11): Sort the chip's list (Newest first / Event date soonest / latest). Not in See all. Options built by app.js from L.listSorts(). -->
+      <div class="list-sort" id="list-sort-box" hidden>
+        <label class="field-label" for="list-sort">Sort</label>
+        <select class="field list-sort-select" id="list-sort"></select>
+      </div>
       <!-- The full Needs-you list ("See all"): its heading and the way back to the chips. -->
       <div class="list-head" id="list-head" hidden>
         <h2 class="list-head-title" id="list-head-title"></h2>
@@ -226,12 +231,12 @@
           <fieldset class="textsize-box">
             <legend class="rec-h" id="textsize-h">Text size</legend>
             <div class="seg">
-              <label class="seg-opt"><input type="radio" name="text-size" value="normal"><span>Normal</span></label>
-              <label class="seg-opt"><input type="radio" name="text-size" value="large"><span>Large</span></label>
-              <label class="seg-opt"><input type="radio" name="text-size" value="larger"><span>Larger</span></label>
+              <label class="seg-opt"><input type="radio" name="text-size" value="small"><span>Small</span></label>
+              <label class="seg-opt"><input type="radio" name="text-size" value="normal"><span>Medium</span></label>
+              <label class="seg-opt"><input type="radio" name="text-size" value="larger"><span>Large</span></label>
             </div>
           </fieldset>
-          <p class="rec-note">Makes the words bigger on this phone only.</p>
+          <p class="rec-note">Changes the size of the words on this phone only.</p>
         </section>
         <ul class="more-list">
           <li>
@@ -819,9 +824,16 @@
           <p class="add-dup-opt" id="add-dup-opt" hidden></p>
         </div>
       </div>
+      <div class="sheet-field">
+        <label class="field-label" for="add-email">Email</label>
+        <input class="field" id="add-email" type="email" inputmode="email" autocomplete="off" autocapitalize="off" maxlength="254" aria-describedby="add-err-email">
+        <p class="error" id="add-err-email" role="alert" hidden></p>
+      </div>
       <fieldset class="sheet-field reason-box" aria-describedby="add-err-source">
-        <legend class="field-label">Where they came from</legend>
+        <!-- Item 11 (W4, sql/049): optional; blank = "Not given". Clear un-picks a chip picked by mistake (shown only while one is picked). -->
+        <legend class="field-label">Where they came from <span class="field-optional">(optional)</span></legend>
         <div class="reason-chips" id="add-source-chips"></div>
+        <button type="button" class="add-source-clear" id="add-source-clear" hidden>Clear</button>
         <p class="error" id="add-err-source" role="alert" hidden></p>
       </fieldset>
       <div class="sheet-field">
@@ -848,11 +860,6 @@
         <input type="checkbox" id="add-contacted">
         <span>Already talked to them</span>
       </label>
-      <div class="sheet-field">
-        <label class="field-label" for="add-email">Email</label>
-        <input class="field" id="add-email" type="email" inputmode="email" autocomplete="off" autocapitalize="off" maxlength="254" aria-describedby="add-err-email">
-        <p class="error" id="add-err-email" role="alert" hidden></p>
-      </div>
 
       <p class="error" id="add-error" role="alert" hidden></p>
       <div class="sheet-actions">
@@ -900,6 +907,12 @@
           <input class="field" id="edit-end" type="time" aria-describedby="edit-err-end_time">
           <p class="error" id="edit-err-end_time" role="alert" hidden></p>
         </div>
+      </div>
+      <!-- Item 10 (W6, sql/048): the calculator's hours choices; options built by app.js on open (an "As on file" choice keeps a label that is none of them). -->
+      <div class="sheet-field">
+        <label class="field-label" for="edit-hours">Hours</label>
+        <select class="field" id="edit-hours" aria-describedby="edit-err-service_hours"></select>
+        <p class="error" id="edit-err-service_hours" role="alert" hidden></p>
       </div>
       <div class="sheet-field">
         <label class="field-label" for="edit-guests">Guests</label>

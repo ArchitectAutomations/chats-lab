@@ -181,7 +181,7 @@
     formPhone: $('form-phone'), phone: $('phone'), phoneErr: $('phone-error'), btnSend: $('btn-send'),
     formCode: $('form-code'), code: $('code'), codePhone: $('code-phone'), codeErr: $('code-error'), codeNote: $('code-note'),
     btnVerify: $('btn-verify'), btnResend: $('btn-resend'), btnChange: $('btn-change'), configErr: $('config-error'),
-    listScroll: $('list-scroll'), filters: $('filters'), filtersExtra: $('filters-extra'), lostParts: $('lost-parts'), listLoading: $('list-loading'), leadList: $('lead-list'),
+    listScroll: $('list-scroll'), filters: $('filters'), filtersExtra: $('filters-extra'), lostParts: $('lost-parts'), listSort: $('list-sort'), listSortBox: $('list-sort-box'), listLoading: $('list-loading'), leadList: $('lead-list'),
     listEmpty: $('list-empty'), filterEmpty: $('filter-empty'), listErr: $('list-error'),
     needsMore: $('needs-more'), needsLate: $('needs-late'), listHead: $('list-head'), listHeadTitle: $('list-head-title'), listBack: $('list-back'), listTrunc: $('list-trunc'), listMore: $('list-more'), listTop: $('list-top'),
     bulk: $('bulk'), bulkDate: $('bulk-date'), bulkHead: $('bulk-head'), bulkSample: $('bulk-sample'), bulkMore: $('bulk-more'), bulkNote: $('bulk-note'),
@@ -189,9 +189,9 @@
     btnAdd: $('btn-add-lead'), toast: $('toast'),
     addDlg: $('add-lead'), addForm: $('add-form'), addName: $('add-name'), addPhone: $('add-phone'), addPhoneHint: $('add-phone-hint'), addDate: $('add-date'),
     addGuests: $('add-guests'), addArea: $('add-area'), addOccasion: $('add-occasion'), addContacted: $('add-contacted'),
-    addEmail: $('add-email'), addSourceChips: $('add-source-chips'), addErr: $('add-error'), addSubmit: $('add-submit'), addCancel: $('add-cancel'),
+    addEmail: $('add-email'), addSourceChips: $('add-source-chips'), addSourceClear: $('add-source-clear'), addErr: $('add-error'), addSubmit: $('add-submit'), addCancel: $('add-cancel'),
     btnEdit: $('btn-edit-lead'), editDlg: $('edit-lead'), editForm: $('edit-form'), editName: $('edit-name'), editPhone: $('edit-phone'), editPhoneWhy: $('edit-phone-why'),
-    editEmail: $('edit-email'), editDate: $('edit-date'), editStart: $('edit-start'), editEnd: $('edit-end'), editGuests: $('edit-guests'), editArea: $('edit-area'),
+    editEmail: $('edit-email'), editDate: $('edit-date'), editStart: $('edit-start'), editEnd: $('edit-end'), editHours: $('edit-hours'), editGuests: $('edit-guests'), editArea: $('edit-area'),
     editOccasion: $('edit-occasion'), editErr: $('edit-error'), editOther: $('edit-other'), editOtherLink: $('edit-other-link'), editSubmit: $('edit-submit'), editCancel: $('edit-cancel'),
     dupDlg: $('dup-lead'), dupTitle: $('dup-title'), dupIntro: $('dup-intro'), dupLines: $('dup-lines'), dupContacted: $('dup-contacted'), dupOpt: $('dup-opt'),
     dupNote: $('dup-note'), dupErr: $('dup-error'), dupUpdate: $('dup-update'), dupKeep: $('dup-keep'),
@@ -229,6 +229,7 @@
     signedIn: false,
     leads: [],
     counts: null,        // cv_list_counts (sql/025) from the last refresh; null = count the rows the page has
+    sort: L.listSortLoad(),   // item 9 (W11): the chip lists' order (newest | event_soon | event_late), remembered on this phone
     lostPart: 'real',    // D3: which part of the Lost chip is showing (real | old | optout); owner only
     shown: {},           // list key -> rows drawn so far ("Show more", round 4); kept while the page is open
     listTop: 0,          // the list's scroll position when a lead was opened, put back on return
@@ -259,6 +260,7 @@
     depositBusy: false,   // R7: a Deposit received save is running
     quote: { busy: false, seq: 0, view: null, req: null, raw: null, pending: null, fromLead: null, backTo: null, pre: null, added: false, adding: false, refused: false },
     quoteSendBusy: false,
+    focusPriceFor: null,   // item 8: { id, total } right after a successful Add: the lead opens at the Your price card once. One-shot; memory only.
     addSrv: false, addSrvSeq: 0,   // R6 (S1): the database's no-phone switch, read when the Add sheet opens
     optedPhones: [], optedAt: 0, optedBusy: false,   // numbers that opted out (lead_detail), for Add lead and the No-quote rule
     needsDepth: 0,       // history.length right after See all pushed #/needs (0 = it did not; Back to leads then replaces instead of going back)
@@ -1226,6 +1228,7 @@
       setText(el.listErr, S.listError);
       renderNeeds([], 0, []);
       show(el.listHead, false); show(el.listMore, false); show(el.listTop, false); setText(el.listTrunc, '');
+      show(el.listSortBox, false);
       return;
     }
     show(el.listLoading, false);
@@ -1234,7 +1237,10 @@
     if (S.filter === 'noquote' && !noQuoteShown()) { S.filter = 'open'; S.chip = 'open'; store('set', FILTER_KEY, 'open'); renderFilters(); }
     var needsMode = S.filter === 'needs';
     var view = L.homeView(S.leads, S.filter, undefined, lostPartsOn() ? S.lostPart : null);
-    var leads = view.rest;
+    // Item 9 (W11): the chip's rows in the picked order; S.leads itself stays in activity order (Needs you, counts, Calendar read it).
+    var leads = needsMode ? view.rest : L.sortLeadsBy(view.rest, S.sort);
+    show(el.listSortBox, !needsMode && S.leads.length > 1);
+    if (el.listSort.value !== S.sort) el.listSort.value = S.sort;
     renderNeeds(view.needs, view.needsAll.length, view.needsAll);
     show(el.listHead, needsMode);
     if (needsMode) el.listHeadTitle.textContent = L.statusInfo('handed_off').label + ': ' + view.needsAll.length + ', newest first';
@@ -1243,7 +1249,7 @@
     setText(el.filterEmpty, S.leads.length > 0 && leads.length === 0 ? none : '');
     // D3: with the toggle showing (owner) each part says what it is; staff, who have no toggle, keep the one line.
     setText(el.filterNote, S.filter === 'lost' && S.leads.length > 0 && !lostPartsOn() ? 'Includes people who opted out.' : '');
-    setText(el.listTrunc, L.listTruncNote(S.leads.length, S.counts && S.counts.all));
+    setText(el.listTrunc, L.listTruncNote(S.leads.length, S.counts && S.counts.all, needsMode ? 'newest' : S.sort));
     var pg = L.listPage(needsMode ? view.needsAll : leads, S.shown[S.filter]);
     show(el.leadList, pg.rows.length > 0);
     var frag = document.createDocumentFragment();
@@ -1333,12 +1339,23 @@
       var lab = make('label', 'reason-chip');
       var input = make('input');
       input.type = 'radio'; input.name = 'add-source'; input.value = r.key;
-      input.addEventListener('change', function () { setAddError('source', ''); });
+      input.addEventListener('change', function () { setAddError('source', ''); syncAddSourceClear(); });
       lab.appendChild(input);
       lab.appendChild(make('span', '', r.label));
       frag.appendChild(lab);
     });
     el.addSourceChips.replaceChildren(frag);
+    syncAddSourceClear();
+  }
+  // Item 11 (W4): "Clear" shows only while a chip is picked; it un-picks it (the lead is then saved with no source = "Not given").
+  function syncAddSourceClear() { show(el.addSourceClear, !!pickedAddSource()); }
+  function clearAddSource() {
+    var c = el.addSourceChips.querySelector('input:checked');
+    if (c) c.checked = false;
+    setAddError('source', '');
+    syncAddSourceClear();
+    var first = el.addSourceChips.querySelector('input');
+    if (first) try { first.focus(); } catch (e) { /* ignore */ }
   }
 
   // R6 (B9 + F4): the Phone box may stay blank (then name + email are required) only while the page switch says exactly true. Off = nothing changes.
@@ -1414,6 +1431,7 @@
     if (!HAS_ADD || !S.signedIn || S.addBusy) return;
     el.addForm.reset();
     clearAddErrors();
+    syncAddSourceClear();   // item 11: the reset un-picked the source chip
     loadAddConfig();
     renderAddNoPhoneHint();
     renderAddDup();
@@ -1481,7 +1499,7 @@
      history row. A date or phone already on file for this person is never merged: the owner is offered "Open that lead". */
 
   var EDIT_FIELD_EL = { name: 'editName', phone: 'editPhone', email: 'editEmail', event_date: 'editDate', start_time: 'editStart', end_time: 'editEnd',
-    guests: 'editGuests', event_address: 'editArea', occasion: 'editOccasion' };
+    service_hours: 'editHours', guests: 'editGuests', event_address: 'editArea', occasion: 'editOccasion' };
 
   function editFieldNode(f) { return el[EDIT_FIELD_EL[f]]; }
   function setEditError(field, text) {
@@ -1503,7 +1521,7 @@
   }
   function readEditForm() {
     return { name: el.editName.value, phone: el.editPhone.value, email: el.editEmail.value, event_date: el.editDate.value, start_time: el.editStart.value,
-      end_time: el.editEnd.value, guests: el.editGuests.value, event_address: el.editArea.value, occasion: el.editOccasion.value };
+      end_time: el.editEnd.value, service_hours: el.editHours.value, guests: el.editGuests.value, event_address: el.editArea.value, occasion: el.editOccasion.value };
   }
   function editAvailable() {
     return feature('editLead') && !isStaff() && !!S.api && typeof S.api.editLead === 'function';
@@ -1516,6 +1534,11 @@
     el.editForm.reset();
     el.editName.value = f.name; el.editPhone.value = f.phone; el.editEmail.value = f.email; el.editDate.value = f.event_date;
     el.editStart.value = f.start_time; el.editEnd.value = f.end_time; el.editGuests.value = f.guests; el.editArea.value = f.event_address; el.editOccasion.value = f.occasion;
+    // item 10 (W6): Hours, the calculator's choices (+ "As on file" for a label that is none of them), set after the reset above
+    var hf = document.createDocumentFragment();
+    L.editHoursOptions(f).forEach(function (o) { var op = make('option', '', o.label); op.value = o.value; hf.appendChild(op); });
+    el.editHours.replaceChildren(hf);
+    el.editHours.value = f.service_hours;
     // A form lead's number, or one with texts on it, is shown but cannot be changed: the reason sits right under it.
     S.edit = { id: lead.lead_id, phone: ph.editable };
     el.editPhone.readOnly = !ph.editable;
@@ -2082,7 +2105,7 @@
 
   // Bar only always includes the bar: the yes / no question goes away.
   function qTypeChanged() {
-    var barOnly = false; // David only offers full service (Kevin, 2026-11-06)
+    var barOnly = false; // The client offers full service only (Kevin, 2026-11-06)
     show(el.qBarBox, !barOnly);
     show(el.qBarNote, barOnly);
   }
@@ -2367,6 +2390,36 @@
   var QUOTE_ADD_WAIT_MS = 18000;   // an Add with no answer by then frees the sheet and the form (crm-fix-final P1)
   function leaveSheetOpen() { return !!S.confirming && S.confirming.kind === 'quote-leave'; }
 
+  // Item 8: the owner just added a quote; the lead should open with the Your price card (and Send it to them) in view. One-shot, short-lived.
+  var FOCUS_PRICE_MS = 10000;
+  var focusPriceTimer = null;
+  function setFocusPrice(id, total) {
+    clearFocusPrice();
+    S.focusPriceFor = { id: id, total: total };
+    focusPriceTimer = setTimeout(clearFocusPrice, FOCUS_PRICE_MS);   // a refresh that never lands must not fire on a later visit
+  }
+  function clearFocusPrice() {
+    S.focusPriceFor = null;
+    clearTimeout(focusPriceTimer);
+    focusPriceTimer = null;
+  }
+  // Called from renderMyQuote once the card is drawn: scroll only when this lead is the one added to and the card already shows the new price.
+  function maybeFocusPriceCard(lead) {
+    var focus = S.focusPriceFor;
+    if (!focus || S.screen !== 'thread' || !S.thread || S.thread.id !== focus.id || !L.priceCardReady(lead, focus)) return;
+    clearFocusPrice();
+    var card = el.recMyQuote;
+    var id = focus.id;   // the lead this scroll is for: a route change queued before the timeout must not scroll another lead's card
+    var run = function () {
+      if (!S.signedIn || S.screen !== 'thread' || !S.thread || S.thread.id !== id || card.hidden) return;
+      card.scrollIntoView({ block: 'start' });   // scroll-margin-top in styles.css keeps it clear of the edge
+      if (!el.mqSend.hidden) el.mqSend.scrollIntoView({ block: 'nearest' });   // a tall card (Large text, many lines): Send wins over the heading
+      var h = card.querySelector('.rec-h');       // screen readers land on the card heading; Send is never focused
+      if (h) { h.setAttribute('tabindex', '-1'); try { h.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    };
+    setTimeout(run, 0);   // after this render finishes (not requestAnimationFrame: a page in a background tab never runs it)
+  }
+
   // Saves the quote on screen. The reply belongs to THIS quote: if the owner has started another one or left, it never touches the calculator or moves the page.
   function addQuoteToLead() {
     var q = S.quote, f = q.fromLead;
@@ -2407,7 +2460,7 @@
       renderQuoteAdd();
       showToast(said);
       if (timedOut) { if (leaveSheetOpen()) { closeConfirm(); clearQuote(); } return; }   // a late yes: the owner has moved on, the page does not jump
-      if (S.screen === 'quote') { location.hash = '#/lead/' + encodeURIComponent(f.id); return; }   // the lead, with the price on it
+      if (S.screen === 'quote') { setFocusPrice(f.id, total); location.hash = '#/lead/' + encodeURIComponent(f.id); return; }   // the lead, with the price on it (opened at the Your price card)
       closeConfirm();   // answered from the leave sheet: the owner stays where they were going
       clearQuote();
     }).catch(function (e) {
@@ -4921,6 +4974,7 @@
     el.mqSend.textContent = q.sendLabel;
     show(el.mqResend, q.canResend);
     el.mqSend.disabled = el.mqResend.disabled = !!S.quoteSendBusy;
+    maybeFocusPriceCard(lead);
   }
 
   // Step 1: ask the server for the exact text. Step 2: the owner reads it in the sheet and confirms. Nothing goes before that tap.
@@ -5304,6 +5358,7 @@
       store('del', TARGET_KEY);
       if (r.name === 'list' && L.isUuid(target)) { location.replace('#/lead/' + target); return; }
     }
+    if (S.focusPriceFor && (r.name !== 'lead' || r.id !== S.focusPriceFor.id)) clearFocusPrice();   // item 8: only the lead that was added to
     trackNav(r.name);
     if (r.name === 'list') syncNeedsRoute(!!r.needs);
     if (r.name === 'lead') {
@@ -5454,6 +5509,7 @@
 
   function onSignedOut() {
     S.signedIn = false;
+    clearFocusPrice();
     // Back to the first-screen state: the owner's API map and tabs, nothing asked yet (the next sign-in asks again).
     ACCESS.seq++; ACCESS.role = ''; ACCESS.perms = {}; ACCESS.state = 'idle'; ACCESS.errorText = '';
     if (S.base) S.api = S.base;
@@ -5815,6 +5871,16 @@
       var a = e.target && e.target.closest ? e.target.closest('a.tab') : null;
       if (a && a.getAttribute('data-route') === 'list' && location.hash === '#/needs') { e.preventDefault(); leaveSeeAll(); }
     });
+    // Item 9 (W11): the Sort box. Options once from L.listSorts(); a pick is saved on this phone and the list starts again at the top.
+    L.listSorts().forEach(function (o) { var op = make('option', '', o.label); op.value = o.key; el.listSort.appendChild(op); });
+    el.listSort.value = S.sort;
+    el.listSort.addEventListener('change', function () {
+      S.sort = L.listSortNormalize(el.listSort.value);
+      L.listSortSave(S.sort);
+      S.shown[S.filter] = L.LIST_PAGE;
+      renderList();
+      el.listScroll.scrollTop = 0; S.listTop = 0;
+    });
     el.listMore.addEventListener('click', function () {
       S.shown[S.filter] = Math.max(L.LIST_PAGE, S.shown[S.filter] || 0) + L.LIST_PAGE;
       renderList();
@@ -5845,6 +5911,7 @@
     el.btnAdd.addEventListener('click', openAdd);
     el.addForm.addEventListener('submit', function (e) { e.preventDefault(); submitAdd(); });
     el.addCancel.addEventListener('click', closeAdd);
+    el.addSourceClear.addEventListener('click', clearAddSource);   // item 11 (W4)
     el.addDlg.addEventListener('click', function (e) { if (e.target === el.addDlg && !S.addBusy) closeAdd(); });
     el.addDlg.addEventListener('cancel', function (e) { if (S.addBusy) e.preventDefault(); });
     // Edit details (a lead's page) and the duplicate-add sheet (R4)

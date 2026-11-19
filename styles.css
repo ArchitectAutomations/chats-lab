@@ -72,8 +72,9 @@
   --gutter: 16px;
 
   /* type scale (px at Normal): one step per job. --fs-cta is the large-text size primary buttons need for contrast (see note above).
-     Every size multiplies --type-scale: 1 at Normal, 1.15 Large, 1.3 Larger (the More > Text size setting sets data-text-size on <html>, see the
-     three rules after this block). At scale 1 each token is exactly its old px value, so Normal is unchanged. */
+     Every size multiplies --type-scale: 0.92 Small, 1 Medium (the saved word 'normal'), 1.3 Large (the saved word 'larger'); the More > Text size setting sets
+     data-text-size on <html>, see the rules after this block. (The old 1.15 word 'large' is read as 'larger' by lib.js and no longer applied.)
+     At scale 1 each token is exactly its old px value, so Medium is today's Normal, unchanged. */
   --type-scale: 1;
   --fs-xs: calc(12px * var(--type-scale));      /* stamps, tab labels, day separators */
   --fs-sm: calc(14px * var(--type-scale));      /* meta lines, notes, chips, filters */
@@ -105,7 +106,8 @@
 }
 
 /* Text size (More > Text size, saved on this device). Absent / unknown value = Normal = scale 1. */
-:root[data-text-size="large"] { --type-scale: 1.15; }
+:root[data-text-size="small"] { --type-scale: 0.92; }   /* W18 (s15): the new Small */
+:root[data-text-size="large"] { --type-scale: 1.15; }   /* retired word: never applied now (lib.js reads a saved "large" as "larger") */
 :root[data-text-size="larger"] { --type-scale: 1.3; }
 
 /* Sand surfaces: text turns green, muted and dividers follow. */
@@ -117,6 +119,7 @@
 }
 /* Focus + links INSIDE a sand surface sit on sand: use the dark purple. (A row or card's own ring
    is drawn outside it, on green, so it keeps the light purple.) */
+.rec-card { color-scheme: light; }   /* W8 (s15): native tick boxes inside a sand card paint light, not dark */
 .rec-card, .sheet, .alerts, .fc-note { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* .fc-note: the forecast's cream card (its "Review them" link was 1.44:1 in the light green-surface purple) */
 .hidden-banner { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* R5: the hidden-lead card is a sand surface too: its error line and focus ring need the sand colours */
 .sheet, .field { color-scheme: light; }
@@ -321,6 +324,9 @@ a { color: var(--link); }
   background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card);
 }
 .rec-h { margin: 0 0 10px; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); letter-spacing: 0.01em; }
+#rec-myquote { scroll-margin-top: 12px; }   /* item 8: the lead opens with this card at the top after Add */
+#rec-myquote .rec-h:focus { outline: none; }   /* the heading is only focused by script (Your price card, item 8), never a control */
+#rec-myquote .rec-h:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .rec-note { margin: 10px 0 0; font-size: var(--fs-sm); color: var(--muted); }
 
 .facts { display: grid; grid-template-columns: minmax(84px, max-content) 1fr; gap: 8px 14px; margin: 0; }
@@ -720,6 +726,9 @@ a { color: var(--link); }
 .money-field { font-variant-numeric: tabular-nums; }
 .reason-box legend { padding: 0; margin-bottom: 8px; }
 .reason-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Item 11 (W4): "(optional)" in the Where they came from legend, and the Clear link under its chips (a 44 px tap target). */
+.field-optional { font-weight: 400; }
+.add-source-clear { display: inline-flex; align-items: center; min-height: 44px; margin-top: 4px; padding: 0 4px; background: none; border: 0; color: var(--link); font: inherit; font-size: var(--fs-sm); font-weight: 650; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .reason-chip { position: relative; display: inline-flex; }
 .reason-chip input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .reason-chip span {
@@ -1008,12 +1017,12 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 }
 .btn-edit:active { background: var(--primary-deep); }
 .btn-edit:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-/* Edit sheet: the same tall scrolling form as Add; the two times share a row (they stack at the bigger text sizes). A date or phone already
-   on file for this person gets a line and the link to that lead under the field. */
-.sheet-edit .edit-times { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; }
+/* Edit sheet: the same tall scrolling form as Add. Item 10 (W6, Kevin 11-18): Start time and End time each get their own full-width row, like
+   every other box, so they never overlap at any width or text size. A date or phone already on file for this person gets a line and the
+   link to that lead under the field. */
+.sheet-edit .edit-times { display: block; }
 .sheet-edit .edit-times .field { min-width: 0; width: 100%; }
 .sheet-edit .field[readonly], .sheet-edit .field[disabled] { background: transparent; color: var(--muted-on-secondary); }
-@media (max-width: 399px) { .sheet-edit .edit-times { grid-template-columns: minmax(0, 1fr); } }   /* a time box needs ~9 em: "06:00 PM" was cut at 320 px */
 .edit-other { margin: 2px 0 0; }
 /* B7: what the owner typed against what is on file; two stacked buttons, neither is the default (focus starts on Keep). */
 .sheet-dup .sheet-body { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
@@ -1091,9 +1100,10 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .sp-chip.is-fixed { background: var(--primary); border-color: var(--primary); color: var(--on-accent); }
 
 /* ---------- Download spreadsheet (More) ---------- */
-.ex-dates-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.ex-dates-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-3); }   /* W7: minmax(0,..) so a date box's own width cannot stretch a column */
 .ex-dates-row .q-field { margin-top: 8px; }
 .ex-dates-row .field { min-height: 52px; font-size: var(--fs-lg); }
+@media (max-width: 359px) { .ex-dates-row { grid-template-columns: minmax(0, 1fr); } }   /* W7: at 320 px a 138 px date box cuts the date; stack From / To (as Large does) */
 .export-screen .q-more .hint { margin: 0; }
 .ex-status { margin: 14px 0 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-md); font-weight: 600; overflow-wrap: anywhere; }
 .export-screen .hint { margin-top: 10px; }
@@ -1101,7 +1111,8 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 /* ---------- Ask your CRM (More) ----------
    Owner questions: raised green, right. Answers: sand, left, figures in bold, lead names as purple-outlined chips.
    Purple is only the Ask button and the chips (10% rule). The composer and the honest lines stay above the tab bar. */
-.ask-wrap { max-width: var(--content); margin: 0 auto; padding: 0 calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-4) calc(var(--gutter) + env(safe-area-inset-left)); }
+.ask-screen .scroller { display: flex; flex-direction: column; }   /* W9 (s15): bottom-anchor the chat; the auto top margin (not justify-content:flex-end) keeps the top reachable when it overflows */
+.ask-wrap { width: 100%; max-width: var(--content); margin: auto auto 0; padding: 0 calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-4) calc(var(--gutter) + env(safe-area-inset-left)); }
 .ask-thread { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 .ask-row { display: flex; }
 .ask-row.is-q { justify-content: flex-end; }
@@ -1212,6 +1223,16 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 .lost-parts { flex-wrap: wrap; }
 .lost-parts .filter.filter-extra { flex: 1 1 auto; padding: 4px 10px; gap: 6px; justify-content: center; }
 
+/* Item 9 (W11): the Sort box over the chip lists. A native select (the phone's own picker); label and box on one line, wrapping
+   under the label at Large text. Same side padding as the chips. */
+.list-sort {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+  max-width: var(--content); margin: 0 auto;
+  padding: 0 calc(12px + env(safe-area-inset-right)) var(--sp-2) calc(12px + env(safe-area-inset-left));
+}
+.list-sort .field-label { margin: 0; }
+.list-sort .list-sort-select { width: auto; flex: 0 1 auto; min-width: 0; max-width: 100%; min-height: 44px; font-size: var(--fs-md); }   /* at Small it gets --fs-lg (the W18 rule below): iOS zooms on a box under 16 px */
+
 /* R8 C1: "New text" marker. Row: a small dot before the name (spoken label on it); lead page: the dot + the words (never colour alone). */
 .new-dot { display: inline-block; flex: none; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; background: var(--accent-strong); box-shadow: 0 0 0 2px var(--accent-tint); vertical-align: baseline; }
 .rec-newtext { display: flex; align-items: center; margin: var(--sp-1) 0 0; font-size: var(--fs-sm); font-weight: 700; color: var(--on-primary); }
@@ -1263,6 +1284,32 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 #reason-kept { margin: 14px 0 0; }
 #reason-kept .hint { overflow-wrap: anywhere; }
 
+/* ---------- W8 (s15): tick boxes drawn by us, so an UNTICKED box shows an outline on every phone (the native one painted solid dark on iOS) ---------- */
+.money-deposit input, .add-check input, .sp-check input {
+  -webkit-appearance: none; appearance: none; margin: 0; display: grid; place-content: center; color: inherit;   /* an input gets its own colour from the browser; the label's colour is what must show */
+  border: 2px solid currentColor; border-radius: 6px; background: transparent; cursor: pointer;
+}
+.money-deposit input:checked, .add-check input:checked, .sp-check input:checked { background: var(--action); border-color: var(--action); }
+.sp-check input:checked { border-color: currentColor; }   /* on the raised-green Help & support box the purple edge disappears; keep the label colour as the edge */
+.money-deposit input:checked::after, .add-check input:checked::after, .sp-check input:checked::after {
+  content: ""; width: 6px; height: 12px; border: solid var(--on-accent); border-width: 0 3px 3px 0; transform: translateY(-1px) rotate(45deg);
+}
+.money-deposit input:focus-visible, .add-check input:focus-visible, .sp-check input:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.money-deposit input:disabled, .add-check input:disabled, .sp-check input:disabled { opacity: 0.5; cursor: default; }   /* appearance:none drops the browser's greyed look (Deposit is disabled while a save runs) */
+
+/* ---------- W7 (s15): iOS date + time boxes keep their own width; fit them to the box they sit in (covers every date/time box, incl. later ones) ---------- */
+input.field[type="date"], input.field[type="time"] {
+  -webkit-appearance: none; appearance: none; display: block; width: 100%; min-width: 0; max-width: 100%;
+  min-inline-size: 0; text-align: left; line-height: 1.2;
+}
+input.field[type="date"]::-webkit-date-and-time-value, input.field[type="time"]::-webkit-date-and-time-value { text-align: left; min-width: 0; margin: 0; }
+input.field[type="date"]::-webkit-datetime-edit, input.field[type="time"]::-webkit-datetime-edit { padding: 0; }
+
+/* W18 (s15): at Small (0.92) these boxes (Ask, Leads search, the three note boxes) would fall under 16 px, and iOS zooms the page when a box under 16 px gets the cursor. --fs-lg = 16.56 px at Small. */
+:root[data-text-size="small"] .ask-input, :root[data-text-size="small"] .search-field, :root[data-text-size="small"] .note-field { font-size: var(--fs-lg); }
+/* Item 9 (W11): the Sort box the same way (a select under 16 px also makes iOS zoom). */
+:root[data-text-size="small"] .list-sort-select { font-size: var(--fs-lg); }
+
 /* ---------- bigger text sizes (More > Text size: Large, Larger): layout only. Nothing here applies at Normal. ---------- */
 /* Five filter chips: one row at Normal; at Large / Larger they wrap onto a second row rather than clip ("Contacted" is ~81 px at Larger). */
 :root[data-text-size="large"] #filters, :root[data-text-size="larger"] #filters { flex-wrap: wrap; }
@@ -1284,7 +1331,5 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 40px; 
 :root[data-text-size="large"] .ex-dates-row, :root[data-text-size="larger"] .ex-dates-row { grid-template-columns: minmax(0, 1fr); }
 /* Top-bar title: wraps to two lines instead of ending in an ellipsis ("Download spre…" at Larger). The wording is unchanged. */
 :root[data-text-size="large"] .titles h1, :root[data-text-size="larger"] .titles h1 { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
-/* R4: the Edit sheet's two time boxes stack (a time box is ~9 em wide: side by side they would not fit a 320 px phone at these sizes). */
-:root[data-text-size="large"] .sheet-edit .edit-times, :root[data-text-size="larger"] .sheet-edit .edit-times { grid-template-columns: minmax(0, 1fr); }
 /* R5: Hide this lead sits under Edit details when the pills no longer share a row (flush left, no stray indent). */
 :root[data-text-size="large"] .btn-hide, :root[data-text-size="larger"] .btn-hide { margin-left: 0; }

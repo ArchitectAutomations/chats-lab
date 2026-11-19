@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261118-1557-5137d3cc";
+window.CV_BUILD = "20261119-1236-6a23903e";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -71,7 +71,7 @@ window.CV_CUSTOM = {
   // that row is running now). code = what the calculator receives. label + gives = plain words for the owner.
   // from / to = the dates it runs (YYYY-MM-DD in the time zone above; "to" is the first day it no longer works): outside them it is not offered.
   // eventFrom / eventTo = event dates it covers (both included); the page asks for an event date before sending such a code.
-  // When David changes a promo's dates or adds a code, change it here too: tools/tests/test_lib.js checks this list against the lab calculator.
+  // When the client changes a promo's dates or adds a code, change it here too: tools/tests/test_lib.js checks this list against the lab calculator.
   quotePromos: [
     { code: 'barsetup-all', label: 'Free bar setup', gives: 'The bar rental fee is waived when the bar is rented (old booking form)', from: '2026-10-08', to: '2027-01-01' },
     { code: 'bundle700-all', label: '$700 event bundle', gives: '1 bartender for 4 hours, the bar and delivery for $700, 1 to 100 guests, $50 per extra hour up to 8 (new booking form)',

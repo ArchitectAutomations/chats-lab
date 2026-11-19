@@ -152,7 +152,7 @@
      configure(window.CV_CUSTOM) applies the client's wording, money format and time zone.
      Anything left out keeps the default. Called once by app.js before the first render. */
 
-  var CUSTOM = { status: {}, tiers: {}, lost: {}, sources: {}, locale: 'en-CA', currency: 'CAD', waitWarnHours: 24, quoteAgeWarnDays: 21 };
+  var CUSTOM = { status: {}, tiers: {}, lost: {}, sources: {}, sortLabels: {}, locale: 'en-CA', currency: 'CAD', waitWarnHours: 24, quoteAgeWarnDays: 21 };
 
   function plainMap(o) {
     var out = {};
@@ -171,6 +171,7 @@
     CUSTOM.tiers = plainMap(c.tierLabels);
     CUSTOM.lost = plainMap(c.lostReasons);
     CUSTOM.sources = plainMap(c.sourceLabels);
+    CUSTOM.sortLabels = plainMap(c.sortLabels);
     var wh = Number(c.waitWarnHours);
     CUSTOM.waitWarnHours = isFinite(wh) && wh >= 1 && wh <= 720 ? wh : 24;
     // Days after which a saved owner price gets an age warning on its card: 0 = off, 7 to 29 whole days, anything else = 21.
@@ -751,8 +752,9 @@
   }
 
   // lead_history.changes (sql/032): { field: [old, new] }. One short phrase per field, in the order an owner reads a lead.
-  var EDIT_FIELDS = ['name', 'phone', 'email', 'event_date', 'start_time', 'end_time', 'guests', 'event_address', 'occasion'];
-  var EDIT_LABELS = { name: 'name', phone: 'phone', email: 'email', event_date: 'date', start_time: 'start time', end_time: 'end time', guests: 'guests', event_address: 'area', occasion: 'occasion' };
+  // Item 10 (W6, sql/048): service_hours, recorded as its labels ('4 hours' -> '6 hours'), so the line reads in plain words.
+  var EDIT_FIELDS = ['name', 'phone', 'email', 'event_date', 'start_time', 'end_time', 'service_hours', 'guests', 'event_address', 'occasion'];
+  var EDIT_LABELS = { name: 'name', phone: 'phone', email: 'email', event_date: 'date', start_time: 'start time', end_time: 'end time', service_hours: 'hours', guests: 'guests', event_address: 'area', occasion: 'occasion' };
   function ymdShort(ymd, now) {
     var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd == null ? '' : ymd));
     if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return '';
@@ -1513,6 +1515,7 @@
     demo: 'This is a test lead, so no text can go to it.',
     closed: 'This lead is finished, so no text can go to it.',
     has_quote: 'They already have a quote.',
+    newer_lead: 'They sent a newer form, so this older price cannot be texted. Check their newest lead.',   // s15 item 15 (F3, sql/039): said whether or not sending is on; no Price it again
     event_passed: 'The event date has passed, so it cannot be texted to them.',
     details_changed: 'The event details changed after you priced this.',
     price_old: 'This price is more than 30 days old.',
@@ -1643,7 +1646,8 @@
         area: text(inp.event_city), km: Number(inp.distance_km) > 0 ? text(inp.distance_km) : '', date: dateOnly(inp.event_date), occasion: text(inp.occasion), promo: promo };
       // R4 (A2): the details moved on after this price was saved (send_block 'details_changed': an edit, or a form since). The guests, date and
       // area the lead holds NOW win over the old answers; a blank on the lead keeps the saved one (nothing is lost). A new area drops the saved
-      // distance, so the calculator works it out again. Everything else (hours, bar, occasion, promo) stays as it was priced.
+      // distance, so the calculator works it out again. Everything else (bar, occasion, promo) stays as it was priced; hours follow the lead
+      // (048: an Hours edit stamps details_changed, so a price for the old length can never be re-saved and texted as it was).
       if (String(o.send_block || '') === 'details_changed' && lead) {
         var g = Number(lead.guests) > 0 ? text(lead.guests) : '';
         if (g) out.guests = g;
@@ -1651,11 +1655,14 @@
         if (d) out.date = d;
         var a = text(lead.event_area);
         if (a) { if (a.toLowerCase() !== out.area.toLowerCase()) out.km = ''; out.area = a; }
+        var h = editHoursRead(lead.service_hours_label);   // s15 item 10 review H1 + final review F1: strict; a non-choice label = blank (pick it)
+        if (h) out.hours = h === EDIT_HOURS_KEEP ? '' : h;
       }
       return out;
     }
     var code = text(lead && lead.promo_code).toLowerCase();
-    return { guests: lead && Number(lead.guests) > 0 ? text(lead.guests) : '', hours: quoteHoursValue(lead && lead.service_hours_label),
+    var hrs = editHoursRead(lead && lead.service_hours_label);   // s15 final review F1: strict; "4.5 hours", "8+ hours" = blank, the owner picks
+    return { guests: lead && Number(lead.guests) > 0 ? text(lead.guests) : '', hours: hrs === EDIT_HOURS_KEEP ? '' : hrs,
       // a hand-added lead's "no" is only the column's default, nobody answered it
       bar: lead && lead.bar_rental === true ? true : lead && lead.bar_rental === false && lead.source !== 'manual' ? false : null,
       area: text(lead && lead.event_area), km: '', date: dateOnly(lead && lead.event_date), occasion: text(lead && lead.occasion), promo: code === 'none' ? '' : code };
@@ -1677,6 +1684,19 @@
   // The confirmation after a save.
   function quoteSavedLine(name, total, savedTotal) {
     return 'Saved: ' + total + ' on ' + name + (savedTotal ? ', replacing ' + savedTotal : '') + '. Nothing was sent.';
+  }
+
+  // Item 8: after "Add this quote to <name>" the lead opens scrolled to the Your price card, but only once the refreshed lead shows the price
+  // that was just added (a card still showing the old price, or none, is not it). focus = { id, total } with total as the calculator drew it.
+  function priceCardReady(lead, focus) {
+    if (!lead || !focus || !focus.id || lead.lead_id !== focus.id) return false;
+    var o = lead.owner_quote;
+    if (!o || typeof o !== 'object') return false;
+    var want = String(focus.total === null || focus.total === undefined ? '' : focus.total).trim();
+    if (!want) return false;
+    if (fmtMoney(o.total) === want) return true;   // the card's own words for the price
+    var a = toCents(want), b = toCents(o.total);
+    return a !== null && b !== null && a === b;
   }
 
   // May a calculator result be added to this lead? (The server decides again.)
@@ -1828,7 +1848,7 @@
     bad_date: 'event_date', bad_guests: 'guests', area_too_long: 'area', occasion_too_long: 'occasion'
   };
   // Order the checks run (and the first bad field gets the focus): the form's order, then the rest.
-  var ADD_LEAD_ORDER = ['name', 'phone', 'source', 'event_date', 'guests', 'area', 'occasion', 'email'];
+  var ADD_LEAD_ORDER = ['name', 'phone', 'email', 'source', 'event_date', 'guests', 'area', 'occasion'];   // s15 W3: Email sits second, under Phone
 
   // R6 (B9 + F4), only while the page switch is on (opts.noPhone, from addLeadNoPhoneOn): the Phone box may stay blank, and then BOTH a name and an
   // email are needed. A blank is nothing typed after the cleaning; anything typed that is not a phone ("(0)", "-") is still bad_phone.
@@ -1857,7 +1877,8 @@
       if (opts && opts.noPhone === true && v.phone_blank) { if (!v.email) errors.email = 'email_required'; }   // no phone: the name (above) and the email are required
       else errors.phone = 'bad_phone';
     }
-    if (!ADD_SOURCES.some(function (r) { return r.key === v.source; })) errors.source = 'bad_source';
+    // Item 11 (W4, Kevin 11-18, sql/049): where they came from is optional (blank = not given, sent as null); a value must still be one of the four
+    if (v.source && !ADD_SOURCES.some(function (r) { return r.key === v.source; })) errors.source = 'bad_source';
     if (v.email && (v.email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email))) errors.email = 'bad_email';
     if (v.event_date) {
       var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.event_date);
@@ -1892,7 +1913,7 @@
 
   // Validated values -> RPC arguments. Only filled fields are sent. No phone = p_phone null (never a placeholder: the server says bad_phone to one).
   function addLeadArgs(values) {
-    var a = { p_name: values.name, p_phone: values.phone || null, p_source: values.source };
+    var a = { p_name: values.name, p_phone: values.phone || null, p_source: values.source || null };   // item 11: no source = null (not given)
     if (values.email) a.p_email = values.email;
     if (values.event_date) a.p_event_date = values.event_date;
     if (values.guests !== null && values.guests !== undefined) a.p_guests = values.guests;
@@ -2021,7 +2042,27 @@
      The server (cv_edit_lead, sql/032) is the authority; validateEditLead mirrors its checks only to save a round trip. Owner only: staff are
      blocked in STAFF_BLOCKED, never see the button, never call the RPC and never get an edit in their history (historyRows). */
 
-  var EDIT_ORDER = ['name', 'phone', 'email', 'event_date', 'start_time', 'end_time', 'guests', 'event_address', 'occasion'];
+  var EDIT_ORDER = ['name', 'phone', 'email', 'event_date', 'start_time', 'end_time', 'service_hours', 'guests', 'event_address', 'occasion'];
+  // Item 10 (W6): the Hours select's extra first choice when the label on file is not one of the choices ("2 hours" from another form):
+  // saving other fields then never wipes it. Never sent to the server.
+  var EDIT_HOURS_KEEP = '__keep';
+  // s15 item 10 review M1: the edit sheet reads the label STRICTLY. Only "N hours" (3..8) and "More than 8 hours" are choices; any other
+  // label on file (4.5 hours, 3-4 hours, 8+ hours, 5 hours of bar service) is kept as it is ("As on file"), never shown as a nearby
+  // choice that would then read as "no change". Blank = Not set.
+  function editHoursRead(label) {
+    var lab = cleanText(label) || '';
+    var m = /^([3-8]) hours?$/i.exec(lab);
+    var hv = m ? m[1] : (/^more than 8( hours?)?$/i.test(lab) ? 'over_8' : '');
+    return hv || (lab ? EDIT_HOURS_KEEP : '');
+  }
+  function editHoursOptions(prefill) {
+    var p = prefill || {};
+    var out = [];
+    if (p.service_hours === EDIT_HOURS_KEEP && p.service_hours_raw) out.push({ value: EDIT_HOURS_KEEP, label: 'As on file: ' + p.service_hours_raw });
+    out.push({ value: '', label: 'Not set' });
+    QUOTE_HOURS.forEach(function (h) { out.push({ value: h, label: h === 'over_8' ? 'More than 8 hours' : h + ' hours' }); });
+    return out;
+  }
   // The phone is the key a conversation hangs on. The page says why before the server has to: only a hand-added lead a form never upgraded.
   var PHONE_LOCKED_FORM = "The number can't be changed on a lead that came from your website form. Add a new lead with the new number instead.";
   var PHONE_LOCKED_TEXTS = "The number can't be changed once there are texts on this lead. Add a new lead with the new number instead.";
@@ -2052,17 +2093,21 @@
       name: cleanText(l.full_name) || '', phone: realPhone(l.phone) ? (fmtPhoneNational(l.phone) || String(realPhone(l.phone))) : '', email: cleanText(l.email) || '',
       event_date: dateOnly(l.event_date), start_time: hhmm(l.start_time) || '', end_time: hhmm(l.end_time) || '',
       guests: l.guests !== null && l.guests !== undefined && l.guests !== '' && isFinite(g) && g > 0 ? String(g) : '',
-      event_address: cleanText(l.event_area) || '', occasion: cleanText(l.occasion) || ''
+      event_address: cleanText(l.event_area) || '', occasion: cleanText(l.occasion) || '',
+      // item 10 (W6): the calculator's reading of the label; a label that is none of the choices is kept as it is ('__keep')
+      service_hours: editHoursRead(l.service_hours_label),
+      service_hours_raw: cleanText(l.service_hours_label) || ''
     };
   }
   var EDIT_ERRORS = {
     name_required: 'Add a name.', name_too_long: ADD_LEAD_ERRORS.name_too_long, bad_phone: ADD_LEAD_ERRORS.bad_phone, bad_email: ADD_LEAD_ERRORS.bad_email,
     email_required: 'A lead with no phone needs an email. Keep the email, or add a phone number too.',   // R6 (F4): the server refuses clearing the email of a lead that has no phone
     bad_date: ADD_LEAD_ERRORS.bad_date, bad_time: "That time doesn't look right.", bad_guests: ADD_LEAD_ERRORS.bad_guests,
-    area_too_long: ADD_LEAD_ERRORS.area_too_long, occasion_too_long: ADD_LEAD_ERRORS.occasion_too_long
+    area_too_long: ADD_LEAD_ERRORS.area_too_long, occasion_too_long: ADD_LEAD_ERRORS.occasion_too_long,
+    bad_hours: 'Pick how many hours.'   // item 10 (W6, sql/048)
   };
   var EDIT_ERROR_FIELD = { name_required: 'name', name_too_long: 'name', bad_phone: 'phone', bad_email: 'email', email_required: 'email', bad_date: 'event_date', bad_time: 'start_time',
-    bad_guests: 'guests', area_too_long: 'event_address', occasion_too_long: 'occasion' };
+    bad_guests: 'guests', area_too_long: 'event_address', occasion_too_long: 'occasion', bad_hours: 'service_hours' };
   var EDIT_NOTHING = 'Nothing has changed yet.';
 
   // form = the sheet's strings (same keys as editPrefill). -> { ok, errors: { field: code }, changes: { field: value } }.
@@ -2103,6 +2148,10 @@
     else if ((v.event_address || '') !== was.event_address) changes.event_address = v.event_address;
     if (v.occasion && v.occasion.length > 80) errors.occasion = 'occasion_too_long';
     else if ((v.occasion || '') !== was.occasion) changes.occasion = v.occasion;
+    // item 10 (W6): one of the choices, blank, or the kept label on file; sent only when it differs (blank = cleared = null)
+    var hrs = f.service_hours === undefined || f.service_hours === null ? was.service_hours : String(f.service_hours).trim();
+    if (hrs !== EDIT_HOURS_KEEP && hrs !== '' && QUOTE_HOURS.indexOf(hrs) === -1) errors.service_hours = 'bad_hours';
+    else if (hrs !== EDIT_HOURS_KEEP && hrs !== was.service_hours) changes.service_hours = hrs;
     // a cleared field goes to the server as null (blank = no value); only the ones that really changed are kept
     Object.keys(changes).forEach(function (k) { if (changes[k] === '') changes[k] = null; });
     return { ok: Object.keys(errors).length === 0, errors: errors, changes: changes };
@@ -2339,6 +2388,8 @@
     var n = String((lead && lead.form_name) || '').replace(/\s+/g, ' ').replace(/[\s:.]+$/, '').trim();
     return n.length > 60 ? n.slice(0, 59).trim() + '…' : n;
   }
+  // Item 11 (W4): a hand-added lead saved with no source (manual_source NULL, sql/049).
+  var SOURCE_NOT_GIVEN = 'Not given', SOURCE_NOT_GIVEN_LOWER = 'not given';
   function sourceLine(lead, opts) {
     if (!lead || lead.source === undefined) return '';
     var src = String(lead.source == null ? '' : lead.source).trim().toLowerCase();
@@ -2347,7 +2398,7 @@
       var l = manualSourceLabel(lead.manual_source);
       // B6 (Kevin 11-10): a website form for the same date upgraded it (auto_texts true): the story says so.
       var then = lead.auto_texts === true ? ', then website form' : '';
-      return l ? 'From: added by you (' + l + ')' + then : 'From: added by you' + then;
+      return 'From: added by you (' + (l || SOURCE_NOT_GIVEN_LOWER) + ')' + then;   // item 11 (W4): a blank source reads "not given"
     }
     if (src === 'tally_form') return form ? 'From: website form (' + form + ')' : 'From: website form';
     if (src === 'sms_inbound') return form ? 'From: texted in, then website form (' + form + ')' : 'From: texted in';
@@ -2393,6 +2444,8 @@
     return (Array.isArray(sources) ? sources : []).filter(function (b) { return b && num(b.leads) > 0; }).map(function (b) {
       var k = String(b.key || '');
       var label = SOURCE_BUCKETS[k];
+      // item 11 (W4): cv_metrics counts a blank source in manual:other (until the follow-on Ask round gives it its own bucket)
+      if (!label && k === 'manual:other') label = 'Added by you · ' + manualSourceLabel('other') + ' / ' + SOURCE_NOT_GIVEN_LOWER;
       if (!label && k.indexOf('manual:') === 0) label = 'Added by you · ' + manualSourceLabel(k.slice(7));
       var booked = num(b.booked) || 0;
       return {
@@ -2604,12 +2657,13 @@
   }
 
   /* ---------- text size (More > Text size, C8) ----------
-     A viewer preference, not lead data: ONE localStorage key on this device, one of three words. Anything else (missing, junk, storage blocked or
+     A viewer preference, not lead data: ONE localStorage key on this device, one of three words (small / normal / larger; the screen says Small / Medium / Large). Anything else (missing, junk, storage blocked or
      throwing) reads as Normal; a failed save is silent (the choice still applies until the page closes). It survives sign-out on purpose: it is
-     about the phone, not the person. page/styles.css turns the word into --type-scale (1 / 1.15 / 1.3) on <html data-text-size>. */
+     about the phone, not the person. page/styles.css turns the word into --type-scale (0.92 / 1 / 1.3 = Small / Medium / Large) on <html data-text-size>. */
   var TEXT_SIZE_KEY = 'cv_text_size_v1';
-  var TEXT_SIZES = ['normal', 'large', 'larger'];
-  function textSizeNormalize(v) { return typeof v === 'string' && TEXT_SIZES.indexOf(v) >= 0 ? v : 'normal'; }
+  var TEXT_SIZES = ['small', 'normal', 'larger'];
+  // The words saved on a phone stay as they were (Medium = 'normal', Large = 'larger'). The retired middle word 'large' (1.15) reads as 'larger' (the closest bigger size).
+  function textSizeNormalize(v) { if (v === 'large') return 'larger'; return typeof v === 'string' && TEXT_SIZES.indexOf(v) >= 0 ? v : 'normal'; }
   // store = a localStorage-like { getItem, setItem }; omitted = the browser's. Reading the property itself can throw (blocked site data).
   function textSizeStore(store) {
     if (store) return store;
@@ -3808,10 +3862,71 @@ function renderPriceBlockSms(lineItems, total, currency) {
     if (!/^[0-9TZ:.+ -]{10,40}$/.test(t)) throw new Error('keyset: bad time');
     return col + '.lt."' + t + '",and(' + col + '.eq."' + t + '",' + idCol + '.gt.' + id + '),' + col + '.is.null';
   }
-  function listTruncNote(loaded, total) {
+  // Item 9 (W11): with a date sort picked, the note also says what the sort covers (the loaded set = the most recent leads).
+  function listTruncNote(loaded, total, sortKey) {
     var a = Number(loaded) || 0, b = Number(total) || 0;
     if (!(b > a)) return '';
+    if (listSortNormalize(sortKey) !== 'newest') return 'Sorted by event date across your ' + a.toLocaleString('en-CA') + ' most recent leads of ' + b.toLocaleString('en-CA') + '. Search finds any lead.';
     return 'Showing your ' + a.toLocaleString('en-CA') + ' most recent leads of ' + b.toLocaleString('en-CA') + '. Search finds any lead.';
+  }
+
+  /* ---------- list sort (item 9 / W11, Kevin 2026-11-18) ----------
+     A "Sort" box over the chip lists: Newest first (the default, today's order), Event date soonest first, Event date latest first.
+     The page already holds every lead it shows (up to LIST_CAP) before it draws a list, so the sort is done here, exactly, on the
+     rows of the chip; the Needs-you block and See all keep their own (waiting-line) order. Leads with no event date (or a bad one)
+     always go last. A viewer preference: ONE localStorage key on this phone (like Text size); Newest first removes the key. */
+  var LIST_SORT_KEY = 'cv_list_sort';
+  var LIST_SORTS = [
+    { key: 'newest', label: 'Newest first' },
+    { key: 'event_soon', label: 'Event date: soonest first' },
+    { key: 'event_late', label: 'Event date: latest first' }
+  ];
+  function listSorts() {
+    return LIST_SORTS.map(function (r) { return { key: r.key, label: CUSTOM.sortLabels[r.key] || r.label }; });
+  }
+  function listSortNormalize(v) {
+    for (var i = 0; i < LIST_SORTS.length; i++) if (LIST_SORTS[i].key === v) return v;
+    return 'newest';
+  }
+  function listSortLoad(store) {
+    try { var s = textSizeStore(store); return s ? listSortNormalize(s.getItem(LIST_SORT_KEY)) : 'newest'; } catch (e) { return 'newest'; }
+  }
+  // -> true when saved. Newest first removes the key (nothing to remember).
+  function listSortSave(v, store) {
+    try {
+      var s = textSizeStore(store); if (!s) return false;
+      v = listSortNormalize(v);
+      if (v === 'newest') { if (s.removeItem) s.removeItem(LIST_SORT_KEY); else s.setItem(LIST_SORT_KEY, v); } else s.setItem(LIST_SORT_KEY, v);
+      return true;
+    } catch (e) { return false; }
+  }
+  // newest = last_activity_at descending, no time last, then lead_id ascending (the server's own keyset order).
+  function sortActivityCmp(a, b) {
+    var ta = a && a.last_activity_at ? new Date(a.last_activity_at).getTime() : NaN;
+    var tb = b && b.last_activity_at ? new Date(b.last_activity_at).getTime() : NaN;
+    var ha = !isNaN(ta), hb = !isNaN(tb);
+    if (ha !== hb) return ha ? -1 : 1;
+    if (ha && ta !== tb) return tb - ta;
+    var ia = String(a && a.lead_id != null ? a.lead_id : ''), ib = String(b && b.lead_id != null ? b.lead_id : '');
+    return ia < ib ? -1 : (ia > ib ? 1 : 0);
+  }
+  // A real calendar date (YYYY-MM-DD that parses) or '' (= no date).
+  function sortDateKey(v) {
+    var d = dateOnly(v);
+    return d && !isNaN(Date.parse(d + 'T00:00:00Z')) ? d : '';
+  }
+  // -> a NEW array (the input is never touched).
+  function sortLeadsBy(rows, key) {
+    var k = listSortNormalize(key);
+    var list = (Array.isArray(rows) ? rows : []).slice();
+    if (k === 'newest') return list.sort(sortActivityCmp);
+    var dir = k === 'event_soon' ? 1 : -1;
+    return list.sort(function (a, b) {
+      var da = sortDateKey(a && a.event_date), db = sortDateKey(b && b.event_date);
+      if (!da !== !db) return da ? -1 : 1;   // no date: last, in both directions
+      if (da !== db) return (da < db ? -1 : 1) * dir;
+      return sortActivityCmp(a, b);
+    });
   }
 
   // "Sat, Nov 14", "40 guests", "$650": the job in three bits. money:false leaves the price out.
@@ -4459,7 +4574,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   function exportHeaders(tz) {
     var z = tzWord(tz);
     return ['Received (' + z + ' time)', 'Customer #', 'Name', 'Phone', 'Email', 'Status', 'Status changed (' + z + ' time)',
-      'Event date', 'Occasion', 'Guests', 'Hours', 'Event city', 'Distance (km)', 'Bar rental', 'Quote', 'Quote total ($)',
+      'Event date', 'Occasion', 'Guests', 'Hours', 'Event city', 'Distance (km)', 'Bar rental', 'Quote', 'Quote total ($)', 'Your price (not sent) ($)',
       'Quote details', 'Promotion', 'Value', 'Booked for ($)', 'Deposit received (' + z + ' time)', 'Kept from cancellation ($)', 'Lost reason', 'Came from', 'Texts', 'Consent', 'Follow-up',
       'Last activity (' + z + ' time)', 'Events for this customer', 'Other dates (from form)', 'Additional details',
       'History', 'Notes', 'Record ID'];
@@ -4529,7 +4644,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     if (s === 'tally_form') return 'Booking form';
     if (s === 'sms_inbound') return 'Texted first';
     if (s === 'demo-seed') return 'Sample (demo)';
-    if (s === 'manual') { var m = manualSourceLabel(r.manual_source); return m ? 'Added by you: ' + m : 'Added by you'; }
+    if (s === 'manual') { var m = manualSourceLabel(r.manual_source); return 'Added by you: ' + (m || SOURCE_NOT_GIVEN); }   // item 11 (W4)
     return humanize(s.replace(/-/g, ' '));
   }
   function exportLost(r) {
@@ -4544,8 +4659,9 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var type = String(f.type || '').toLowerCase();
     var reason = oneLine(f.reason);
     if (type === 'auto_nudge') {
-      if (f.due_at) return 'Automatic text due ' + exportLocal(f.due_at);
+      // s15 item 14 (F6): the follow_ups view gives a SENT nudge due_at = sent_at = nudge_sent_at, so "sent" is checked first
       if (f.sent_at) return 'Automatic text sent ' + exportLocal(f.sent_at);
+      if (f.due_at) return 'Automatic text due ' + exportLocal(f.due_at);
       return reason;
     }
     if (type === 'owner_callback') return reason ? (/^(you |waiting on you)/i.test(reason) ? reason : 'You: ' + reason) : 'You';
@@ -4578,7 +4694,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     return CUSTOM.tiers[k] || TIERS.filter(function (t) { return t.key === k; })[0].label;
   }
 
-  // One RPC row -> the 34 cells (R7: + deposit received and kept from cancellation, right after Booked for), in header order. kind 't' = text (quoted + guarded when written), 'n' = number (bare).
+  // One RPC row -> the 35 cells (R7: + deposit received and kept from cancellation, right after Booked for; s15 item 14 / sql/050: + Your price (not sent) right after Quote total), in header order. kind 't' = text (quoted + guarded when written), 'n' = number (bare).
   function exportCells(row) {
     var r = row || {};
     var t = function (v) { return { v: v == null ? '' : String(v), kind: 't' }; };
@@ -4589,7 +4705,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
       t(r.status ? statusInfo(r.status).label : ''), t(exportLocal(r.status_at)),
       t(exportYmd(r.event_date)), t(oneLine(r.occasion)), n(exportNum(r.guests)), t(exportHours(r)), t(oneLine(r.event_area)),
       n(exportNum(r.distance_km)), t(r.bar_rental === true ? 'Yes' : r.bar_rental === false ? 'No' : ''),
-      t(exportQuoteWord(r.quote_status)), n(exportMoney(r.quote_total)), t(exportQuoteDetails(r)), t(promoText(r)), t(exportTier(r.value_tier)),
+      t(exportQuoteWord(r.quote_status)), n(exportMoney(r.quote_total)), n(exportMoney(r.owner_price)), t(exportQuoteDetails(r)), t(promoText(r)), t(exportTier(r.value_tier)),
       n(exportMoney(r.booked_value)), t(exportLocal(r.deposit_received_at)), n(exportMoney(r.kept_amount)), t(exportLost(r)), t(exportCameFrom(r)), t(texts), t(r.consent_basis == null ? '' : r.consent_basis),
       t(exportFollowUp(r.follow_up)), t(exportLocal(r.last_activity_at)), n(exportNum(r.customer_events)),
       t(oneLine(r.multi_event_dates)), t(r.additional_details == null ? '' : r.additional_details),
@@ -5277,6 +5393,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     quoteHoursValue: quoteHoursValue,
     quoteAddNote: quoteAddNote,
     quoteSavedLine: quoteSavedLine,
+    priceCardReady: priceCardReady,
     quoteAddRefused: quoteAddRefused,
     canAddQuoteToLead: canAddQuoteToLead,
     quoteAddArgs: quoteAddArgs,
@@ -5332,7 +5449,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     addLeadErrorText: addLeadErrorText,
     addLeadArgs: addLeadArgs,
     addLeadError: addLeadError,
-    EDIT_ORDER: EDIT_ORDER,
+    EDIT_ORDER: EDIT_ORDER, EDIT_HOURS_KEEP: EDIT_HOURS_KEEP, editHoursOptions: editHoursOptions,
     EDIT_NOTHING: EDIT_NOTHING,
     DATE_ON_FILE_OPEN: DATE_ON_FILE_OPEN,
     PHONE_LOCKED_FORM: PHONE_LOCKED_FORM,
@@ -5460,6 +5577,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
     LIST_CAP: LIST_CAP,
     listPage: listPage,
     listTruncNote: listTruncNote,
+    LIST_SORT_KEY: LIST_SORT_KEY, LIST_SORTS: LIST_SORTS, listSorts: listSorts, listSortNormalize: listSortNormalize,
+    listSortLoad: listSortLoad, listSortSave: listSortSave, sortLeadsBy: sortLeadsBy,
     keysetAfter: keysetAfter,
     leadIndex: leadIndex,
     BULK_REASON_KEY: BULK_REASON_KEY,
