@@ -88,10 +88,12 @@
 
   /* corners: controls + rows, cards + bubbles, small inner shapes, pills */
   --r-sm: 10px; --r-md: 14px; --r-lg: 18px; --r-pill: 999px;
+  --tap: 44px;   /* the smallest touch target (round 1 redesign) */
   --radius: var(--r-lg);
 
   /* gentle depth: a 1px ring (paper on cream), a hairline of contact shadow and a soft lift. A slight raise, not a drop shadow. */
-  --shadow-card: 0 0 0 1px var(--card-ring), 0 1px 2px rgba(43, 39, 35, 0.10), 0 3px 10px rgba(43, 39, 35, 0.07);
+  /* round 1 redesign (11-20): flatter cards, as in the approved previews: the 1px ring does the work, the lift is a hairline */
+  --shadow-card: 0 0 0 1px var(--card-ring), 0 1px 2px rgba(43, 39, 35, 0.06);
   --shadow-bar: 0 -1px 8px rgba(43, 39, 35, 0.08);
   --content: 760px;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -110,9 +112,12 @@
   --line: var(--secondary-deep);
   --danger: var(--danger-on-secondary);
 }
+/* round 1 redesign: the reach card, the next-step box and the merged Quote card are paper surfaces too */
+.rec-reach, .rec-nextbox, .qcard.is-on { --ink: var(--on-secondary); --muted: var(--muted-on-secondary); --line: var(--secondary-deep); --danger: var(--danger-on-secondary); }
 /* Focus + links INSIDE a paper surface use the strong blue (the same hex as the cream one in this palette; kept apart so a client palette can split them). */
 .rec-card { color-scheme: light; }   /* W8 (s15): native tick boxes inside a card paint light (the whole page is light now; the rule stays harmless) */
-.rec-card, .sheet, .alerts, .fc-note { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* .fc-note: the forecast's paper card */
+.rec-card, .sheet, .alerts, .fc-note { --link: var(--accent-strong); --focus: var(--accent-strong); }
+.qcard.is-on, .rec-reach, .rec-nextbox { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* round 1 redesign paper surfaces */   /* .fc-note: the forecast's paper card */
 .hidden-banner { --link: var(--accent-strong); --focus: var(--accent-strong); }   /* R5: the hidden-lead card is a paper surface too: its error line and focus ring need the paper colours */
 .sheet, .field { color-scheme: light; }
 
@@ -1327,6 +1332,587 @@ input.field[type="date"]::-webkit-date-and-time-value, input.field[type="time"]:
 input.field[type="date"]::-webkit-datetime-edit, input.field[type="time"]::-webkit-datetime-edit { padding: 0; display: flex; align-items: center; }
 .q-form input.field[type="date"], .ex-dates-row input.field[type="date"] { --date-h: 52px; }   /* = their min-height (.q-form .field / .ex-dates-row .field) */
 .sheet input.field[type="date"], .sheet input.field[type="time"] { --date-h: 50px; }   /* = .sheet .field */
+
+/* ==================================================================================================================================
+   ROUND 1 REDESIGN (2026-11-20, Kevin "All A"): the shell, the Leads list and the Lead record in the look of the approved previews
+   (PhoneLeads / PhoneLead). Same palette tokens, radii 10 / 14 / 18 / pill, touch targets >= 44 px, type from the --fs tokens only.
+   Behaviour is unchanged: these rules only restyle what the page already draws (and the new Quote card box, CV_CUSTOM.features.quoteCard).
+   Rollback = remove this block, the --shadow-card / --tap lines in :root and the two paper-surface lists' additions.
+   ================================================================================================================================== */
+
+/* ---------- shell: top bar ---------- */
+.topbar { min-height: 64px; gap: var(--sp-2); padding-top: calc(10px + env(safe-area-inset-top)); padding-bottom: 10px; }
+.topbar .icon-btn { width: var(--tap); height: var(--tap); }
+.titles { padding: 0 var(--sp-2); }
+.titles h1 { font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.015em; }
+.btn-add { display: inline-flex; align-items: center; gap: 6px; min-height: var(--tap); padding: 0 16px 0 12px; font-size: var(--fs-md); font-weight: 700; }
+.btn-add svg { flex: none; }
+/* On Leads the search box sits under the title on the same header colour, so the two read as one header (no line between them). */
+.app[data-screen="list"] .topbar:has(~ #screen-list #search-wrap:not([hidden])) { border-bottom-color: transparent; }
+
+/* ---------- shell: bottom tab bar (icons are inline stroke SVGs, aria-hidden; the Leads count badge stays) ---------- */
+.tab { min-height: 56px; gap: 2px; font-weight: 600; }
+.tab[aria-current="page"]::before { width: 32px; margin-left: -16px; }
+
+/* ---------- Leads: search with an icon ---------- */
+.list-screen .search {
+  display: grid; grid-template-columns: minmax(0, var(--content)); justify-content: center; align-items: center;
+  max-width: none; margin: 0; padding: 2px calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-3) calc(var(--gutter) + env(safe-area-inset-left));
+  background: var(--primary-deep); border-bottom: 1px solid var(--line-on-primary);
+}
+.list-screen .search > .search-icon, .list-screen .search > .search-field { grid-area: 1 / 1; }
+.search-icon { justify-self: start; margin-left: 14px; color: var(--muted-on-primary); pointer-events: none; position: relative; z-index: 1; }
+.list-screen .search-field { min-height: var(--tap); padding: 0 14px 0 44px; border-radius: var(--r-pill); border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary); }
+
+/* ---------- Leads: today's status chips as one row of pill tabs ("Open 12"), sideways scroll with an edge fade ---------- */
+.tabs-row { max-width: var(--content); margin: 0 auto; }
+#filters {
+  flex-wrap: nowrap; gap: var(--sp-2); overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  max-width: none; padding: var(--sp-3) calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-1) calc(var(--gutter) + env(safe-area-inset-left));
+}
+#filters::-webkit-scrollbar { display: none; }
+/* The hint: the edge that has more tabs fades out (the mask only uses the alpha of these colours). */
+.tabs-row.fade-right #filters { -webkit-mask-image: linear-gradient(to right, var(--ink) calc(100% - 44px), transparent); mask-image: linear-gradient(to right, var(--ink) calc(100% - 44px), transparent); }
+.tabs-row.fade-left #filters { -webkit-mask-image: linear-gradient(to left, var(--ink) calc(100% - 44px), transparent); mask-image: linear-gradient(to left, var(--ink) calc(100% - 44px), transparent); }
+.tabs-row.fade-left.fade-right #filters { -webkit-mask-image: linear-gradient(to right, transparent, var(--ink) 44px, var(--ink) calc(100% - 44px), transparent); mask-image: linear-gradient(to right, transparent, var(--ink) 44px, var(--ink) calc(100% - 44px), transparent); }
+.filter {
+  flex: none; flex-direction: row; gap: 6px; min-height: var(--tap); padding: 0 14px;
+  border-radius: var(--r-pill); border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary);
+  font-size: var(--fs-sm); font-weight: 650;
+}
+.filter .filter-label { color: inherit; order: 1; }
+.filter .filter-count { order: 2; color: inherit; font-size: var(--fs-sm); font-weight: 500; }
+.filter:active { background: var(--secondary-deep); }
+.filter[aria-pressed="true"] { background: var(--action); border-color: var(--action); color: var(--on-accent); }
+.filter[aria-pressed="true"]:active { background: var(--action-press); }
+/* Under Lost: Lost / Old lead / Opted out, a lighter tint when picked (the tab above it is the blue one). */
+.lost-parts { padding: var(--sp-1) calc(var(--gutter) + env(safe-area-inset-right)) 0 calc(var(--gutter) + env(safe-area-inset-left)); gap: var(--sp-2); }
+.lost-parts .filter.filter-extra { flex: 0 0 auto; padding: 0 14px; }
+.filter.filter-extra { min-height: var(--tap); }   /* review F2: "Without a quote yet" and Lost / Old lead / Opted out are 44 px too (the older 40 px rule had two classes) */
+.lost-parts .filter[aria-pressed="true"] { background: var(--accent-tint); border-color: var(--accent); color: var(--accent-ink); }
+/* "Without a quote yet" and the Sort pill share one row. */
+.list-tools {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2);
+  max-width: var(--content); margin: 0 auto; padding: var(--sp-2) calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-1) calc(var(--gutter) + env(safe-area-inset-left));
+}
+.list-tools .filters, .list-tools .list-sort { margin: 0; padding: 0; max-width: none; }
+.list-tools .list-sort { margin-left: auto; }
+/* the two share one line at 390 px: a touch smaller words and padding than the tabs (they still wrap at bigger text sizes) */
+.list-tools .filter, .list-tools .sort-pill { padding: 0 12px; font-size: var(--fs-chip); }
+.list-tools .filter .filter-count { font-size: var(--fs-chip); }
+.list-tools .filter-extra[aria-pressed="true"] { background: var(--accent-tint); border-color: var(--accent); color: var(--accent-ink); }
+.sort-pill {
+  gap: 6px; min-height: var(--tap); padding: 0 14px 0 12px; border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary);
+  font-size: var(--fs-sm); font-weight: 600;
+}
+.sort-pill::after { content: none; }
+/* the sort icon (two arrows), drawn from the text colour so the filled .is-set pill keeps it white */
+.sort-pill::before {
+  content: ''; flex: none; width: 16px; height: 16px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.filter-note { padding-left: calc(var(--gutter) + env(safe-area-inset-left)); padding-right: calc(var(--gutter) + env(safe-area-inset-right)); }
+/* An empty tab: a dashed paper box that says what to do. */
+#filter-empty {
+  max-width: calc(var(--content) - 2 * var(--gutter)); margin: var(--sp-2) calc(var(--gutter) + env(safe-area-inset-right)) 0 calc(var(--gutter) + env(safe-area-inset-left));
+  padding: 18px var(--sp-4); border: 1px dashed var(--field-border); border-radius: var(--r-md); background: var(--secondary); color: var(--muted-on-secondary); font-size: var(--fs-sm);
+}
+@media (min-width: 784px) { #filter-empty { margin-left: auto; margin-right: auto; } }
+
+/* ---------- Leads: rows (name + money, job line, status chip + tags, the wait on the right) ---------- */
+.lead-list { padding: var(--sp-2) calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-5) calc(var(--gutter) + env(safe-area-inset-left)); }
+.lead-row { flex-flow: row wrap; align-items: center; gap: 6px var(--sp-2); min-height: var(--tap); padding: var(--sp-3); border-radius: var(--r-md); }
+.lead-row > .row-top, .lead-row > .row-job, .lead-row > .row-said, .lead-row > .row-line { flex: 1 1 100%; min-width: 0; order: 3; }
+.lead-row > .row-top { order: 1; align-items: center; }
+.lead-row > .row-job { order: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lead-row:not(.is-needs) > .row-foot { display: contents; }
+.lead-row > .row-foot { order: 6; }
+.lead-row .row-foot > .chip { order: 4; }
+.lead-row > .row-tag { order: 5; margin-top: 0; font-size: var(--fs-xs); }
+.lead-row .row-foot > .lead-when, .lead-row:not(.is-needs) .row-foot > .row-wait { order: 6; margin-left: auto; }
+.lead-name { font-size: var(--fs-md); font-weight: 700; }
+.lead-money { font-size: var(--fs-md); }
+.lead-row .chip { font-size: var(--fs-xs); font-weight: 700; padding: 1px 9px; }
+.lead-row .lead-when, .lead-row .row-wait { font-size: var(--fs-sm); }
+.lead-list li { margin: 0 0 var(--sp-2); }
+.needs { margin-left: calc(var(--gutter) + env(safe-area-inset-left)); margin-right: calc(var(--gutter) + env(safe-area-inset-right)); border-radius: var(--r-md); }
+.push-banner { margin-left: calc(var(--gutter) + env(safe-area-inset-left)); margin-right: calc(var(--gutter) + env(safe-area-inset-right)); background: var(--accent-wash); color: var(--accent-ink); border-radius: 12px; font-size: var(--fs-sm); }
+.push-banner .push-banner-btn { min-height: var(--tap); padding: 0 14px; border-radius: var(--r-pill); font-size: var(--fs-sm); }
+#list-more { border-color: var(--field-border); }
+@media (min-width: 784px) { .needs, .push-banner { margin-left: auto; margin-right: auto; } }   /* wide screens: centred with the list, as before */
+
+/* ---------- cards: one system for every screen (paper, 1px ring, 14 px corners, 16 px headings) ---------- */
+.rec-card { padding: var(--sp-3) 14px; border-radius: var(--r-md); }
+.rec-h { font-size: var(--fs-md); font-weight: 700; color: var(--ink); letter-spacing: 0; }
+
+/* ---------- Lead record: header ---------- */
+.record { padding: var(--sp-3) calc(var(--gutter) + env(safe-area-inset-right)) 4px calc(var(--gutter) + env(safe-area-inset-left)); }
+.rec-head { display: flex; flex-direction: column; gap: var(--sp-2); padding: 0 0 var(--sp-3); }
+.rec-top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); min-width: 0; }
+.rec-who { flex: 1 1 auto; min-width: 0; }
+/* A long name wraps and stops at two lines (the whole name is its title). */
+.rec-name { font-size: var(--fs-xl); line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rec-head .rec-source { margin: 2px 0 0; }
+.rec-head .rec-status { flex: none; margin: 2px 0 0; }
+.rec-head .rec-status .chip { font-size: var(--fs-xs); font-weight: 700; padding: 2px 10px; }
+.rec-head .rec-newtext, .rec-head .rec-job, .rec-head .rec-noauto, .rec-head .rec-receipt-fail { margin: 0; }
+.rec-head .rec-job { font-size: var(--fs-lg); }
+/* How to reach them: a small paper card of rows (label left, value right). */
+.rec-reach { display: block; margin: 0; padding: 0 12px; border-top: 0; border-radius: 12px; background: var(--secondary); box-shadow: var(--shadow-card); }
+.rec-reach .reach-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); min-height: var(--tap); border-bottom: 1px solid var(--card-ring); }
+.rec-reach .reach-row:last-child, .rec-reach .reach-row:has(+ .reach-row[hidden]) { border-bottom: 0; }
+.rec-reach dt { padding-top: 0; align-self: center; color: var(--muted); font-size: var(--fs-xs); }
+.rec-reach dd { text-align: right; }
+.rec-reach .rec-phone { color: var(--ink); font-size: var(--fs-md); }
+.rec-reach .rec-email-link, .rec-reach .rec-email-text { color: var(--ink); font-size: var(--fs-md); }
+.rec-reach .rec-email-none, .rec-reach .rec-phone-none { color: var(--muted); }
+.rec-reach .rec-phone, .rec-reach .rec-email-link { min-height: var(--tap); }   /* review F2 / N5: the phone and email links are full 44 px targets */
+/* Edit details + Hide this lead: two equal pills with icons. */
+.rec-tools { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.rec-tools:not(:has(> :not([hidden]))) { display: none; }
+.rec-tools .btn-edit {
+  flex: 1 1 9em; justify-content: center; gap: 6px; margin: 0; min-height: var(--tap); padding: 0 14px;
+  border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-sm); font-weight: 650;
+}
+.rec-tools .btn-edit:active { background: var(--secondary-deep); }
+.rec-tools .btn-edit svg { flex: none; }
+/* The next-step sentence (read only). */
+.rec-nextbox { display: flex; align-items: flex-start; gap: var(--sp-2); padding: 10px 12px; border-radius: 12px; background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card); }
+.rec-nextbox svg { flex: none; margin-top: 1px; color: var(--muted); }
+.rec-nextbox .rec-next { margin: 0; flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); line-height: 1.4; color: var(--ink); }
+.stop-banner { border-radius: 12px; font-size: var(--fs-sm); }
+.hidden-banner { border-radius: var(--r-md); }
+
+/* ---------- Lead record: Call / Text / Email and "Reached them?" ---------- */
+.contact-actions { gap: var(--sp-2); }
+.contact-btn { gap: 6px; min-height: var(--tap); border-radius: var(--r-pill); border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary); box-shadow: none; font-size: var(--fs-sm); font-weight: 650; }
+.contact-btn:active { background: var(--secondary-deep); color: var(--on-secondary); border-color: var(--field-border); }
+/* Kevin 11-21 "dont have the call button be blue" (his 11-09 rule): Call, Text and Email all stay paper, none filled. */
+.reached { gap: var(--sp-2); padding: 0; border: 0; border-radius: 0; }
+.reached-q { flex: 1 1 auto; font-size: var(--fs-sm); color: var(--muted-on-primary); font-weight: 650; }
+.reached .btn { width: auto; min-height: var(--tap); margin: 0; padding: 0 14px; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 650; }
+.reached .btn.quiet { border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary); }
+.rec-note { font-size: var(--fs-sm); }
+
+/* ---------- Lead record: status card (today's three actions; the current one is tinted with a tick, never colour alone) ---------- */
+.action { gap: 6px; min-height: var(--tap); padding: 0 10px; border-radius: var(--r-pill); border: 1px solid var(--field-border); font-size: var(--fs-sm); font-weight: 650; }
+.action-check { display: none; flex: none; }
+.action.is-current, .action.is-current[disabled] { border-style: solid; border-color: var(--accent); background: var(--accent-tint); color: var(--accent-ink); }
+.action.is-current .action-check { display: block; }
+.action.is-busy .action-check { display: none; }
+
+/* ---------- Lead record: Event card as a two-column grid (label over value); Maps link, km, check address, dates and offer kept ---------- */
+.facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px var(--sp-3); }
+.facts .fact { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.facts .fact.is-wide { grid-column: 1 / -1; }
+.facts dt { font-size: var(--fs-xs); padding-top: 0; }
+.facts dd { font-size: var(--fs-md); font-weight: 650; }
+.facts dd .fact-note, .facts dd .fact-flag { font-weight: 600; }
+
+/* ---------- Lead record: conversation box ---------- */
+.convo-h { font-size: var(--fs-md); color: var(--on-primary); }
+.convo-bar { margin-left: calc(var(--gutter) + env(safe-area-inset-left)); margin-right: calc(var(--gutter) + env(safe-area-inset-right)); padding: 0; }
+.convo-scroll { margin-left: calc(var(--gutter) + env(safe-area-inset-left)); margin-right: calc(var(--gutter) + env(safe-area-inset-right)); border-radius: var(--r-md); }
+.convo-open, .sys-fold { border-width: 1px; border-color: var(--field-border); }
+
+/* ---------- the ONE Quote card (CV_CUSTOM.features.quoteCard). Off = the wrapper is not a box at all: the two old cards render as before. ---------- */
+.qcard:not(.is-on) { display: contents; }
+.qcard.is-on { margin: 0 0 var(--sp-3); padding: var(--sp-3) 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card); }
+.qcard.is-on > .rec-card { margin: 0; padding: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.qcard.is-on #h-quote { display: none; }   /* the card's own heading says Quote */
+.qcard.is-on:not(.has-both) #h-myquote { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }   /* kept for screen readers (and the after-Add focus) */
+.qcard.is-on.has-both #rec-myquote { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+.qc-head .rec-h { margin: 0 0 6px; }
+#h-qcard:focus { outline: none; }   /* review N4: focused only by script after Add this quote (the card's visible heading); the keyboard ring stays */
+#h-qcard:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.qc-total { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); margin: 0 0 var(--sp-2); }
+.qc-total-label { color: var(--muted); font-size: var(--fs-sm); }
+.qc-total-amount { font-size: var(--fs-2xl); font-weight: 750; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.qcard.head-auto #rec-quote .is-total, .qcard.head-mine #rec-myquote .is-total { display: none; }   /* the big Total above says it */
+.qcard.is-on .quote-items { border-top: 1px solid var(--line); padding-top: var(--sp-2); }
+.qcard.is-on .quote-item { padding: 6px 0; border-bottom: 0; font-size: var(--fs-sm); }
+.qcard.is-on .qi-label { font-weight: 600; }
+.qcard.is-on .quote-sums { font-size: var(--fs-sm); }
+.qcard.is-on .mq-status { margin: 0 0 6px; }
+.qc-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
+.qc-actions .qc-btn {
+  flex: 1 1 9em; display: inline-flex; align-items: center; justify-content: center; width: auto; min-height: var(--tap); margin: 0; padding: 0 14px;
+  border-radius: var(--r-pill); font-size: var(--fs-md); font-weight: 650; text-align: center; text-decoration: none; line-height: 1.2;
+}
+.qc-actions .fact-link.qc-btn, .qc-actions .btn.quiet.qc-btn { border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary); }
+.qc-actions .fact-link.qc-btn:active, .qc-actions .btn.quiet.qc-btn:active { background: var(--secondary-deep); }
+.qc-actions .btn.primary.qc-btn { font-size: var(--fs-md); font-weight: 700; }
+
+/* ==================================================================================================================================
+   ROUND 2 REDESIGN (2026-11-21, Kevin "All A"): Quote calculator, Follow-ups, Calendar, More (+ its sub-screens) and Ask in round 1's look
+   (previews PhoneQuote / PhoneFollowups / PhoneCalendar / PhoneMore / PhoneAsk). Same tokens as ROUND 1 above: paper cards with the 1px
+   ring (--shadow-card), radii 10 / 14 / 18 / pill, --tap 44 px targets, --fs-* type. Restyle only: no new control, no new words,
+   no new send path (ruling 16A: no Send in the calculator), no night-hold line (the page cannot read it). Today's labels stay ("Booked").
+   Rollback = remove this block (and the three small markup wrappers it styles: .q-actions, .cal-month, .alerts-head / .alerts-icon).
+   ================================================================================================================================== */
+
+/* paper surfaces added by this round: ink, muted ink, dividers and links follow (same as the list at the top of the file) */
+.q-form, .cal-month, #more-list, .sp-form, .ask-starter { --ink: var(--on-secondary); --muted: var(--muted-on-secondary); --line: var(--secondary-deep); --danger: var(--danger-on-secondary); --link: var(--accent-strong); --focus: var(--accent-strong); }
+
+/* ---------- shared: section headings, pill buttons on these screens ---------- */
+.fu-title, .ag-h, .cal-day-title, .sp-h { font-size: var(--fs-lg); font-weight: 700; letter-spacing: -0.005em; }
+.quote-screen .btn, .export-screen .btn, .support-screen .btn, .hidden-screen .btn, .team-screen .btn, .more-screen .btn {
+  min-height: 48px; border-radius: var(--r-pill); border-width: 1px;
+}
+.quote-screen .btn.primary, .export-screen .btn.primary, .support-screen .btn.primary, .team-screen .btn.primary, .more-screen .btn.primary { font-size: var(--fs-md); font-weight: 700; }
+.quote-screen .btn.quiet, .export-screen .btn.quiet, .hidden-screen .btn.quiet, .team-screen .btn.quiet { border-color: var(--field-border); background: var(--secondary); color: var(--on-secondary); }
+.quote-screen .btn.quiet[disabled], .export-screen .btn.quiet[disabled], .hidden-screen .btn.quiet[disabled], .team-screen .btn.quiet[disabled] { color: var(--muted); opacity: 0.6; }   /* review NIT-2 */
+.quote-screen .btn.quiet:active, .export-screen .btn.quiet:active, .hidden-screen .btn.quiet:active, .team-screen .btn.quiet:active { background: var(--secondary-deep); }
+/* the loading line of each screen: a quiet line, not a big gap */
+.fu-wrap > .status-line, .cal-month .status-line { padding: var(--sp-5) var(--sp-3); font-size: var(--fs-md); }
+
+/* ---------- Quote calculator: the form is one paper card; the result is a second card ---------- */
+.q-wrap { padding-top: var(--sp-3); }
+.q-form {
+  max-width: 560px; margin: 0 auto; padding: 14px; border-radius: var(--r-md);
+  background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card);
+}
+.q-lede { margin: 0 0 var(--sp-1); font-size: var(--fs-sm); color: var(--muted); }
+.q-form .field-label, .q-form legend.field-label { color: var(--ink); font-size: var(--fs-sm); font-weight: 700; margin-bottom: 6px; }
+.q-field { margin-top: 14px; }
+.q-form .field { min-height: 48px; border-width: 1px; border-radius: 12px; }
+.q-form .field:focus { border-color: var(--accent); }
+.q-form .field[aria-invalid="true"] { border-width: 2px; border-color: var(--danger-on-secondary); }
+.q-form .hint { color: var(--muted-on-secondary); }
+.q-form .error { color: var(--danger-on-secondary); }
+.q-chip span { min-height: var(--tap); min-width: var(--tap); justify-content: center; padding: 0 18px; border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-sm); font-weight: 650; }
+.q-chip input:checked + span { border-color: var(--action); }
+.q-more { margin-top: 16px; border-top-color: var(--secondary-deep); }
+.q-more summary { color: var(--link); font-size: var(--fs-md); }
+/* the notes the calculator shows on its own (restored quote, promo ended, answers changed): a quiet tinted line, same words */
+.q-restored:not([hidden]), .q-promo-ended:not([hidden]), .q-stale:not([hidden]) {
+  display: block; margin: var(--sp-2) 0 var(--sp-1); padding: 8px 12px; border-radius: var(--r-sm);
+  background: var(--secondary-deep); color: var(--on-secondary); font-size: var(--fs-sm); font-weight: 600;
+}
+.q-restored:not([hidden]) { margin-top: var(--sp-2); }
+.q-bar-note { color: var(--muted-on-secondary); }
+.q-form .q-submit { min-height: 48px; margin-top: 16px; }
+.q-result { max-width: 560px; margin: var(--sp-3) auto 0; padding: 14px; }
+.q-result .rec-h { margin-bottom: var(--sp-2); }
+.q-result .quote-item { padding: 6px 0; border-bottom: 0; font-size: var(--fs-md); }
+.q-result .quote-items { padding-bottom: var(--sp-1); border-bottom: 1px solid var(--line); }
+.q-result .quote-sums { margin-top: var(--sp-2); column-gap: 0; }
+.q-result .quote-sums dd { padding-left: var(--sp-3); }
+.q-result .quote-sums dt.is-total, .q-result .quote-sums dd.is-total { margin-top: 6px; padding-top: 10px; border-top: 1px dashed var(--field-border); }
+.q-result .quote-sums dt.is-total, .q-result .quote-sums dd.is-total { display: flex; align-items: flex-end; justify-content: flex-end; }
+.q-result .quote-sums dt.is-total { justify-content: flex-start; padding-bottom: 4px; }
+.q-result .quote-sums dt.is-total { font-size: var(--fs-md); }
+.q-result .quote-sums dd.is-total { font-size: var(--fs-2xl); letter-spacing: -0.02em; }
+.q-result .q-deposit { margin-top: var(--sp-3); padding: 8px 12px; border-radius: var(--r-sm); background: var(--accent-wash); color: var(--accent-ink); font-size: var(--fs-md); font-weight: 650; }
+.q-result .quote-review { margin-bottom: var(--sp-2); }
+.q-add-box { margin-top: var(--sp-4); }
+.q-add-box .btn { margin-top: 0; }
+.q-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
+.q-actions > .q-copy, .q-actions > .q-new {
+  flex: 1 1 9em; display: inline-flex; align-items: center; justify-content: center; width: auto; min-height: var(--tap); margin: 0; padding: 0 14px;
+  border: 1px solid var(--field-border); border-radius: var(--r-pill); background: var(--secondary); color: var(--on-secondary);
+  font-size: var(--fs-sm); font-weight: 650; text-decoration: none; line-height: 1.2;
+}
+.q-actions > .q-copy:active, .q-actions > .q-new:active { background: var(--secondary-deep); }
+.q-actions > .q-new:disabled, .q-actions > .q-copy:disabled { opacity: 0.6; }
+
+/* ---------- Follow-ups ---------- */
+.fu-block { padding: 20px 0 4px; }
+.fu-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 var(--sp-2); margin-bottom: 6px; }
+.fu-title:focus { outline: none; }
+.fu-title:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.pe-count { margin-left: 0; font-size: var(--fs-md); font-weight: 500; }
+.fu-rule, .pe-rule { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); }
+.pe-top-line { margin: 0; font-size: var(--fs-sm); }
+.fu-empty {
+  padding: 14px var(--sp-4); border: 1px dashed var(--field-border); border-radius: var(--r-md);
+  background: var(--secondary); color: var(--muted-on-secondary); font-size: var(--fs-sm);
+}
+/* Did these happen?: a card per event, name on one line (ends in "…"), today's two buttons as pills */
+.pe-row { gap: 10px; padding: var(--sp-3); }
+.pe-who { min-height: var(--tap); align-content: center; }
+.pe-name { font-size: var(--fs-md); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.pe-btn { min-height: var(--tap); border: 1px solid var(--field-border); background: var(--secondary); font-size: var(--fs-sm); font-weight: 650; }
+.pe-btn.pe-booked { border-color: var(--action); }
+.pe-btn.pe-booked:active:not([disabled]) { background: var(--action-press); border-color: var(--action-press); color: var(--on-accent); }
+.pe-bulk, .pe-showmore { min-height: var(--tap); border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-sm); }
+.pe-bulk:active, .pe-showmore:active { background: var(--secondary-deep); }
+.pe-top-link { min-height: var(--tap); }
+.bulk-block { border: 0; border-radius: var(--r-md); background: var(--accent-wash); }
+.bulk-block .bulk-done { color: var(--accent-ink); font-weight: 650; }
+.bulk-block .bulk-undo { min-height: var(--tap); border: 1px solid var(--accent); background: var(--secondary); color: var(--accent-ink); }
+/* Scheduled texts: group labels (Today / This week / Later) as small caps lines; the countdown is a tinted pill */
+.fu-group { margin-top: var(--sp-3); }
+.fu-group-h { margin-bottom: 6px; font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted-on-primary); }
+.fu-group-n { font-size: var(--fs-xs); }
+.lead-row > .row-line.fu-count {
+  flex: 0 0 auto; order: 4; margin: 0; padding: 2px 10px; border-radius: var(--r-pill);
+  background: var(--accent-tint); color: var(--accent-ink); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap;
+}
+
+/* ---------- Calendar ---------- */
+.cal-agenda { padding-top: var(--sp-4); }
+.ag-group ~ .ag-group { margin-top: var(--sp-4); }
+.ag-row { min-height: 64px; padding: 10px 12px; gap: var(--sp-3); }
+.ag-date { width: 48px; padding-right: var(--sp-3); border-right: 1px solid var(--card-ring); }
+.ag-day { font-size: var(--fs-xl); }
+.ag-row .lead-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.ag-list > li { min-width: 0; }   /* review FIX-1: a grid item keeps min-width:auto, so a long name widened the column (sideways scroll); now it ends in "…" */
+.ag-row .row-top { min-width: 0; }
+.ag-row .row-top > .lead-name { flex: 1 1 auto; min-width: 0; }
+.cal-agenda .cal-day-empty { margin: 0 0 var(--sp-2); }
+/* the month: one paper card (arrows + title, today's switch, the grid, the key) */
+.cal-month {
+  margin: var(--sp-4) 0 0; padding: var(--sp-3); border-radius: var(--r-md);
+  background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card);
+}
+.cal-month .cal-bar { padding: 0; }
+/* review FIX-2: on phones the card's side padding is 4 px so the day cells stay >= 44 px wide at 375 px (45.3 px); the bar, switch and key keep 8 px more */
+@media (max-width: 599px) {
+  .cal-month { padding-left: 4px; padding-right: 4px; }
+  .cal-month .cal-bar, .cal-month .cal-toggle, .cal-month .cal-legend, .cal-month .cal-month-note, .cal-month .status-line { padding-left: 8px; padding-right: 8px; }
+}
+.cal-month .cal-title { font-size: var(--fs-lg); font-weight: 700; color: var(--ink); }
+.cal-month .cal-nav { width: var(--tap); height: var(--tap); border: 1px solid var(--field-border); border-radius: var(--r-pill); background: var(--secondary); color: var(--ink); }
+.cal-month .cal-nav:active { background: var(--secondary-deep); }
+/* today's switch, label left and the switch on the right (as in the preview); same input, same words */
+.cal-month .cal-toggle { display: flex; flex-direction: row-reverse; justify-content: space-between; width: 100%; margin: var(--sp-2) 0 var(--sp-1); padding: 0; color: var(--ink); font-size: var(--fs-sm); }
+.cal-month .cal-toggle > span:last-child { flex: 1 1 auto; min-width: 0; }
+.cal-month .cal-grid th { color: var(--muted-on-secondary); }
+.cal-month .cal-cell { background: var(--primary); color: var(--ink); border-width: 1px; }
+.cal-month .cal-cell.is-today { border-color: var(--ink); }
+.cal-month .cal-cell[aria-pressed="true"] { border-width: 2px; border-color: var(--accent); background: var(--accent-tint); color: var(--accent-ink); }
+.cal-month .cal-ev.is-booked { background: var(--accent); }
+.cal-month .cal-ev.is-possible { border-color: var(--accent); opacity: 1; }
+.cal-month .cal-cell[aria-pressed="true"] .cal-ev.is-booked { background: var(--accent-ink); }
+.cal-month .cal-more, .cal-month .cal-legend { color: var(--muted-on-secondary); }
+.cal-month .cal-legend { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); }
+.cal-month .cal-key.is-booked { background: var(--accent); }
+.cal-month .cal-key.is-possible { border-color: var(--accent); }
+.cal-month .cal-month-note { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--muted-on-secondary); }
+.cal-day { margin-top: var(--sp-4); }
+.cal-day .cards { margin-top: var(--sp-2); }
+@media (min-width: 900px) {
+  .cal-month .cal-ev.is-booked { background: var(--secondary); color: var(--on-secondary); }   /* wide screens keep the named bars (R39) */
+  .cal-month .cal-ev.is-possible { color: var(--muted-on-secondary); border-color: var(--field-border); }
+  .cal-month .cal-cell[aria-pressed="true"] .cal-ev.is-booked { background: var(--secondary); }
+}
+
+/* ---------- More: one grouped list (rows split by hairlines), the alerts card, text size as one segmented control, Sign out ---------- */
+.more-wrap { padding-left: calc(var(--gutter) + env(safe-area-inset-left)); padding-right: calc(var(--gutter) + env(safe-area-inset-right)); }
+#more-list { display: flex; flex-direction: column; gap: 0; overflow: hidden; border-radius: var(--r-md); background: var(--secondary); box-shadow: var(--shadow-card); margin-bottom: var(--sp-4); }
+#more-list .more-row { min-height: 56px; padding: 0 var(--sp-3); border-radius: 0; box-shadow: 0 -1px 0 var(--card-ring); font-weight: 500; }   /* the line ABOVE each row; the list clips the first one */
+#more-list .more-row svg:first-child { color: var(--accent-strong); }
+#more-list:empty, #more-list:not(:has(> li:not([hidden]))) { display: none; }   /* review NIT-1: staff have no rows: no stray ring */
+#more-list .more-row .more-chev { color: var(--muted-on-secondary); }
+.alerts { margin-bottom: var(--sp-4); padding: var(--sp-3) 14px; border-radius: var(--r-md); }
+.alerts-icon { flex: none; color: var(--accent-strong); }
+.alerts-head { display: flex; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-1); }
+.alerts-head:has(> .alerts-h[hidden]) { display: none; }
+.alerts-head .alerts-h { margin: 0; }
+.alerts-h, .alerts-sum-label { font-size: var(--fs-md); font-weight: 700; }
+.alerts-sum { gap: var(--sp-2); min-height: var(--tap); }
+.alerts-sum-state { background: var(--accent-tint); color: var(--accent-ink); font-size: var(--fs-xs); padding: 2px 10px; }
+.alerts-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--secondary-deep); }
+.alerts-row .btn { flex: 1 1 9em; width: auto; margin: 0; min-height: var(--tap); }
+.alerts-sec { border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary); font-size: var(--fs-sm); font-weight: 650; }
+.alerts-sec:active { background: var(--secondary-deep); }
+.alerts .btn.quiet { margin: 0; border-color: transparent; color: var(--link); font-size: var(--fs-sm); text-decoration: underline; text-underline-offset: 3px; }
+.alerts-info { padding-left: var(--sp-3); border-left: 2px solid var(--secondary-deep); }
+.alerts .btn.primary { font-size: var(--fs-md); }
+.textsize { padding: var(--sp-3) 14px; border-radius: var(--r-md); }
+.textsize .rec-h { font-size: var(--fs-md); color: var(--ink); }
+.seg { gap: 3px; padding: 3px; border: 1px solid var(--field-border); border-radius: var(--r-pill); background: var(--secondary); }
+.seg-opt { flex: 1 1 0; }
+.seg-opt span { min-height: var(--tap); border: 0; font-size: var(--fs-sm); font-weight: 500; }
+.seg-opt input:checked + span { font-weight: 700; }
+.seg-opt input:not(:checked) + span:active { background: var(--secondary-deep); }
+#btn-signout { justify-content: center; gap: var(--sp-2); min-height: 48px; border: 1px solid var(--danger-on-primary); border-radius: var(--r-pill); background: var(--secondary); color: var(--danger-on-secondary); box-shadow: none; font-weight: 700; }
+#btn-signout svg { color: currentColor; }
+#btn-signout .more-label { flex: none; }
+
+/* ---------- More > Help & support, Hidden leads, Download spreadsheet, Team: the same cards and pills ---------- */
+.sp-wrap { padding-top: var(--sp-1); }
+.sp-wrap > .q-lede { margin-top: var(--sp-3); }
+.sp-off { border-width: 1px; border-color: var(--field-border); background: var(--secondary); color: var(--on-secondary); }
+.sp-contact .contact-btn { min-height: 48px; border-radius: var(--r-pill); }
+.sp-form { padding: 14px; border-radius: var(--r-md); background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card); }
+.sp-form .sp-h, .sp-form .field-label { color: var(--ink); }
+.sp-form .field { border-width: 1px; border-radius: 12px; }
+.sp-form .field[aria-invalid="true"] { border-width: 2px; }
+.sp-form .hint { color: var(--muted-on-secondary); }
+.sp-chips .reason-chip span { min-height: var(--tap); border-width: 1px; font-size: var(--fs-sm); }
+.sp-form .sp-chips .reason-chip span { border-color: var(--field-border); color: var(--on-secondary); }
+.export-screen .sp-chips .reason-chip span { border-color: var(--field-border); background: var(--secondary); color: var(--on-secondary); }
+.sp-chips .reason-chip input:checked + span { border-color: var(--action); background: var(--action); color: var(--on-accent); }
+.sp-lead { border-width: 1px; border-color: var(--secondary-deep); background: var(--primary); }
+.sp-nosend { background: var(--secondary-deep); color: var(--on-secondary); }
+.sp-done, .ex-status, .tm-link { border-radius: var(--r-md); box-shadow: var(--shadow-card); }
+.sp-row { padding: var(--sp-3); }
+#hid-list { margin-top: var(--sp-3); }
+.hid-who { display: grid; gap: 2px; align-content: center; }
+.hid-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+.hid-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hid-empty { margin-top: var(--sp-3); padding: 14px var(--sp-4); border: 1px dashed var(--field-border); border-radius: var(--r-md); background: var(--secondary); }
+.hid-empty .status-line { padding: 0; text-align: left; color: var(--on-secondary); font-weight: 650; }
+.hid-empty .hint { margin-top: var(--sp-1); color: var(--muted-on-secondary); }
+.tm-btn { min-height: var(--tap); border: 1px solid var(--field-border); border-radius: var(--r-pill); background: var(--secondary); font-size: var(--fs-sm); font-weight: 650; }
+.tm-btn:active:not([disabled]) { background: var(--secondary-deep); }
+.export-screen .q-more { border-top-color: var(--line-on-primary); }
+
+/* ---------- Ask your CRM: starter cards, chat bubbles, the "how it was counted" line, a pill composer ---------- */
+.ask-starters:not(.is-compact):not(:empty) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2); }
+.ask-starters:not(.is-compact) .ask-starter {
+  min-height: 56px; padding: 8px 12px; border-radius: var(--r-md); border: 0;
+  background: var(--secondary); color: var(--on-secondary); box-shadow: var(--shadow-card); font-size: var(--fs-sm); font-weight: 600; line-height: 1.25;
+}
+.ask-starters:not(.is-compact) .ask-starter:active { background: var(--secondary-deep); }
+.ask-starters.is-compact .ask-starter { border: 1px solid var(--field-border); background: var(--secondary); color: var(--on-secondary); }
+.ask-row.is-q .ask-bubble { background: var(--bubble-out); color: var(--on-secondary); border-radius: var(--r-lg) var(--r-lg) 4px var(--r-lg); }
+.ask-row.is-a .ask-bubble { border-radius: var(--r-lg) var(--r-lg) var(--r-lg) 4px; max-width: 92%; padding: 12px 14px; }
+.ask-row.is-err .ask-bubble { border-width: 1px; border-radius: var(--r-lg) var(--r-lg) var(--r-lg) 4px; }
+.ask-from { margin-top: var(--sp-2); padding: 6px 10px; border-radius: var(--r-sm); background: var(--accent-wash); color: var(--accent-ink); font-size: var(--fs-xs); line-height: 1.4; }
+/* a lead name in an answer: a blue-outlined pill that ends in "…" when the name is long; its tap area is 44 px tall */
+.ask-chip { position: relative; max-width: 100%; min-height: 30px; padding: 0 12px; border-width: 1px; vertical-align: middle; }
+.ask-chip::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: var(--tap); transform: translateY(-50%); }
+.ask-chip-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ask-composer { background: var(--primary-deep); }
+.ask-input { min-height: 48px; border-width: 1px; border-radius: 24px; padding: 12px 16px; }
+.ask-composer .ask-send { min-height: 48px; border-radius: var(--r-pill); font-size: var(--fs-md); font-weight: 700; }
+
+/* ==================================================================================================================================
+   ROUND 3 REDESIGN (2026-11-21, Kevin "All A"): the Today home (CV_CUSTOM.features.today) and Metrics in the look of rounds 1 and 2
+   (previews Main / PhoneMetrics). Same tokens: paper cards with the 1px ring (--shadow-card), radii 10 / 14 / 18 / pill, --tap 44 px targets,
+   --fs-* type. Bars and columns are plain boxes the page sizes itself (ruling 13A: no chart code, no canvas). Today's words; no period switch,
+   no funnel by new statuses, no hold hours, no Open and nudge / In 3 days / Tick it.
+   Rollback = republish the previous page commit (ee44e7b, round 2). Switching features.today off only brings back Leads as home and today's bar;
+   the Metrics bars and Looking-ahead columns are drawn by app.js whatever the switch says, so removing this CSS alone would leave them unstyled.
+   ================================================================================================================================== */
+
+/* paper surfaces added by this round: ink, muted ink, dividers, links and focus follow */
+.today-card, .today-tile, .today-past, .m-block { --ink: var(--on-secondary); --muted: var(--muted-on-secondary); --line: var(--secondary-deep); --danger: var(--danger-on-secondary); --link: var(--accent-strong); --focus: var(--accent-strong); }
+
+/* ---------- Today: the header (date over the title, a search icon, a round "+": the same Add-lead button, its words kept for screen readers) ---------- */
+.app[data-screen="today"] .titles { display: flex; flex-direction: column-reverse; }
+.app[data-screen="today"] .titles .sub { margin: 0; }
+.today-search { width: var(--tap); height: var(--tap); margin-right: var(--sp-2); border: 1px solid var(--field-border); border-radius: var(--r-pill); background: var(--secondary); color: var(--on-secondary); }
+.today-search:active { background: var(--secondary-deep); }
+.app[data-screen="today"] .btn-add { width: var(--tap); min-width: var(--tap); height: var(--tap); padding: 0; justify-content: center; }
+.app[data-screen="today"] .btn-add span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ---------- Today: the page ---------- */
+.today-wrap {
+  display: flex; flex-direction: column; gap: var(--sp-4); max-width: var(--content); margin: 0 auto;
+  padding: var(--sp-3) calc(var(--gutter) + env(safe-area-inset-right)) var(--sp-6) calc(var(--gutter) + env(safe-area-inset-left));
+}
+.today-sec { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.today-sec-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); min-width: 0; }
+.today-h { margin: 0; min-width: 0; font-size: var(--fs-lg); font-weight: 700; letter-spacing: -0.005em; color: var(--on-primary); }
+.today-count { font-weight: 500; color: var(--muted-on-primary); font-variant-numeric: tabular-nums; }
+.today-link {
+  flex: none; display: inline-flex; align-items: center; min-height: var(--tap); padding: 0 2px; border: 0; background: transparent;
+  color: var(--accent-light); font: inherit; font-size: var(--fs-sm); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+.today-sec > .status-line { padding: var(--sp-4) 0; text-align: left; }
+.today-sec > .error { margin: 0; }
+.today-empty {
+  margin: 0; padding: 14px var(--sp-4); border: 1px dashed var(--field-border); border-radius: var(--r-md);
+  background: var(--secondary); color: var(--muted-on-secondary); font-size: var(--fs-sm);
+}
+.today-late { margin: -4px 0 0; padding: 0; }
+
+/* the alerts line: the Leads banner's rule and words; "Not working" gets a brick ring as well as its words */
+.today-alert { display: flex; align-items: center; gap: var(--sp-2); padding: 4px 4px 4px 12px; border-radius: 12px; background: var(--accent-wash); color: var(--accent-ink); font-size: var(--fs-sm); }
+.today-alert-icon { flex: none; }
+.today-alert-text { flex: 1 1 auto; min-width: 0; font-weight: 650; }
+.today-alert-btn { flex: none; min-height: var(--tap); padding: 0 14px; border: 0; border-radius: var(--r-pill); background: var(--action); color: var(--on-accent); font-size: var(--fs-sm); font-weight: 700; }
+.today-alert-btn:active { background: var(--action-press); }
+.today-alert[data-state="failing"] { background: var(--secondary); color: var(--danger-on-secondary); box-shadow: 0 0 0 1px var(--danger-on-secondary); }
+
+/* three numbers: equal paper tiles (one column under 360 px and at the Large text size) */
+.today-tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-2); }
+.today-tiles[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.today-tiles[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.today-tile { min-width: 0; padding: 10px; border-radius: var(--r-md); background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card); }
+.today-tile-box { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.today-tile-label { font-size: var(--fs-xs); font-weight: 650; line-height: 1.25; color: var(--muted); }
+.today-tile-value { font-size: var(--fs-lg); font-weight: 750; line-height: 1.2; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.today-tile-sub { font-size: var(--fs-xs); line-height: 1.3; color: var(--muted); }
+.today-tile-track { display: block; height: 6px; margin: 4px 0 2px; border-radius: 3px; background: var(--accent-wash); overflow: hidden; }
+.today-tile-bar { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.today-tile.is-loading .today-tile-value { color: var(--muted); }
+.today-tile.is-error .today-tile-sub { color: var(--danger); font-weight: 650; }
+@media (max-width: 359px) { .today-tiles, .today-tiles[data-count="2"] { grid-template-columns: minmax(0, 1fr); } }
+:root[data-text-size="larger"] .today-tiles, :root[data-text-size="larger"] .today-tiles[data-count="2"] { grid-template-columns: minmax(0, 1fr); }
+
+/* Needs you: one paper card per lead (wait + new-text dot, name ending in "…", job line, Call / Text / Open) */
+.today-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.today-card { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; padding: var(--sp-3); border-radius: var(--r-md); background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card); }
+.today-card.is-late { box-shadow: 0 0 0 2px var(--danger-on-secondary); }   /* with the red "overdue" words, never the colour alone */
+.today-card-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); }
+.today-card-top .row-wait { font-size: var(--fs-sm); }
+.today-stop { display: inline-flex; align-items: center; padding: 1px 9px; border: 1px solid var(--danger-on-secondary); border-radius: var(--r-pill); color: var(--danger-on-secondary); font-size: var(--fs-xs); font-weight: 700; }   /* review FIX-1: B2's cue, in words */
+.today-newtext { display: inline-flex; align-items: center; font-size: var(--fs-xs); font-weight: 700; color: var(--accent-ink); }
+.today-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--ink); text-decoration: none; }
+.today-who-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); min-width: 0; }
+.today-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); font-weight: 700; }
+.today-money { flex: none; font-size: var(--fs-md); font-weight: 750; font-variant-numeric: tabular-nums; }
+.today-job { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); color: var(--muted); }
+.today-btns { display: flex; gap: var(--sp-2); }
+.today-btn {
+  flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; min-height: var(--tap); padding: 0 8px;
+  border: 1px solid var(--field-border); border-radius: var(--r-pill); background: var(--secondary); color: var(--on-secondary);
+  font-size: var(--fs-sm); font-weight: 650; text-decoration: none; white-space: nowrap;
+}
+.today-btn:active { background: var(--secondary-deep); }
+/* Today's Call stays paper like Text and Open (Kevin 11-21, no blue Call). */
+
+/* Did these happen?: one paper card, Review on the right */
+.today-past { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-3); border-radius: var(--r-md); background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card); }
+.today-past-text { min-width: 0; }
+.today-kicker { margin: 0; font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.today-past-h { margin: 2px 0 0; font-size: var(--fs-md); font-weight: 700; }
+.today-past-btn { flex: none; min-height: var(--tap); padding: 0 18px; border: 0; border-radius: var(--r-pill); background: var(--action); color: var(--on-accent); font-size: var(--fs-sm); font-weight: 700; }
+.today-past-btn:active { background: var(--action-press); }
+
+/* This week: the Calendar's own rows (.ag-row) */
+.today-sec .ag-list > li { min-width: 0; }
+
+/* ---------- Metrics: each section a paper card; tiles three across; bars and columns drawn by the page ---------- */
+.metrics-wrap { padding-top: var(--sp-3); }
+.m-block { margin: 0 0 var(--sp-3); padding: var(--sp-3) 14px; border-bottom: 0; border-radius: var(--r-md); background: var(--secondary); color: var(--ink); box-shadow: var(--shadow-card); }
+.m-title { margin: 0 0 var(--sp-2); font-size: var(--fs-md); font-weight: 700; color: var(--ink); }
+.m-block .m-big { font-size: var(--fs-2xl); color: var(--ink); }
+.m-block .m-line { font-size: var(--fs-md); }
+.m-block .m-sub { font-size: var(--fs-sm); }
+.m-block .m-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.m-block .m-tile, .m-block .m-tile.is-lead { grid-column: auto; padding: 8px 10px; border-radius: var(--r-sm); background: var(--primary); box-shadow: 0 0 0 1px var(--card-ring); }
+.m-block .m-tile .m-tile-money, .m-block .m-tile.is-lead .m-tile-money { font-size: var(--fs-lg); letter-spacing: -0.01em; }
+.m-block .m-tile-label, .m-block .m-tile-count { font-size: var(--fs-xs); }
+.m-block .m-tile.is-rate { display: block; min-width: 0; max-width: 16em; }
+.m-block .m-tile.is-rate .m-tile-money { font-size: var(--fs-2xl); }
+@media (max-width: 359px) { .m-block .m-tiles { grid-template-columns: minmax(0, 1fr); } }
+:root[data-text-size="larger"] .m-block .m-tiles { grid-template-columns: minmax(0, 1fr); }
+.m-block .vt-money { font-size: var(--fs-lg); }
+.vt-row.has-bar { align-items: center; }
+.vt-left { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.m-bar-track { display: block; height: 6px; border-radius: 3px; background: var(--primary-raised); overflow: hidden; }
+.m-bar { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.m-block .funnel-track { height: 8px; }
+.m-block .fc-note { background: var(--accent-wash); color: var(--accent-ink); box-shadow: none; }
+.m-block .fc-note .m-line { color: var(--accent-ink); }
+.m-block .fc-link { min-height: var(--tap); }
+/* Looking ahead: one column per event month (and Later): booked solid at the bottom, that month's open quotes as an outline on top */
+.fc-chart { display: flex; gap: 6px; height: 150px; margin: 0 0 var(--sp-1); }
+.fc-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.fc-stack { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: flex-end; min-height: 0; border-bottom: 1px solid var(--field-border); }
+.fc-bar-open { display: block; flex: none; border: 1.5px dashed var(--accent); border-bottom: 0; border-radius: 4px 4px 0 0; }
+.fc-bar-booked { display: block; flex: none; background: var(--accent); }
+.fc-bar-open + .fc-bar-booked { border-radius: 0; }
+.fc-stack > .fc-bar-booked:only-child { border-radius: 4px 4px 0 0; }
+.fc-mon { display: block; padding-top: 4px; text-align: center; font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-sub.fc-key { margin: 0 0 var(--sp-2); font-size: var(--fs-xs); }
 
 /* W18 (s15): at Small (0.92) these boxes (Ask, Leads search, the three note boxes) would fall under 16 px, and iOS zooms the page when a box under 16 px gets the cursor. --fs-lg = 16.56 px at Small. */
 :root[data-text-size="small"] .ask-input, :root[data-text-size="small"] .search-field, :root[data-text-size="small"] .note-field { font-size: var(--fs-lg); }

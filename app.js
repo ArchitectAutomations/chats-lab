@@ -65,6 +65,8 @@
     String(qs.get('off')).split(',').forEach(function (k) { if (/^[A-Za-z]{2,24}$/.test(k.trim())) mockOff[k.trim()] = false; });
     custom.features = Object.assign({}, custom.features, mockOff);
   }
+  // Mock only (round 3 review FIX-3): ?tabs=list,followups,calendar replaces CV_CUSTOM.tabs, for a client whose tabs leave Metrics out.
+  if (MOCK && qs.get('tabs')) custom.tabs = String(qs.get('tabs')).split(',').map(function (k) { return k.trim(); }).filter(function (k) { return /^[a-z]{2,24}$/.test(k); });
   if (MOCK && !(typeof custom.businessName === 'string' && custom.businessName.trim())) custom.businessName = 'Mock Bartending Co';
   var TARGET_KEY = 'cv_target_lead';
   var FILTER_KEY = 'cv_filter';
@@ -86,9 +88,11 @@
      The bottom bar shows Leads / Follow-ups / Calendar / Metrics + More; Ask your CRM, Quote calculator, How to use the CRM, Help & support and Download spreadsheet live under More; Lead value is a section inside Metrics
      (L.tabPlan decides, from CV_CUSTOM.tabs and the feature switches). */
   var TABS = [
-    { route: 'list', href: '#/', label: 'Leads', show: showList, icon: 'M12 4.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM5 19.5c.6-3.3 3.3-5 7-5s6.4 1.7 7 5' },
+    // Round 3 redesign: the Today home (CV_CUSTOM.features.today). With the switch on it is the first bar slot and where "/" opens; off = not there at all.
+    { route: 'today', href: '#/today', label: 'Today', show: showToday, icon: 'M3.5 11 12 4l8.5 7v9h-17z' },
+    { route: 'list', href: '#/', label: 'Leads', show: showList, icon: 'M4 6h16M4 12h16M4 18h10' },
     { route: 'followups', href: '#/followups', label: 'Follow-ups', show: showFollowUps, icon: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 7.5V12l3 2' },
-    { route: 'calendar', href: '#/calendar', label: 'Calendar', show: showCalendar, icon: 'M4 6h16v14H4zM4 10.5h16M8.5 3.5v5M15.5 3.5v5' },
+    { route: 'calendar', href: '#/calendar', label: 'Calendar', show: showCalendar, icon: 'M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM3 10h18M8 3v4M16 3v4' },
     { route: 'metrics', href: '#/metrics', label: 'Metrics', show: showMetrics, icon: 'M5 20v-8M12 20V5M19 20v-5M3 20h18' },
     { route: 'ask', href: '#/ask', label: 'Ask your CRM', show: showAsk, icon: 'M4 5.5h16v10.5H10l-4.5 3.5V16H4zM10 9.2a2 2 0 1 1 2.8 1.8c-.5.3-.8.6-.8 1.2M12 13.6v.2' },
     { route: 'quote', href: '#/quote', label: 'Quote calculator', show: showQuote, icon: 'M7 3.5h10v17H7zM9.5 7h5M9.5 11h1M13.5 11h1M9.5 14.5h1M13.5 14.5h1M9.5 18h5' },
@@ -97,7 +101,7 @@
     { route: 'export', href: '#/export', label: 'Download spreadsheet', show: showExport, icon: 'M12 4v11M7 10l5 5 5-5M5 20h14' },
     { route: 'hidden', href: '#/hidden', label: 'Hidden leads', show: showHidden, icon: 'M3.5 12s3.2-6 8.5-6 8.5 6 8.5 6-3.2 6-8.5 6-8.5-6-8.5-6zM12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM4.5 4.5l15 15' },
     { route: 'team', href: '#/team', label: 'Team', show: showTeam, icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3.5 19c.5-3 2.6-4.5 5.5-4.5s5 1.5 5.5 4.5M16 11a2.5 2.5 0 1 0 0-5M17.5 14.7c1.8.4 2.8 1.7 3 4.3' },
-    { route: 'more', href: '#/more', label: 'More', show: showMore, icon: 'M5 12h2M11 12h2M17 12h2' }
+    { route: 'more', href: '#/more', label: 'More', show: showMore, icon: 'M5 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM19 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z' }
   ];
 
   // Feature switches (CV_CUSTOM.features): an off feature is not shown anywhere. Leads ('list') and More are always on.
@@ -109,7 +113,7 @@
   function tabByRoute(r) { return TABS.filter(function (x) { return x.route === r; })[0]; }
 
   // The client's bar and More list (CV_CUSTOM.tabs order, labels from CV_CUSTOM.tabLabels).
-  var PLAN, BAR, MORE_ITEMS, NAV, TAB_ROUTES, HAS_FOLLOWUPS, HAS_SEARCH, HAS_NOTES, HAS_PUSH, HAS_ADD;
+  var PLAN, BAR, MORE_ITEMS, NAV, TAB_ROUTES, HAS_FOLLOWUPS, HAS_SEARCH, HAS_NOTES, HAS_PUSH, HAS_ADD, HAS_TODAY;
   function labelled(route) {
     var t = tabByRoute(route);
     var labels = custom.tabLabels || {};
@@ -118,7 +122,7 @@
   }
   // Worked out again once cv_my_role has answered (a staff member gets fewer tabs and switches).
   function computeNav() {
-    PLAN = L.tabPlan(custom.tabs, feature);
+    PLAN = L.tabPlan(custom.tabs, feature, { today: feature('today') });   // round 3: Today first, Metrics under More (switch off = as before)
     BAR = PLAN.bar.concat(['more']).map(labelled);
     MORE_ITEMS = PLAN.more.map(labelled);
     // Every screen the router can open (bar tabs, More and the tools under it).
@@ -129,6 +133,7 @@
     HAS_NOTES = feature('notes');
     HAS_PUSH = feature('push');
     HAS_ADD = feature('addLead');
+    HAS_TODAY = TAB_ROUTES.indexOf('today') !== -1;
   }
   computeNav();
 
@@ -161,7 +166,7 @@
     qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qOccasionPick: $('q-occasion-pick'), qPromoPick: $('q-promo-pick'), qPromoGives: $('q-promo-gives'), qMore: $('q-more'),
     qErr: $('q-error'), qSubmit: $('q-submit'), qResult: $('q-result'), qResultH: $('q-result-h'), qResultBody: $('q-result-body'),
     qCopy: $('q-copy'), qNew: $('q-new'), qCopied: $('q-copied'), searchWrap: $('search-wrap'),
-    askScreen: $('screen-ask'), askScroll: $('ask-scroll'), askThread: $('ask-thread'), askStarters: $('ask-starters'), askForm: $('ask-form'), askInput: $('ask-input'),
+    askScreen: $('screen-ask'), askScroll: $('ask-scroll'), askThread: $('ask-thread'), askLive: $('ask-live'), askStarters: $('ask-starters'), askForm: $('ask-form'), askInput: $('ask-input'),
     askSend: $('ask-send'), askCount: $('ask-count'),
     exportScreen: $('screen-export'), exGroup: $('ex-group'), exDates: $('ex-dates'), exFrom: $('ex-from'), exTo: $('ex-to'), exMake: $('ex-make'),
     exStatus: $('ex-status'), exOff: $('ex-off'), exSave: $('ex-save'), exHint: $('ex-hint'), exError: $('ex-error'),
@@ -213,6 +218,18 @@
     actions: $('actions'), actionsNote: $('actions-note'), actionErr: $('action-error'), history: $('history'), historyMore: $('history-more'),
     threadScroll: $('thread-scroll'), threadLoading: $('thread-loading'), threadBox: $('thread'), threadEmpty: $('thread-empty'),
     threadErr: $('thread-error'), pill: $('new-pill'),
+    // Round 1 redesign: the scroll fade on the tab row, the list's spoken summary, the next-step box, the ONE Quote card.
+    filtersRow: $('filters-row'), listAnnounce: $('list-announce'), recNextBox: $('rec-nextbox'),
+    recQcard: $('rec-qcard'), qcHead: $('qc-head'), qcTotal: $('qc-total'), qcTotalLabel: $('qc-total-label'), qcTotalAmount: $('qc-total-amount'), qcActions: $('qc-actions'),
+    // Round 3 redesign: the Today home.
+    today: $('screen-today'), todayScroll: $('today-scroll'), todayLive: $('today-live'), todaySearch: $('btn-today-search'),
+    todayAlert: $('today-alert'), todayAlertText: $('today-alert-text'), todayAlertBtn: $('today-alert-btn'),
+    todayNumbers: $('today-numbers'), todayTiles: $('today-tiles'),
+    todayNeeds: $('today-needs'), todayNeedsTitle: $('today-needs-title'), todayNeedsCount: $('today-needs-count'), todayNeedsAll: $('today-needs-all'),
+    todayNeedsLate: $('today-needs-late'), todayLoading: $('today-loading'), todayNeedsList: $('today-needs-list'), todayNeedsEmpty: $('today-needs-empty'), todayError: $('today-error'),
+    todayPast: $('today-past'), todayPastH: $('today-past-h'), todayPastBtn: $('today-past-btn'),
+    todayWeek: $('today-week'), todayWeekList: $('today-week-list'), todayWeekEmpty: $('today-week-empty'),
+    metricsLive: $('metrics-live'),
     confirm: $('confirm'), confirmText: $('confirm-text'), confirmYes: $('confirm-yes'), confirmAlt: $('confirm-alt'), confirmNote: $('confirm-note'), confirmNo: $('confirm-no')
   };
 
@@ -243,6 +260,12 @@
     seq: { list: 0, thread: 0, metrics: 0, forecast: 0, followups: 0, pastEvents: 0 },
     metrics: null,
     forecast: null, // cv_forecast() JSON; null = not loaded or failed (the block stays hidden)
+    forecastState: 'loading',   // round 3: 'loading' until cv_forecast first answers, then 'ok' or 'error' (Today's month number shows which)
+    metricsBack: '',     // round 3: where Metrics' back arrow goes once it lives under More ('#/today' or '#/more'); '' = it is a bar tab
+    focusSearch: false,  // round 3: Today's search icon: focus the Leads search once the list is drawn
+    routedHash: '',      // round 3 review N2: the hash the search tap already drew (its hashchange is then skipped once)
+    todaySaid: '',       // round 3: the last Today summary spoken (aria-live), so a refresh does not repeat it
+    metricsSaid: '',     // round 3: the same for Metrics
     metricsError: '',
     followUps: null,     // follow_ups rows once loaded
     followUpsError: '',
@@ -343,7 +366,7 @@
     p.setAttribute('d', d);
     p.setAttribute('fill', 'none');
     p.setAttribute('stroke', 'currentColor');
-    p.setAttribute('stroke-width', '1.75');
+    p.setAttribute('stroke-width', '2');   // round 1 redesign: one 2px stroke for every icon
     p.setAttribute('stroke-linecap', 'round');
     p.setAttribute('stroke-linejoin', 'round');
     svg.appendChild(p);
@@ -761,7 +784,13 @@
 
   // Which bar slot lights up: the tab itself, or More for the tools that live under it.
   function barRoute(route) {
-    return BAR.some(function (n) { return n.route === route; }) ? route : 'more';
+    if (BAR.some(function (n) { return n.route === route; })) return route;
+    return route === 'metrics' ? metricsBackRoute() : 'more';   // round 3: Metrics opened from Today lights Today
+  }
+  // Round 3: Metrics under More goes back to where it was opened from: Today ("All numbers") or More.
+  function metricsBackRoute() {
+    var r = S.metricsBack === '#/today' && HAS_TODAY ? 'today' : 'more';
+    return NAV.some(function (n) { return n.route === r; }) ? r : NAV[0].route;
   }
 
   function buildTabbar() {
@@ -834,11 +863,13 @@
       if (askMv.clear) clearAskChat();
     }
     S.screen = name;
+    el.app.setAttribute('data-screen', name);   // round 1 redesign: lets the Leads header and its search read as one block (styles.css)
     var signedIn = name !== 'signin' && name !== 'role';
     el.app.classList.toggle('signed-in', signedIn);
     show(el.signin, name === 'signin');
     show(el.roleScreen, name === 'role');
     show(el.list, name === 'list');
+    if (el.today) show(el.today, name === 'today');
     show(el.metrics, name === 'metrics');
     show(el.followups, name === 'followups');
     if (name !== 'followups') { S.pastScroll = false; S.pastErr = ''; }
@@ -856,11 +887,13 @@
     show(el.tabbar, signedIn && PLAN.showBar);
     // Back arrow on a lead record and on the tools under More; every other screen is a tab with a plain title.
     var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide' || name === 'hidden';
+    var subMetrics = name === 'metrics' && !BAR.some(function (n) { return n.route === 'metrics'; });   // round 3: Metrics under More has a back arrow
+    if (subMetrics) { sub = true; el.back.setAttribute('aria-label', 'Back to ' + navFor(metricsBackRoute()).label.toLowerCase()); }
     show(el.back, sub);
     if (name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide' || name === 'hidden') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
     if (name !== 'thread') {
       el.title.textContent = S.tab.label;
-      setText(el.subtitle, '');
+      setText(el.subtitle, name === 'today' ? L.todayDateLine() : '');   // round 3: the date over "Today" (styles.css puts it above the title)
     }
     // The leave question is still unanswered when Back / Forward / a notification moves the page: it stays up, only the screen behind it changes.
     // Back to the calculator answers it (the quote is still there); signing out drops it.
@@ -875,7 +908,8 @@
     if (el.editDlg.open) closeEdit();
     if (el.dupDlg.open && !(S.dup && S.dup.busy)) { S.dup = null; closeDup(); }
     if (name !== 'thread') closeFullSilently();
-    show(el.btnAdd, signedIn && name === 'list' && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');
+    show(el.btnAdd, signedIn && (name === 'list' || name === 'today') && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');   // round 3: the same sheet from Today's "+"
+    if (el.todaySearch) show(el.todaySearch, signedIn && name === 'today' && HAS_SEARCH);
     markTabs();
     if (!signedIn) setLive('off');
     renderConn();
@@ -932,6 +966,7 @@
       refreshFollowUps();
       if (S.screen === 'thread' && S.thread.id) refreshThread();
       if (S.screen === 'metrics') refreshMetrics();
+      if (S.screen === 'today' && todayNumbersOn()) refreshMetrics();
       if (S.screen === 'list' && L.searchFilter(S.search.q)) runSearch();
       if (S.screen === 'hidden') refreshHidden(true);
     }, delay);
@@ -956,6 +991,7 @@
 
   function renderLeadScreens() {
     if (S.screen === 'list') renderList();
+    else if (S.screen === 'today') renderToday(); // round 3: Needs you and This week come from the lead list
     else if (S.screen === 'metrics') renderMetrics(); // lead value comes from the lead list
     else if (S.screen === 'followups') renderFollowUps(); // "asked for you" times come from the lead list
     else if (S.screen === 'calendar') renderCalendar();
@@ -1046,11 +1082,11 @@
   /* ---------- list ---------- */
 
   var FILTER_EMPTY = {
-    open: 'No open leads right now.',
-    contacted: 'No contacted leads right now.',
-    booked: 'No booked leads yet.',
-    lost: 'No lost leads.',
-    noquote: 'Every open lead has a quote.'
+    open: 'No open leads right now. Try another tab.',
+    contacted: 'No contacted leads right now. Try another tab.',
+    booked: 'No booked leads yet. Try another tab.',
+    lost: 'No lost leads. Try another tab.',
+    noquote: 'Every open lead has a quote. Try another tab.'
   };
 
   // Gap 1: the "Without a quote yet" chip and row tag (G6 11-13: were "No quote" / "No quote sent"; key stays 'noquote'). Owner only (a staff list has no prices), per-client switch
@@ -1220,6 +1256,38 @@
     try { t.scrollIntoView({ block: 'start' }); } catch (e) { /* old browsers: the list still opens */ }
     var link = t.querySelector ? t.querySelector('a') : null;
     if (link) try { link.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+  }
+
+  /* Round 1 redesign: the status tabs are one sideways-scrolling row of pills on a phone. The row fades at the edge that has more tabs
+     (tabs-row.fade-left / fade-right), and the picked tab is kept in view. Wired once (wireTabsRow): renderFilters itself is unchanged. */
+  var tabsKey = '';
+  function syncTabsRow() {
+    var f = el.filters;
+    if (!f || !el.filtersRow) return;
+    var on = f.querySelector ? f.querySelector('[aria-pressed="true"]') : null;
+    var key = S.filter + '|' + (on ? on.textContent : '');
+    if (on && S.filter !== tabsKey.split('|')[0]) {   // a new pick (or the first draw): bring it into view sideways only, never the page
+      var left = on.offsetLeft - f.offsetLeft, right = left + on.offsetWidth;
+      if (left < f.scrollLeft) f.scrollLeft = Math.max(0, left - 16);
+      else if (right > f.scrollLeft + f.clientWidth) f.scrollLeft = right - f.clientWidth + 16;
+    }
+    tabsKey = key;
+    var max = f.scrollWidth - f.clientWidth;
+    el.filtersRow.classList.toggle('fade-left', f.scrollLeft > 2);
+    el.filtersRow.classList.toggle('fade-right', max > 2 && f.scrollLeft < max - 2);
+  }
+  function announceList(box) {
+    var on = box.querySelector ? box.querySelector('[aria-pressed="true"]') : null;
+    var name = on ? String(on.getAttribute('aria-label') || on.textContent || '').split(', includes')[0] : '';
+    if (name && el.listAnnounce) el.listAnnounce.textContent = 'Showing ' + name + (/(^|\D)1$/.test(name) ? ' lead' : /\d$/.test(name) ? ' leads' : '');
+  }
+  function wireTabsRow() {
+    el.filters.addEventListener('scroll', syncTabsRow, { passive: true });
+    window.addEventListener('resize', syncTabsRow);
+    if (typeof MutationObserver === 'function') new MutationObserver(syncTabsRow).observe(el.filters, { childList: true });
+    el.filters.addEventListener('click', function () { announceList(el.filters); });
+    el.lostParts.addEventListener('click', function () { announceList(el.lostParts); });
+    el.filtersExtra.addEventListener('click', function () { announceList(el.filtersExtra); });
   }
 
   // The Sort pill: "Sort: Latest activity"; a non-default pick shows filled (the .is-set look) so it is clear a sort is on.
@@ -2055,8 +2123,181 @@
     if (top > 0) { el.listScroll.scrollTop = top; requestAnimationFrame(function () { if (S.screen === 'list') el.listScroll.scrollTop = top; }); }
     else if (!S.overDayPending) el.listScroll.scrollTop = 0;   // a fresh See all (or the chips again) opens at its top
     if (S.overDayPending) revealOverDay();
+    // Round 3: Today's search icon lands here with the search box focused (the same box, nothing new).
+    if (S.focusSearch) { S.focusSearch = false; if (HAS_SEARCH) try { el.search.focus(); } catch (e) { /* ignore */ } }
     refreshList();
     if (searchActive()) runSearch();
+  }
+
+  /* ---------- Today (round 3 redesign, CV_CUSTOM.features.today) ----------
+     The home screen: the alerts line, three numbers (owner only), Needs you (TODAY's rule, ruling 15A), "Did these happen?" and This week.
+     Every part reads what the page already loads (lead_list, cv_metrics, cv_forecast, cv_past_events, the alerts state); no new call.
+     Names are untrusted: textContent only. Each part has its own loading, error and empty state. */
+
+  // The three numbers: the Metrics switch, which staff never get (STAFF_BLOCKED), so a staff Today shows no money at all.
+  // Review FIX-3: and only for a client whose tabs list Metrics (no Metrics screen = no numbers, no "All numbers", no cv_metrics / cv_forecast from Today).
+  function todayNumbersOn() { return HAS_TODAY && !isStaff() && TAB_ROUTES.indexOf('metrics') !== -1 && feature('metrics') && !!S.api && typeof S.api.metrics === 'function'; }
+  function todayForecastOn() { return todayNumbersOn() && feature('forecast') && typeof S.api.forecast === 'function'; }
+  function todayWeekOn() { return TAB_ROUTES.indexOf('calendar') !== -1; }
+
+  // Review N4: the tile's own words are what a screen reader reads (no aria-label on the li); only a bare "…" / "—" is hidden, the line under it says it in words.
+  function todayTile(t) {
+    var li = make('li', 'today-tile is-' + t.state);
+    if (t.state === 'loading') li.setAttribute('aria-busy', 'true');
+    var box = make('div', 'today-tile-box');
+    box.appendChild(make('span', 'today-tile-label', t.label));
+    var val = make('span', 'today-tile-value', t.value);
+    if (t.value === '\u2026' || t.value === '\u2014') val.setAttribute('aria-hidden', 'true');
+    box.appendChild(val);
+    if (t.bar !== null && t.bar !== undefined) {
+      var track = make('span', 'today-tile-track');
+      var bar = make('span', 'today-tile-bar');
+      bar.style.width = t.bar + '%';   // CSSOM, allowed under style-src 'self'
+      track.appendChild(bar);
+      box.appendChild(track);
+    }
+    box.appendChild(make('span', 'today-tile-sub', t.sub));
+    li.appendChild(box);
+    return li;
+  }
+
+  function todayNeedCard(c) {
+    var li = make('li', 'today-card' + (c.wait && c.wait.late ? ' is-late' : ''));
+    var top = make('div', 'today-card-top');
+    if (c.wait) top.appendChild(waitNode(c.wait));
+    if (c.newText) {
+      var nt = make('span', 'today-newtext');
+      var dot = make('span', 'new-dot');
+      dot.setAttribute('aria-hidden', 'true');
+      nt.appendChild(dot);
+      nt.appendChild(document.createTextNode(L.NEW_TEXT_LABEL));
+      top.appendChild(nt);
+    }
+    if (c.stop) {   // ruling B2: the owner may still text them from the phone; the card says they texted STOP, like the record's note
+      var sc = make('span', 'today-stop', L.TODAY_STOP_CUE);
+      sc.title = c.stopText;
+      top.appendChild(sc);
+    }
+    if (top.childNodes.length) li.appendChild(top);
+    // The name block opens the record too (a bigger tap area); the Open button below is the one keyboard / screen-reader way in.
+    var who = make('a', 'today-who');
+    who.href = c.open;
+    who.tabIndex = -1;
+    who.setAttribute('aria-hidden', 'true');
+    var line = make('span', 'today-who-top');
+    line.appendChild(make('span', 'today-name', c.name));
+    if (c.money) line.appendChild(make('span', 'today-money', c.money));
+    who.appendChild(line);
+    if (c.job) who.appendChild(make('span', 'today-job', c.job));
+    li.appendChild(who);
+    var btns = make('div', 'today-btns');
+    function btn(href, cls, text, label) {
+      var a = make('a', 'today-btn ' + cls, text);
+      a.href = href;
+      a.setAttribute('aria-label', label);
+      a.setAttribute('data-lead-id', c.id);
+      btns.appendChild(a);
+    }
+    // Call / Text: the record's contactActions (the client's order and choice; B2 for STOP), Email stays on the record.
+    c.actions.forEach(function (a) {
+      btn(a.href, 'is-' + a.key, a.label, a.label + ' ' + c.name + (a.key === 'text' && c.stop ? '. ' + c.stopText : ''));
+    });
+    btn(c.open, 'is-open', 'Open', 'Open ' + c.name + (c.wait ? ', ' + c.wait.text.toLowerCase() + (c.wait.late ? ', overdue' : '') : ''));
+    li.appendChild(btns);
+    return li;
+  }
+
+  function renderTodayNumbers() {
+    var on = todayNumbersOn();
+    show(el.todayNumbers, on);
+    if (!on) { el.todayTiles.replaceChildren(); return []; }
+    var tiles = L.todayNumbers({ metricsOn: true, forecastOn: todayForecastOn(), metrics: S.metrics, metricsError: S.metricsError,
+      forecast: S.forecast, forecastState: S.forecastState });
+    var frag = document.createDocumentFragment();
+    tiles.forEach(function (t) { frag.appendChild(todayTile(t)); });
+    el.todayTiles.replaceChildren(frag);
+    el.todayTiles.setAttribute('data-count', String(tiles.length));
+    return tiles;
+  }
+
+  function renderTodayNeeds() {
+    el.todayNeedsTitle.textContent = L.statusInfo('handed_off').label;
+    if (!S.listLoaded) {
+      show(el.todayLoading, !S.listError);
+      setText(el.todayError, S.listError);
+      show(el.todayNeedsList, false); show(el.todayNeedsEmpty, false); show(el.todayNeedsAll, false); show(el.todayNeedsLate, false);
+      setText(el.todayNeedsCount, '');
+      return null;
+    }
+    show(el.todayLoading, false);
+    setText(el.todayError, '');
+    var v = L.todayNeeds(S.leads, { staff: isStaff(), order: custom.contactActions });
+    setText(el.todayNeedsCount, v.total ? '\u00b7 ' + v.total : '');
+    var frag = document.createDocumentFragment();
+    v.cards.forEach(function (c) { frag.appendChild(todayNeedCard(c)); });
+    el.todayNeedsList.replaceChildren(frag);
+    show(el.todayNeedsList, v.cards.length > 0);
+    setText(el.todayNeedsEmpty, v.empty);
+    show(el.todayNeedsAll, v.total > 0);
+    el.todayNeedsAll.setAttribute('aria-label', 'See all ' + v.total + ' waiting on you');
+    el.todayNeedsLate.replaceChildren();
+    if (v.overDay) {
+      el.todayNeedsLate.appendChild(icon(ICON_CLOCK, 16));
+      el.todayNeedsLate.appendChild(make('span', '', v.overDay));
+      el.todayNeedsLate.setAttribute('aria-label', v.overDay + ': open the list there');
+    }
+    show(el.todayNeedsLate, !!v.overDay);
+    return v;
+  }
+
+  // "Did these happen?": the same data and rule as the section at the top of Follow-ups (cv_past_events, owner only). A failed or empty read hides it, as there.
+  function renderTodayPast() {
+    var v = pastOn() ? L.pastEventsView(S.pastEvents, S.pastLimit) : null;
+    show(el.todayPast, !!v);
+    if (!v) return;
+    el.todayPastH.textContent = 'Did these ' + v.total + ' happen?';
+    el.todayPastBtn.setAttribute('aria-label', 'Review the ' + L.plural(v.total, 'passed event', 'passed events') + ' in Follow-ups');
+  }
+
+  // This week: the Calendar's own list for the next 7 days (L.weekAgenda), following the Calendar's "Include leads not booked yet" switch.
+  function renderTodayWeek() {
+    var on = todayWeekOn() && S.listLoaded;
+    show(el.todayWeek, on);
+    if (!on) return;
+    var items = L.weekAgenda(S.leads, { showPossible: S.showPossible }).thisWeek;
+    var frag = document.createDocumentFragment();
+    items.forEach(function (it) { frag.appendChild(agendaRow(it)); });   // the Calendar's own row
+    el.todayWeekList.replaceChildren(frag);
+    show(el.todayWeekList, items.length > 0);
+    setText(el.todayWeekEmpty, items.length ? '' : L.todayWeekEmpty(S.showPossible));
+  }
+
+  function renderToday() {
+    if (!el.today) return;
+    if (S.screen === 'today') setText(el.subtitle, L.todayDateLine());   // review N5: the date stays right past midnight (every refresh redraws it)
+    renderTodayAlert();
+    var tiles = renderTodayNumbers();
+    var needs = renderTodayNeeds();
+    renderTodayPast();
+    renderTodayWeek();
+    // One spoken line when a part finishes loading or fails (aria-live); a refresh with the same news says nothing.
+    // Review N3: a list error is already spoken by #today-error (role=alert), so it is not said here as well.
+    var said = '';
+    if (needs) said = needs.total ? L.plural(needs.total, 'lead needs you', 'leads need you') + '.' : 'Nobody needs you right now.';
+    var bad = tiles.filter(function (t) { return t.state === 'error'; }).length;
+    if (bad) said += (said ? ' ' : '') + "Some numbers couldn't load.";
+    if (said && said !== S.todaySaid) { S.todaySaid = said; el.todayLive.textContent = said; }
+  }
+
+  function showToday() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
+    S.thread.id = null;
+    S.todaySaid = '';
+    setScreen('today');
+    renderToday();
+    refreshList();
+    if (todayNumbersOn()) refreshMetrics();   // also refreshes the forecast and the past events
+    else if (pastOn()) refreshPastEvents();
   }
 
   /* ---------- More ---------- */
@@ -2411,7 +2652,7 @@
         sums.appendChild(make('dt', x[2], x[0])); sums.appendChild(make('dd', x[2], x[1]));
       });
       frag.appendChild(sums);
-      if (v.deposit) frag.appendChild(make('p', 'rec-note', 'Deposit to hold the date: ' + v.deposit));
+      if (v.deposit) frag.appendChild(make('p', 'rec-note q-deposit', 'Deposit to hold the date: ' + v.deposit));   // round 2: drawn as a tinted line (same words)
       v.flags.forEach(function (f) { frag.appendChild(make('p', 'rec-note', f)); });
     }
     if (v.promoNote) frag.appendChild(make('p', 'rec-note q-promo-note', v.promoNote));
@@ -2473,7 +2714,9 @@
       if (!S.signedIn || S.screen !== 'thread' || !S.thread || S.thread.id !== id || card.hidden) return;
       card.scrollIntoView({ block: 'start' });   // scroll-margin-top in styles.css keeps it clear of the edge
       if (!el.mqSend.hidden) el.mqSend.scrollIntoView({ block: 'nearest' });   // a tall card (Large text, many lines): Send wins over the heading
-      var h = card.querySelector('.rec-h');       // screen readers land on the card heading; Send is never focused
+      // screen readers land on the card heading; Send is never focused. Review N4: with the Quote card on and only the owner's price, "Your price" is
+      // visually hidden, so the focus goes to the card's own visible "Quote" heading instead.
+      var h = QC.on && !el.recQcard.classList.contains('has-both') ? el.qcHead.querySelector('.rec-h') : card.querySelector('.rec-h');
       if (h) { h.setAttribute('tabindex', '-1'); try { h.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
     };
     setTimeout(run, 0);   // after this render finishes (not requestAnimationFrame: a page in a background tab never runs it)
@@ -2883,7 +3126,7 @@
   }
 
   function renderGuide() {
-    var v = L.guideView(guideFlag, { tab: function (r) { return labelled(r).label; } });
+    var v = L.guideView(guideFlag, { tab: function (r) { return labelled(r).label; }, today: TAB_ROUTES.indexOf('today') !== -1 });   // round 3 review FIX-4
     setText(el.guideLede, v.lede);
     var frag = document.createDocumentFragment();
     function steps(list) {
@@ -2994,7 +3237,8 @@
         else if (part.t === 'fig') p.appendChild(make('strong', 'ask-fig', part.v));
         else if (part.t === 'quote') p.appendChild(make('span', 'ask-quote', '\u201C' + part.v + '\u201D'));
         else {
-          var a = make('a', 'ask-chip', part.name);
+          var a = make('a', 'ask-chip');
+          a.appendChild(make('span', 'ask-chip-name', part.name));   // round 2: the name sits in its own span so a long one ends in "…" (same words, same link)
           a.href = '#/lead/' + part.id;
           a.setAttribute('aria-label', 'Open ' + part.name);
           p.appendChild(a);
@@ -3081,6 +3325,8 @@
     // A retry of a question that just failed replaces the failed try instead of stacking a second copy.
     if (it.length >= 2 && it[it.length - 1].role === 'err' && it[it.length - 2].role === 'q' && it[it.length - 2].text === r.body.question) it.splice(-2, 2);
     it.push({ role: 'q', text: r.body.question });
+    if (el.askLive) el.askLive.textContent = '';   // round 2 review FIX-3: the Ask screen's one hidden status line, cleared for each question (textContent only:
+    // never hidden, a live region must stay in the page; a missing node = an older cached index.html, skipped)
     var wait = { role: 'wait', text: ASK_WAIT };
     it.push(wait);
     a.busy = true;
@@ -3106,6 +3352,7 @@
       if (wait.node) { wait.node.remove(); wait.node = null; }
       a.busy = false;
       renderAsk();
+      if (el.askLive) el.askLive.textContent = wait.role === 'err' ? wait.text : 'Answer ready';   // FIX-3: announced once (the thread itself is not live)
       // The tapped starter (or the disabled box) is gone: keep the keyboard / screen-reader place on the question box.
       var ae = document.activeElement;
       if (S.screen === 'ask' && (!ae || ae === document.body)) { try { el.askInput.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
@@ -3133,6 +3380,7 @@
     clearTimeout(a.waitTimer);
     a.items = []; a.turns = []; a.day = ''; a.viaLead = false; a.busy = false; a.seq++; a.waitTimer = null;
     el.askThread.replaceChildren();
+    if (el.askLive) el.askLive.textContent = '';
     el.askInput.disabled = false; el.askSend.disabled = false;
   }
 
@@ -3700,7 +3948,7 @@
     list.forEach(function (lead) { frag.appendChild(leadRow(lead, { noDate: true })); }); // the date is the heading above
     el.calDayList.replaceChildren(frag);
     show(el.calDayList, list.length > 0);
-    setText(el.calDayEmpty, list.length ? '' : (S.showPossible ? 'No events on this day.' : 'Nothing booked on this day.'));
+    setText(el.calDayEmpty, list.length ? '' : L.calDayEmpty(S.showPossible));   // round 2: the empty line says how to see more
     show(el.calDay, true);
   }
 
@@ -3753,6 +4001,7 @@
       if (n !== S.seq.pastEvents) return S.pastLatest && S.pastLatest !== p ? S.pastLatest : undefined;
       if (S.screen === 'followups') renderFollowUps();
       else if (S.screen === 'metrics') renderMetrics();
+      else if (S.screen === 'today') renderToday();
     });
     S.pastLatest = p;
     return p;
@@ -4081,7 +4330,7 @@
 
     // 1. Scheduled follow-up texts, soonest first, with a live countdown. (Who is waiting on the owner lives on Home.)
     // Grouped Today / This week / Later; the "how to stop it" rule is said once, under the heading.
-    var sched = fuBlock('Scheduled follow-up texts', g.scheduled.length ? '' : 'No follow-up texts scheduled.');
+    var sched = fuBlock('Scheduled follow-up texts', g.scheduled.length ? '' : L.fuEmptyText('scheduled'));
     if (g.scheduled.length) {
       sched.appendChild(make('p', 'fu-rule', 'Marking a lead ' + L.statusInfo('booked').label.toLowerCase() + ' or ' + L.statusInfo('lost').label.toLowerCase() + ' stops its texts.'));
       L.groupScheduled(g.scheduled).forEach(function (grp) {
@@ -4120,7 +4369,7 @@
     }
 
     // 4. Sent recently (last 14 days).
-    var sent = fuBlock('Sent recently', g.sent.length ? '' : 'No follow-up texts sent in the last 14 days.');
+    var sent = fuBlock('Sent recently', g.sent.length ? '' : L.fuEmptyText('sent'));
     if (g.sent.length) {
       var ust = make('ul', 'fu-list');
       g.sent.forEach(function (r) { ust.appendChild(fuRow(r, [{ text: L.sentLine(r), cls: 'fu-meta' }], { cls: 'is-sent', quiet: true })); });
@@ -4165,11 +4414,13 @@
       S.metrics = m || {};
       S.metricsError = '';
       if (S.screen === 'metrics') renderMetrics();
+      else if (S.screen === 'today') renderToday();
     }).catch(function (e) {
       if (n !== S.seq.metrics) return;
       if (!S.metrics) {
         S.metricsError = isAuthFailure(e) ? 'Your session ran out. Sign out and sign in again.' : "Couldn't load your numbers. Trying again…";
         if (S.screen === 'metrics') renderMetrics();
+        else if (S.screen === 'today') renderToday();
       }
       retryLater();
     });
@@ -4182,13 +4433,17 @@
     return Promise.resolve(S.api.forecast()).then(function (f) {
       if (n !== S.seq.forecast || !S.signedIn) return;
       S.forecast = f || null;
+      S.forecastState = 'ok';
       S.crHidden = L.closeRateHidden(S.forecast);   // D1: answered: follow tracking.ready
       if (S.screen === 'metrics') renderMetrics();
+      else if (S.screen === 'today') renderToday();
     }).catch(function () {
       if (n !== S.seq.forecast) return;
       S.forecast = null;
+      S.forecastState = 'error';
       if (S.crHidden === undefined) S.crHidden = false;   // D1: the first answer failed: show as before; a later blip keeps the last answer
       if (S.screen === 'metrics') renderMetrics();
+      else if (S.screen === 'today') renderToday();
     });
   }
 
@@ -4305,9 +4560,18 @@
     var rows = L.sourceRows(m.sources);
     if (!rows.length) { b.appendChild(make('p', 'm-line m-empty', 'No leads yet.')); return b; }
     var ul = make('ul', 'vt-list');
-    rows.forEach(function (r) {
-      var li = make('li', 'vt-row');
-      li.appendChild(make('span', 'vt-name', r.label));
+    var widths = L.barWidths(rows.map(function (r) { return r.leads; }));   // round 3: a bar per source, drawn by the page (ruling 13A)
+    rows.forEach(function (r, i) {
+      var li = make('li', 'vt-row has-bar');
+      var left = make('span', 'vt-left');
+      left.appendChild(make('span', 'vt-name', r.label));
+      var track = make('span', 'm-bar-track');
+      track.setAttribute('aria-hidden', 'true');
+      var bar = make('span', 'm-bar');
+      bar.style.width = widths[i] + '%';   // CSSOM, allowed under style-src 'self'
+      track.appendChild(bar);
+      left.appendChild(track);
+      li.appendChild(left);
       var right = make('span', 'vt-right');
       right.appendChild(make('span', 'vt-count', L.plural(r.leads, 'lead', 'leads') + ' \u00b7 ' + r.month + ' this month'));
       if (r.booked) right.appendChild(make('span', 'vt-count', r.booked + ' booked' + (r.bookedMoney ? ' (' + r.bookedMoney + ')' : '')));
@@ -4347,6 +4611,24 @@
     var v = L.forecastView(S.forecast);
     if (!v) return null; // off, errored or not loaded yet: no block at all
     var b = block('Looking ahead');
+    // Round 3 (ruling 13A): the same numbers as columns drawn by the page: booked (solid) and open quotes (outline) per event month.
+    var ch = L.forecastChart(S.forecast);
+    if (ch && !ch.empty) {
+      var fig = make('div', 'fc-chart');
+      fig.setAttribute('role', 'img');
+      fig.setAttribute('aria-label', ch.label);
+      ch.cols.forEach(function (c) {
+        var col = make('span', 'fc-col');
+        var stack = make('span', 'fc-stack');
+        if (c.openPct) { var op = make('span', 'fc-bar-open'); op.style.height = c.openPct + '%'; stack.appendChild(op); }   // CSSOM heights, allowed under style-src 'self'
+        if (c.bookedPct) { var bk = make('span', 'fc-bar-booked'); bk.style.height = c.bookedPct + '%'; stack.appendChild(bk); }
+        col.appendChild(stack);
+        col.appendChild(make('span', 'fc-mon', c.label));
+        fig.appendChild(col);
+      });
+      b.appendChild(fig);
+      b.appendChild(make('p', 'm-sub fc-key', 'Solid = ' + L.statusInfo('booked').label.toLowerCase() + '. Outline = open quotes for that month, counted in full.'));
+    }
     b.appendChild(make('p', 'm-sub fc-head', 'Already booked, by event month'));
     var ul = make('ul', 'vt-list fc-list');
     v.rows.forEach(function (r) {
@@ -4421,6 +4703,7 @@
     }
     show(el.metricsLoading, false);
     setText(el.metricsErr, '');
+    if (el.metricsLive && !S.metricsSaid) { S.metricsSaid = 'Your numbers are loaded.'; el.metricsLive.textContent = S.metricsSaid; }   // round 3: said once per visit
     var frag = document.createDocumentFragment();
     metricOrder().forEach(function (key) { var blk = METRIC_BLOCKS[key](m); if (blk) frag.appendChild(blk); });
 
@@ -4433,6 +4716,8 @@
   function showMetrics() {
     if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
     S.thread.id = null;
+    S.metricsSaid = '';
+    if (el.metricsLive) el.metricsLive.textContent = '';
     setScreen('metrics');
     renderMetrics();
     refreshMetrics();
@@ -4447,6 +4732,7 @@
       var b = make('button', 'action action-' + a.status);
       b.type = 'button';
       b.appendChild(make('span', 'spinner'));
+      b.appendChild(icon(ICON_CHECK, 16)).setAttribute('class', 'action-check');   // round 1 redesign: shown on the current status only (styles.css)
       b.appendChild(make('span', 'action-label', a.label));
       b.addEventListener('click', function () { openConfirm(a); });
       S.actionButtons[a.status] = b;
@@ -4829,6 +5115,8 @@
   }
 
   function fact(dl, label, value, opts) {
+    // Round 1 redesign: each fact is its own box (label over value) in a two-column grid; a long one, a link or one with a note takes the full width.
+    var box = make('div', 'fact' + (opts && (opts.href || opts.note || opts.flag) || String(value || '').length > 18 ? ' is-wide' : ''));
     var dt = make('dt', '', label);
     var dd = make('dd');
     if (opts && opts.href) {
@@ -4841,8 +5129,9 @@
     }
     if (opts && opts.note) dd.appendChild(make('span', 'fact-note', opts.note));
     if (opts && opts.flag) dd.appendChild(make('span', 'fact-flag', opts.flag));
-    dl.appendChild(dt);
-    dl.appendChild(dd);
+    box.appendChild(dt);
+    box.appendChild(dd);
+    dl.appendChild(box);
   }
 
   /* ---------- C2: "Reached them?" (owner only) ----------
@@ -4995,7 +5284,8 @@
   function renderMyQuote(lead) {
     var q = !isStaff() ? L.ownerQuoteView(lead, feature('quote') && L.quoteSendFeatureOn(custom.features)) : null;
     show(el.recMyQuote, !!q);
-    if (!q) return;
+    // Review B1: with the Quote card on, Send / Send again sit outside this section, so hiding it no longer hides them: reset them for a lead with no saved price.
+    if (!q) { show(el.mqSend, false); show(el.mqResend, false); syncQuoteCard(); return; }
     setText(el.mqStatus, q.status);
     // Session 11: delivery line under the sent price (text nodes only; the code is a checked whole number)
     show(el.mqDelivery, !!q.delivery);
@@ -5033,7 +5323,52 @@
     el.mqSend.textContent = q.sendLabel;
     show(el.mqResend, q.canResend);
     el.mqSend.disabled = el.mqResend.disabled = !!S.quoteSendBusy;
+    syncQuoteCard();
     maybeFocusPriceCard(lead);
+  }
+
+  /* ---------- Round 1 redesign: the ONE Quote card (CV_CUSTOM.features.quoteCard, default on) ----------
+     Built FROM today's two cards, not beside them: with the switch on, mountQuoteCard moves the existing "Quote" and "Your price" sections, the
+     calculator link and the existing Send it to them / Send it again buttons into one card (#rec-qcard) under the Status card. Every state, every
+     refusal line and the send flow stay the code above and below (renderQuote, renderMyQuote, startQuoteSend, doQuoteSend: the same buttons, the
+     same click handlers, the same confirm sheet). syncQuoteCard only adds the big Total, names the button row and shows / hides the card.
+     With the switch off nothing moves and the wrapper is display: contents: the two cards render exactly as before. */
+  var QC = { on: false };
+  function mountQuoteCard() {
+    QC.on = feature('quoteCard') && !!(el.recQcard && el.qcHead && el.qcTotal && el.qcActions);   // review F1: an older cached index.html has no card box: keep the two cards
+    if (!QC.on) return;
+    var c = el.recQcard;
+    c.classList.add('is-on');
+    c.setAttribute('role', 'region');
+    c.setAttribute('aria-labelledby', 'h-qcard');
+    c.hidden = true;
+    show(el.qcHead, true);
+    el.strip.parentNode.insertBefore(c, el.strip.nextSibling);   // the preview's order: Status, Quote, Money, Event
+    el.priceLink.classList.add('qc-btn');
+    el.mqSend.classList.add('qc-btn');
+    el.mqResend.classList.add('qc-btn');
+    el.qcActions.appendChild(el.priceLink);
+    el.qcActions.appendChild(el.mqSend);
+    el.qcActions.appendChild(el.mqResend);
+  }
+  function syncQuoteCard() {
+    if (!QC.on) return;
+    var lead = S.thread.lead;
+    var v = lead ? L.quoteCardView(lead, { staff: isStaff(), canSend: feature('quote') && L.quoteSendFeatureOn(custom.features), quoteTab: TAB_ROUTES.indexOf('quote') !== -1 }) : null;
+    var autoOn = !el.recQuote.hidden, mineOn = !el.recMyQuote.hidden;
+    var head = v && v.head && ((v.head.from === 'auto' && autoOn) || (v.head.from === 'mine' && mineOn)) ? v.head : null;
+    show(el.qcTotal, !!head);
+    el.qcTotalLabel.textContent = head ? head.label : '';
+    el.qcTotalAmount.textContent = head ? head.amount : '';
+    el.recQcard.classList.toggle('head-auto', !!head && head.from === 'auto');
+    el.recQcard.classList.toggle('head-mine', !!head && head.from === 'mine');
+    el.recQcard.classList.toggle('has-both', autoOn && mineOn);
+    var price = !!(v && v.price.show);
+    show(el.priceLink, price);
+    if (price) { el.priceLink.textContent = v.price.short; el.priceLink.setAttribute('aria-label', v.price.label); }
+    if (!mineOn) { show(el.mqSend, false); show(el.mqResend, false); }
+    show(el.qcActions, price || (mineOn && (!el.mqSend.hidden || !el.mqResend.hidden)));   // review B1, second guard: Send only beside a saved price
+    show(el.recQcard, !!lead && (autoOn || mineOn || price));
   }
 
   // Step 1: ask the server for the exact text. Step 2: the owner reads it in the sheet and confirms. Nothing goes before that tap.
@@ -5131,6 +5466,7 @@
     if (!isStaff() && L.stopNextLine(lead)) t = L.stopNextLine(lead);   // B2: a hand-added STOP lead waiting on the owner reads "Call or text them yourself."
 
     if (el.recNext.textContent !== t || el.recNext.hidden !== !t) setText(el.recNext, t);
+    if (el.recNextBox && el.recNextBox.hidden !== !t) show(el.recNextBox, !!t);   // round 1 redesign: the sentence sits in its own box (read only)
   }
 
   // One line: where they came from, then (022) "without a quote yet" when the server says so. Staff never see a form's title (it can hold a price).
@@ -5155,6 +5491,7 @@
     var sections = [el.recHead, el.recContact, el.strip, el.recMoney, el.recNotes, el.recEvent, el.recPrice, el.recQuote, el.recOthers, el.recShared, el.recHistory];
     if (!lead) {
       sections.forEach(function (n) { show(n, false); });
+      if (QC.on) { show(el.recQcard, false); show(el.recMyQuote, false); show(el.mqSend, false); show(el.mqResend, false); }   // round 1 redesign: the merged Quote card and its owner part (never hidden with the switch off: it is display: contents then)
       show(el.optoutBanner, false);
       show(el.hiddenBanner, false);
       show(el.recordLoading, !S.thread.loaded);
@@ -5163,6 +5500,7 @@
     show(el.recordLoading, false);
     var st = L.rowView(lead).chip; // "Booked" (the price is in the job line), "Lost · Price"
     el.recName.textContent = leadName(lead);
+    el.recName.title = leadName(lead);   // round 1 redesign: the heading shows two lines at most; the whole name stays readable
     fillChip(el.stripChip, st);
     renderNext();
     // Date and guests live in the Event card; the header keeps the one figure (owner only, staff stay money-free).
@@ -5193,13 +5531,13 @@
     renderEvent(lead);
     renderQuote(lead);
     renderMyQuote(lead);
-    // A lead with no price yet can be priced in the calculator; a saved, unsent price can be changed the same way.
-    var noQuote = lead.quote_total === null || lead.quote_total === undefined || lead.quote_total === '';
-    var mine = lead.owner_quote && typeof lead.owner_quote === 'object' ? lead.owner_quote : null;
-    show(el.recPrice, TAB_ROUTES.indexOf('quote') !== -1 && noQuote && (!mine || mine.state === 'saved' || mine.state === 'failed' || mine.state === 'unknown'));
+    // A lead with no price yet can be priced in the calculator; a saved, unsent price can be changed the same way (L.priceLinkView: the same rule and words as before).
     var myView = L.ownerQuoteView(lead, feature('quote') && L.quoteSendFeatureOn(custom.features));
-    el.priceLink.textContent = myView && (myView.reprice || myView.stale) ? 'Price it again in the quote calculator' : mine ? 'Change this price in the quote calculator' : 'Price it in the quote calculator';
+    var pv = L.priceLinkView(lead, TAB_ROUTES.indexOf('quote') !== -1, myView);
+    show(el.recPrice, pv.show && !QC.on);   // with the Quote card on, the link is that card's "Change price" button instead (syncQuoteCard)
+    el.priceLink.textContent = pv.label;
     renderOthers(lead);
+    syncQuoteCard();
   }
 
   // label: who wrote it (L.bubbleLabels; '' = same sender as the bubble above). Left out (the automatic texts to the owner) = the kind label.
@@ -5405,7 +5743,8 @@
   function listHref() { return S.tab && S.tab.route === 'list' && S.filter === 'needs' ? '#/needs' : (S.tab ? S.tab.href : '#/'); }
 
   function route() {
-    var r = L.parseRoute(location.hash, TAB_ROUTES);
+    if (S.routedHash) { var done = S.routedHash === location.hash; S.routedHash = ''; if (done) return; }   // review N2: drawn already by the tap
+    var r = L.startRoute(location.hash, TAB_ROUTES);   // round 3: "/" with no hash opens Today when it is on; otherwise exactly parseRoute
     if (!S.signedIn) {
       if (r.name === 'lead') store('set', TARGET_KEY, r.id);
       showSignin();
@@ -5415,7 +5754,7 @@
     var target = store('get', TARGET_KEY);
     if (target) {
       store('del', TARGET_KEY);
-      if (r.name === 'list' && L.isUuid(target)) { location.replace('#/lead/' + target); return; }
+      if ((r.name === 'list' || r.name === 'today') && L.isUuid(target)) { location.replace('#/lead/' + target); return; }
     }
     if (S.focusPriceFor && (r.name !== 'lead' || r.id !== S.focusPriceFor.id)) clearFocusPrice();   // item 8: only the lead that was added to
     trackNav(r.name);
@@ -5427,6 +5766,8 @@
       showThread(r.id);
       return;
     }
+    // Round 3: Metrics under More remembers where it was opened from (Today or More) for its back arrow; a reload keeps the last answer.
+    if (r.name === 'metrics' && S.screen !== 'metrics') S.metricsBack = S.screen === 'more' ? '#/more' : '#/today';
     S.tab = navFor(r.name);
     S.tab.show();
   }
@@ -5485,6 +5826,7 @@
     el.leadList.replaceChildren(); el.threadBox.replaceChildren(); el.notesList.replaceChildren(); el.fuBody.replaceChildren();
     el.calBody.replaceChildren(); el.calDayList.replaceChildren(); el.searchResults.replaceChildren();
     el.calAgendaWeek.replaceChildren(); el.calAgendaLater.replaceChildren(); el.metricsBody.replaceChildren();
+    if (el.today) { el.todayNeedsList.replaceChildren(); el.todayTiles.replaceChildren(); el.todayWeekList.replaceChildren(); el.todayLive.textContent = ''; }   // round 3: no name stays on Today
     el.eventFacts.replaceChildren(); el.recEmail.replaceChildren(); S.eventMoreFor = null; el.quoteBody.replaceChildren(); el.othersList.replaceChildren(); el.sharedList.replaceChildren(); el.history.replaceChildren();
     el.recPhone.removeAttribute('href'); el.contactActions.replaceChildren();
     ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recAutoFail', 'recAlertFail', 'recPhone', 'recEmail', 'eventDetails', 'confirmText', 'confirmNote', 'stripNote', 'actionErr', 'moneyErr', 'noteErr', 'contactNote']
@@ -5595,7 +5937,7 @@
     S.counts = null; S.shown = {}; S.listTop = 0; S.pastLimit = 10;
     S.exp.cfgSeq++; S.exp.on = null;
     S.bulk = { open: false, date: '', view: null, seq: S.bulk.seq + 1, busy: false, err: '', done: '', undo: null };
-    S.seq.metrics++; S.seq.forecast++; S.seq.pastEvents++; S.pastEvents = null; S.pastBusy = ''; S.pastErr = ''; S.pastScroll = false; S.forecast = null; S.crHidden = undefined; S.metrics = null; S.metricsError = '';
+    S.seq.metrics++; S.seq.forecast++; S.seq.pastEvents++; S.pastEvents = null; S.pastBusy = ''; S.pastErr = ''; S.pastScroll = false; S.forecast = null; S.forecastState = 'loading'; S.metricsBack = ''; S.todaySaid = ''; S.metricsSaid = ''; S.crHidden = undefined; S.metrics = null; S.metricsError = '';
     S.seq.followups++; S.followUps = null; S.followUpsError = '';
     clearSearch();
     clearQuote();
@@ -5743,6 +6085,17 @@
   // C7: Home banner "Alerts are off on this phone" + Turn on (to the alerts setup in More). Rules: L.pushBannerShow.
   function renderAlertsBanner() {
     show(el.pushBanner, !isStaff() && L.pushBannerShow(pushEnv()));
+    renderTodayAlert();
+  }
+  // Round 3: the same rule as the Leads banner, on Today: "Alerts are off on this phone / Turn on", or the not-working state. Nothing about night hold.
+  function renderTodayAlert() {
+    if (!el.todayAlert) return;
+    var a = isStaff() ? null : L.todayAlert(pushEnv());
+    show(el.todayAlert, !!a);
+    if (!a) return;
+    el.todayAlert.setAttribute('data-state', a.key);
+    el.todayAlertText.textContent = a.text;
+    el.todayAlertBtn.textContent = a.action;
   }
   function renderPush() { renderPushPanel(); renderAlertsBanner(); }
 
@@ -5894,7 +6247,7 @@
     // Back: from a lead record to the tab it was opened from; from a tool under More to More.
     el.back.addEventListener('click', function () {
       if (S.screen === 'quote' && S.quote.backTo) { location.hash = '#/lead/' + encodeURIComponent(S.quote.backTo.id); return; }
-      location.hash = S.screen === 'thread' ? listHref() : navFor('more').href;
+      location.hash = S.screen === 'thread' ? listHref() : S.screen === 'metrics' ? navFor(metricsBackRoute()).href : navFor('more').href;
     });
 
     el.alertsSum.addEventListener('click', function () { P.open = !P.open; renderPush(); });
@@ -5902,6 +6255,19 @@
     el.alertsTest.addEventListener('click', onAlertsTest);
     el.alertsOff.addEventListener('click', onAlertsOff);
     el.pushBannerOn.addEventListener('click', function () { P.goAlerts = true; location.hash = navFor('more').href; });
+    // Round 3: Today. Search = the Leads search box, focused inside the tap (route() runs now so iPhone opens the keyboard; the hashchange
+    // that follows draws the same list again). "+" is the Add-lead button itself (btnAdd, unchanged). Alerts = the same place as the Leads banner.
+    if (el.today) {
+      el.todaySearch.addEventListener('click', function () {
+        S.focusSearch = true; location.hash = '#/'; route();
+        S.routedHash = location.hash;   // review N2: the hashchange that follows finds the list already drawn and does nothing
+        setTimeout(function () { S.routedHash = ''; }, 1000);
+      });
+      el.todayAlertBtn.addEventListener('click', function () { P.goAlerts = true; location.hash = navFor('more').href; });
+      el.todayNeedsAll.addEventListener('click', function () { location.hash = '#/needs'; });   // today's full Needs-you list; its "Back to leads" goes to Leads
+      el.todayNeedsLate.addEventListener('click', function () { S.overDayPending = true; location.hash = '#/needs'; });
+      el.todayPastBtn.addEventListener('click', function () { S.pastScroll = true; location.hash = '#/followups'; });   // as Metrics' "Review them"
+    }
 
     // Text size: the three radios in More. The choice applies at once and is saved on this device (a failed save is silent).
     var tsBox = $('textsize');
@@ -5930,6 +6296,8 @@
       var a = e.target && e.target.closest ? e.target.closest('a.tab') : null;
       if (a && a.getAttribute('data-route') === 'list' && location.hash === '#/needs') { e.preventDefault(); leaveSeeAll(); }
     });
+    // Round 1 redesign: the tab row scrolls sideways on a phone; it fades at the edge that has more, and a pick is said for screen readers.
+    wireTabsRow();
     // Item 9 (W11): the Sort pill opens the sort sheet (rows built on open from L.listSorts); a pick is saved on this phone and the list starts again at the top.
     renderSortPill(L.listSortEffective(S.sort, isStaff()));
     el.listSort.addEventListener('click', openSortSheet);
@@ -6165,6 +6533,7 @@
     buildTabbar();
     registerWorker();
     buildActions();
+    mountQuoteCard();   // round 1 redesign: places the existing quote parts into one card when CV_CUSTOM.features.quoteCard is on
     buildReasons();
     buildAddSources();
     buildSupportKinds();

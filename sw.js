@@ -3,6 +3,10 @@
    Rules (checked by tools/check_sw.js at publish): no Cache API, no importScripts, no storage, one fetch listener, navigate requests only.
    Payload (contract): { title, body, url: "/#/lead/<uuid>" | "/", tag, lead_id, test }. */
 'use strict';
+// Build stamp: bumped with every page round and kept equal to the ?v= stamp on index.html's own files (tools/tests/test_lib.js checks it).
+// It only marks which round this worker belongs to. It refreshes NO page file: this worker caches nothing, and the ?v= stamps on
+// styles.css, config.js, lib.js and app.js are what make a phone fetch the new files.
+var SW_BUILD = '2026-11-21-r3b';
 
 // Same-origin path only (same rule as safePath in lib.js): one leading "/", no whitespace/control/backslash,
 // and it must resolve to our own origin.

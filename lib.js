@@ -1635,6 +1635,41 @@
     };
   }
 
+  // The link to the quote calculator on a lead (today's rule, unchanged by the round 1 redesign): only while the calculator is on, the lead has
+  // no quote of its own, and any saved price is still one the owner may price again (saved / failed / unknown; a missing state is not one of them,
+  // exactly as the page read it before). mine = ownerQuoteView(lead, canSend) or null. label = the full words (the separate link, and the
+  // Quote card button's spoken name); short = the Quote card's button text.
+  function priceLinkView(lead, quoteTab, mine) {
+    if (!lead) return { show: false, label: '', short: '' };
+    var noQuote = lead.quote_total === null || lead.quote_total === undefined || lead.quote_total === '';
+    var o = lead.owner_quote && typeof lead.owner_quote === 'object' ? lead.owner_quote : null;
+    var show = !!quoteTab && noQuote && (!o || o.state === 'saved' || o.state === 'failed' || o.state === 'unknown');
+    var again = !!(mine && (mine.reprice || mine.stale));
+    return { show: show,
+      label: again ? 'Price it again in the quote calculator' : o ? 'Change this price in the quote calculator' : 'Price it in the quote calculator',
+      short: again ? 'Price it again' : o ? 'Change price' : 'Price it' };
+  }
+
+  // Round 1 redesign (CV_CUSTOM.features.quoteCard): the record's ONE Quote card, built from today's two ("Quote" and "Your price"), whose
+  // parts and states stay exactly as quoteView / ownerQuoteView draw them. This decides only what the merged card adds on top:
+  //   head  = the big Total at the top: the quote's total (never on a "Needs your review" quote), else the owner's unsent price;
+  //           from = which part it came from (that part's own Total row is then not drawn twice). null = no big figure.
+  //   price = the Change price button (priceLinkView, today's rule).
+  //   both  = the quote and the owner's price are both there (the owner's part then keeps its "Your price" heading).
+  // No deposit line and no money line: money stays on its own card (booked leads only). opts: { staff, canSend, quoteTab, now }.
+  function quoteCardView(lead, opts) {
+    if (!lead) return null;
+    opts = opts || {};
+    var auto = quoteView(lead);
+    if (auto && auto.empty) auto = null;
+    var mine = opts.staff ? null : ownerQuoteView(lead, !!opts.canSend, opts.now);
+    var head = null;
+    if (auto && !auto.defer && auto.total) head = { from: 'auto', label: 'Total', amount: auto.total };
+    else if (mine && mine.showDetails && mine.total) head = { from: 'mine', label: 'Total', amount: mine.total };
+    var price = priceLinkView(lead, opts.quoteTab, mine);
+    return { show: !!auto || !!mine || price.show, auto: auto, mine: mine, head: head, both: !!auto && !!mine, price: price };
+  }
+
   // A lead -> the calculator's fields. A saved price starts from the answers it was worked out with; otherwise whatever the lead holds.
   // "" / null = the lead does not say, the owner picks. Distance is only filled in from a saved price (the calculator works it out from the city).
   function quotePrefill(lead) {
@@ -3630,6 +3665,16 @@ function renderPriceBlockSms(lineItems, total, currency) {
   }
 
   // "Goes out Sat, Nov 8 at 10:00 am"
+  // Round 2 redesign (11-21): empty states that say what happens next. Today's words first, unchanged; one plain sentence after.
+  //   kind 'scheduled' | 'sent' -> the Follow-ups empty line; calDayEmpty(showPossible) -> the Calendar's picked-day line.
+  function fuEmptyText(kind) {
+    if (kind === 'scheduled') return 'No follow-up texts scheduled. When one is set to go out to a lead, it shows here with a countdown.';
+    if (kind === 'sent') return 'No follow-up texts sent in the last 14 days.';
+    return '';
+  }
+  function calDayEmpty(showPossible) {
+    return showPossible ? 'No events on this day.' : 'Nothing booked on this day. Turn on \u201CInclude leads not booked yet\u201D to also see leads not booked yet.';
+  }
   function nudgeLine(r, now) { var w = fmtDueAt(r && r.due_at, now); return w ? 'Goes out ' + w : ''; }
   // "Sent Nov 3 · 3 days ago"
   function sentLine(r, now) {
@@ -3773,7 +3818,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     (Array.isArray(leads) ? leads : []).forEach(function (l) { var k = lostPartOf(l); if (k) out[k]++; });
     return out;
   }
-  var LOST_PART_EMPTY = { real: 'No lost leads.', old: 'No old leads.', optout: 'Nobody has opted out.' };
+  var LOST_PART_EMPTY = { real: 'No lost leads. Try Old lead or Opted out.', old: 'No old leads. Try Lost or Opted out.', optout: 'Nobody has opted out. Try Lost or Old lead.' };   // round 1 review N1: say where else to look
 
   // Chip counts. The page's own count of the rows it has, unless the server's (cv_list_counts, sql/025) is given: those stay right
   // past what the page fetched. A server count with a missing or bad number is not used at all.
@@ -4133,7 +4178,9 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // slots counts the bar tabs plus the More slot; with fewer than 2 the page hides the bar.
   var BAR_TABS = ['list', 'followups', 'calendar', 'metrics'];
   var MORE_TABS = ['ask', 'quote', 'guide', 'support', 'export', 'hidden', 'team'];
-  function tabPlan(want, on) {
+  // Round 3 redesign (opts.today = CV_CUSTOM.features.today, for this viewer): Today is the first bar slot, Metrics leaves the bar and becomes the
+  // first row under More (it opens from Today's "All numbers" and from More). Without opts.today the plan is exactly as before.
+  function tabPlan(want, on, opts) {
     var isOn = typeof on === 'function' ? on : function () { return true; };
     var known = BAR_TABS.concat(MORE_TABS);
     function usable(r) { return known.indexOf(r) !== -1 && (r === 'list' || isOn(r)); }
@@ -4143,6 +4190,11 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var bar = picked.filter(function (r) { return BAR_TABS.indexOf(r) !== -1; });
     var more = picked.filter(function (r) { return MORE_TABS.indexOf(r) !== -1; });
     if (!bar.length) bar = ['list'];
+    if (opts && opts.today === true) {
+      var mi = bar.indexOf('metrics');
+      if (mi !== -1) { bar.splice(mi, 1); more.unshift('metrics'); }
+      bar.unshift('today');
+    }
     var slots = bar.length + 1;
     return { bar: bar, more: more, slots: slots, showBar: slots >= 2 };
   }
@@ -4212,7 +4264,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
         'Tap a day, then a lead, to open it.'
       ] },
       { id: 'metrics', title: 'See your numbers', f: ['metrics'], steps: [
-        'Tap {tab_metrics}. Scroll through sections such as Money booked, Money on the table, Close rate and Speed.',
+        '{metrics_open}. Scroll through sections such as Money booked, Money on the table, Close rate and Speed.',   // round 3 review FIX-4: {metrics_open} follows opts.today
         { t: 'Lead value groups your open leads into price bands.', f: ['value'] },
         { t: 'Looking ahead shows bookings by event month, open quotes at full price, and a likely range once there is enough history.', f: ['forecast'] }
       ], note: 'Mark leads {booked} or {lost} so these numbers stay right.' },
@@ -4254,13 +4306,15 @@ function renderPriceBlockSms(lineItems, total, currency) {
       { q: 'How do I sign out?', a: 'Tap More, then Sign out.', f: [] }
     ]
   };
-  var GUIDE_TAB_NAMES = { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet' };
+  var GUIDE_TAB_NAMES = { today: 'Today', list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet' };
 
   // The guide, filtered: { lede, quickstart: { title, steps } | null, sections: [{ id, title, steps, note }], faq: [{ q, a }] }.
   // on(flag) = the page's own switch check; a flag the page does not answer true for counts as off. opts.tab(route) = the tab label (default: the built-in name).
   function guideView(on, opts) {
     var isOn = typeof on === 'function' ? on : function () { return false; };
     var tabLabel = opts && typeof opts.tab === 'function' ? opts.tab : null;
+    // Round 3 review FIX-4: with Today on (opts.today), Metrics is no longer in the bar: it opens from Today's All numbers or from More.
+    var metricsOpen = opts && opts.today === true ? 'On {tab_today}, tap All numbers (or tap More, then {tab_metrics})' : 'Tap {tab_metrics}';
     function all(flags) { return (Array.isArray(flags) ? flags : []).every(function (f) { return GUIDE_FLAGS.indexOf(f) !== -1 && !!isOn(f); }); }
     function listWords(rows) { return rows.length > 1 ? rows.slice(0, -1).join(', ') + ' or ' + rows[rows.length - 1] : rows.join(''); }
     function words(text) {
@@ -4269,6 +4323,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
         if (k === 'lost_reasons') return listWords(lostReasons().map(function (x) { return x.label; }));
         if (k === 'old_lead') return lostReasonLabel('old_lead');
         if (k === 'sources') return listWords(addLeadSources().map(function (x) { return x.label; }));
+        if (k === 'metrics_open') return words(metricsOpen);
         var tab = /^tab_([a-z]+)$/.exec(k);
         if (tab) { var got = tabLabel ? tabLabel(tab[1]) : ''; return (typeof got === 'string' && got.trim()) || GUIDE_TAB_NAMES[tab[1]] || m; }
         var lower = /^([a-z]+)_lc$/.exec(k);
@@ -5331,6 +5386,174 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // What a staff member with no cv_staff_* access at all sees on Leads.
   var STAFF_NO_LEADS = 'The owner has switched off lead access for your account. Ask them if this is a mistake.';
 
+  /* ---------- ROUND 3 REDESIGN (11-21, Kevin "All A"): the Today home and the page-drawn bars ----------
+     Pure helpers only. Today reads what the page already loads (lead_list, cv_metrics, cv_forecast, cv_past_events, the alerts state);
+     no new call, no new argument. Needs you is TODAY's rule (ruling 15A: needsYou / waitsOnOwner, unchanged). */
+
+  // Bar lengths for a list of amounts, in whole percent of the biggest. 0 (or junk) stays 0 = no bar; anything above 0 is at least 2 so it is seen.
+  function barWidths(values) {
+    var list = (Array.isArray(values) ? values : []).map(function (v) { var n = num(v); return n !== null && n > 0 ? n : 0; });
+    var max = 0;
+    list.forEach(function (v) { if (v > max) max = v; });
+    return list.map(function (v) { return !max || !v ? 0 : Math.max(2, Math.min(100, Math.round(v / max * 100))); });
+  }
+  // One part of a whole as a bar length: whole percent 0..100 (0 when the whole is 0 or the part is not above 0).
+  function sharePct(part, whole) {
+    var p = num(part), w = num(whole);
+    if (p === null || w === null || p <= 0 || w <= 0) return 0;
+    return Math.max(1, Math.min(100, Math.round(p / w * 100)));
+  }
+
+  // The date over the Today title: "Thu, Nov 19" (Toronto date).
+  function todayDateLine(now) { return fmtEventDate(today(now).ymd, now); }
+
+  // The alerts line at the top of Today: only what the page already knows (the Leads banner's rule, L.pushBannerShow). Nothing about night hold.
+  // null = nothing to say; 'off' = this phone is not set up; 'failing' = set up here, but the server cannot reach this phone.
+  function todayAlert(env) {
+    if (!pushBannerShow(env)) return null;
+    var st = env.status;
+    var failing = env.permission === 'granted' && env.subscribed === true && !!st && st.push_on === true && (st.device === 'missing' || st.device === 'failing');
+    return failing ? { key: 'failing', text: 'Alerts on this phone: Not working', action: 'Open alerts' }
+      : { key: 'off', text: PUSH_BANNER.text, action: PUSH_BANNER.action };
+  }
+
+  // One Needs-you card on Today, from a needsYou() row. Call and Text come from the record's own contactActions (opts.order =
+  // CV_CUSTOM.contactActions, the client's choice and order; Email stays on the record): Call = the phone's dialler, Text = the phone's own
+  // texting app. Ruling B2 (Kevin 11-10, "STOP only stops automatic texts, owner may text personally"): the owner keeps Text for a lead who
+  // texted STOP, and the card then says so (stop = true: the "Texted STOP" cue, worded like the record's note); staff lose Text there, as on the record.
+  // Staff never get a price (rowView already has none for them; this makes sure).
+  function todayCard(r, opts) {
+    var lead = r && r.lead;
+    if (!lead) return null;
+    var staff = !!(opts && opts.staff);
+    var v = rowView(lead, opts && opts.now);
+    var k = phoneKey(lead.phone);
+    var stop = isOptedOut(lead) || !!(k && OPTED_KEYS[k]);
+    // the record's rule needs to know about a STOP number lead_list cannot flag (the opted-out list), so the lead passed in says it
+    var acts = contactActions(stop && !isOptedOut(lead) ? Object.assign({}, lead, { opted_out: true }) : lead, opts && opts.order, { staff: staff })
+      .filter(function (a) { return a.key === 'call' || a.key === 'text'; });
+    return {
+      id: lead.lead_id, name: v.name, money: staff ? '' : v.money, job: v.job,
+      wait: r.waiting ? { text: r.waiting, late: !!r.late } : null,
+      newText: newTextOn(lead, staff),
+      actions: acts,
+      stop: stop, stopText: stop ? (staff ? 'Texting is off because this person opted out.' : STOP_PERSONAL_TEXT) : '',
+      open: '#/lead/' + encodeURIComponent(lead.lead_id)
+    };
+  }
+  var TODAY_STOP_CUE = 'Texted STOP';
+
+  // The Needs-you part of Today: the newest NEEDS_SHOW waiting leads as cards, the total, and "N waiting over a day" (same rule as Leads).
+  function todayNeeds(leads, opts) {
+    var all = needsYou(leads, opts && opts.now);
+    var shown = all.slice(0, NEEDS_SHOW);
+    return {
+      total: all.length,
+      cards: shown.map(function (r) { return todayCard(r, opts); }).filter(Boolean),
+      overDay: needsOverDay(all, shown.length).text,
+      empty: all.length ? '' : TODAY_NEEDS_EMPTY
+    };
+  }
+  var TODAY_NEEDS_EMPTY = 'Nobody is waiting on you right now. When a customer asks for you, or a price is waiting for you, they show here.';
+  // "This week" with nothing in it: says what to do. showPossible = the Calendar's own "Include leads not booked yet" switch (Today follows it).
+  function todayWeekEmpty(showPossible) {
+    return (showPossible ? 'No events in the next 7 days.' : 'Nothing booked in the next 7 days.') + ' Open Calendar to see the whole month.';
+  }
+
+  // Today's three numbers (owner only: the page passes metricsOn = the Metrics switch, which staff never get). Each one has its own state:
+  // 'loading' | 'error' | 'empty' | 'ok'. Sources, all already loaded by Metrics:
+  //   open    = cv_metrics().open ("Money on the table": quoted open leads, money + count)
+  //   month   = cv_forecast() row for this month: booked money vs booked + open quotes for events this month (Looking ahead's numbers)
+  //   reply   = cv_metrics().speed.first_text_avg_seconds (the all-time average Metrics already shows; no "30 days")
+  // o = { metricsOn, forecastOn, metrics, metricsError, forecast, forecastState: 'loading' | 'error' | 'ok', now }
+  function todayNumbers(o) {
+    o = o || {};
+    var out = [];
+    if (!o.metricsOn) return out;
+    var m = o.metrics && typeof o.metrics === 'object' ? o.metrics : null;
+    var mState = m ? 'ok' : (o.metricsError ? 'error' : 'loading');
+    var t = today(o.now), mon = MONTHS[t.m - 1];
+
+    var a = { key: 'open', label: 'Open quotes', state: mState, value: '', sub: '', bar: null };
+    if (m) {
+      var open = m.open || {}, c = Math.max(0, Math.floor(num(open.count) || 0));
+      if (!c) { a.state = 'empty'; a.value = fmtMoney(0); a.sub = 'No open quotes yet'; }
+      else { a.value = fmtMoney(Math.round(num(open.total) || 0)); a.sub = plural(c, 'open lead', 'open leads'); }   // whole dollars on the small tile (Metrics keeps the cents)
+    }
+    out.push(a);
+
+    var f = o.forecast;
+    if (o.forecastOn && !(f && typeof f === 'object' && f.enabled === false)) {
+      var b = { key: 'month', label: mon + ' events ' + statusInfo('booked').label.toLowerCase(), state: 'loading', value: '', sub: '', bar: null };
+      var fs = o.forecastState;
+      if (fs === 'error' || (fs === 'ok' && (!f || !Array.isArray(f.months)))) b.state = 'error';
+      else if (fs === 'ok') {
+        var ym = t.ymd.slice(0, 7);
+        var row = f.months.filter(function (x) { return x && x.month === ym; })[0];
+        var bk = fcPair(row && row.booked), op = fcPair(row && row.open);
+        if (!row || (!bk.count && !op.count)) { b.state = 'empty'; b.value = fmtMoney(0); b.sub = 'Nothing booked for ' + mon + ' yet'; }
+        else {
+          b.state = 'ok';
+          b.value = fcBooked(bk);
+          var whole = bk.total + op.total;
+          b.bar = sharePct(bk.total, whole);
+          b.sub = op.count ? 'of ' + fmtMoney(whole) + ' if open quotes close' : 'No open quotes for ' + mon;
+        }
+      }
+      out.push(b);
+    }
+
+    var r = { key: 'reply', label: 'First reply', state: mState, value: '', sub: '', bar: null };
+    if (m) {
+      var avg = fmtDuration(m.speed && m.speed.first_text_avg_seconds);
+      if (!avg) { r.state = 'empty'; r.value = '—'; r.sub = 'No first replies measured yet'; }
+      else { r.value = avg; r.sub = 'average, all time'; }
+    }
+    out.push(r);
+
+    out.forEach(function (x) {
+      if (x.state === 'loading') { x.value = '…'; x.sub = 'Loading'; }
+      else if (x.state === 'error') { x.value = '—'; x.sub = "Couldn't load. Trying again…"; }
+      x.aria = x.label + ': ' + (x.state === 'loading' ? 'loading' : x.state === 'error' ? "couldn't load, trying again" : x.value + ', ' + x.sub);
+    });
+    return out;
+  }
+
+  // Looking ahead as columns (ruling 13A: drawn by the page, no chart code): per event month and Later, the booked money (solid) with the
+  // open quotes for that month on top (outline). Heights are whole percent of the tallest column. The same cv_forecast numbers the list shows.
+  // null = no forecast to draw (off, not loaded, failed). label = what a screen reader hears instead of the picture.
+  function forecastChart(f) {
+    if (!f || typeof f !== 'object' || f.enabled === false || !Array.isArray(f.months)) return null;
+    var cols = f.months.map(function (mo) {
+      var b = fcPair(mo && mo.booked), o = fcPair(mo && mo.open);
+      var mm = /^(\d{4})-(\d{2})$/.exec(String((mo && mo.month) || ''));
+      return { label: mm ? (MONTHS[Number(mm[2]) - 1] || '') : '', booked: Math.max(0, b.total), open: Math.max(0, o.total) };
+    });
+    var lb = fcPair(f.later && f.later.booked), lo = fcPair(f.later && f.later.open);
+    cols.push({ label: 'Later', booked: Math.max(0, lb.total), open: Math.max(0, lo.total) });
+    var max = 0;
+    cols.forEach(function (c) { if (c.booked + c.open > max) max = c.booked + c.open; });
+    cols.forEach(function (c) {
+      c.bookedPct = max && c.booked > 0 ? Math.max(2, Math.round(c.booked / max * 100)) : 0;
+      c.openPct = max && c.open > 0 ? Math.max(2, Math.round(c.open / max * 100)) : 0;
+      if (c.bookedPct + c.openPct > 100) c.openPct = 100 - c.bookedPct;
+    });
+    return {
+      cols: cols, empty: !max,
+      label: 'Booked money and open quotes by event month. ' + cols.map(function (c) {
+        return c.label + ': ' + fmtMoney(c.booked) + ' booked, ' + fmtMoney(c.open) + ' in open quotes';
+      }).join('; ') + '.'
+    };
+  }
+
+  // Where "/" (no hash) opens: Today when it is on, else Leads exactly as before. "#/" itself stays Leads (its tab and every "back to leads").
+  function startRoute(hash, routes) {
+    var r = parseRoute(hash, routes);
+    var h = String(hash || '');
+    if (r.name === 'list' && !r.needs && (h === '' || h === '#') && Array.isArray(routes) && routes.indexOf('today') !== -1) return { name: 'today' };
+    return r;
+  }
+
   return {
     TZ: TZ,
     normalizePhone: normalizePhone,
@@ -5447,6 +5670,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
     fmtMoney: fmtMoney,
     effectiveTotal: effectiveTotal,
     ownerQuoteView: ownerQuoteView,
+    priceLinkView: priceLinkView,
+    quoteCardView: quoteCardView,
     quotePrefill: quotePrefill,
     quoteHoursValue: quoteHoursValue,
     quoteAddNote: quoteAddNote,
@@ -5481,7 +5706,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     groupFollowUps: groupFollowUps,
     followUpBadge: followUpBadge,
     pendingNudge: pendingNudge,
-    nudgeLine: nudgeLine,
+    nudgeLine: nudgeLine, fuEmptyText: fuEmptyText, calDayEmpty: calDayEmpty,
     sentLine: sentLine,
     askedLine: askedLine,
     heldLine: heldLine,
@@ -5707,6 +5932,9 @@ function renderPriceBlockSms(lineItems, total, currency) {
     askLabel: askLabel,
     askFigure: askFigure,
     askView: askView,
-    askErrorText: askErrorText
+    askErrorText: askErrorText,
+    // round 3 redesign (Today + Metrics bars)
+    barWidths: barWidths, sharePct: sharePct, todayDateLine: todayDateLine, todayAlert: todayAlert, todayCard: todayCard, todayNeeds: todayNeeds, TODAY_STOP_CUE: TODAY_STOP_CUE,
+    todayNumbers: todayNumbers, forecastChart: forecastChart, startRoute: startRoute, TODAY_NEEDS_EMPTY: TODAY_NEEDS_EMPTY, todayWeekEmpty: todayWeekEmpty
   };
 });

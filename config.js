@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261119-1853-91ad6002";
+window.CV_BUILD = "20261121-1544-6ac73b6f";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -55,6 +55,11 @@ window.CV_CUSTOM = {
   // editLead ("Edit details" on a lead's page, owner only: fix the date, guests, times, name, email, area or occasion; the phone too for a lead you added that has no texts yet. Every change is written in the history; the database has its own switch, cv_config edit_lead_enabled, and sql/032 must be applied first).
   // money (sql/033 must be applied first; owner only, staff never see any of it): the Deposit received tick on a Booked lead, "New price from the AI: $X. Update?" on a Booked lead, the "Cancelled after booking" reason with the Amount you kept, and Metrics "Kept from cancellations". Each part also needs the lead to come with the 033 columns, so a lab without 033 shows none of it.
   // hideLead (sql/034 must be applied first; owner only, staff never see it): "Hide this lead" on a lead's page while nothing was ever texted to them (the server says when), and More > Hidden leads to show one again. A hidden lead is in no list, count, search or spreadsheet; its history is kept. The database has its own switch, cv_config hide_lead_enabled.
+  // quoteCard (round 1 redesign, Kevin "All A" 11-20): a lead's automatic "Quote" and the owner's "Your price" show as ONE Quote card under the Status card,
+  // with the big Total, Change price and the same Send it to them button, confirm sheet and checks as before. false = the two cards exactly as before. Left out = on.
+  // today (round 3 redesign, Kevin "All A" 11-20): the Today home screen. On = it is the first bottom-bar tab and where the app opens: the alerts line,
+  // Needs you as cards (Call, Text, Open; today's rule), three numbers (owner only: open quotes, this month's events booked, first reply), "Did these happen?"
+  // and This week; Metrics then leaves the bar and opens from Today ("All numbers") and from More. false = the page exactly as before (Leads home, today's bar). Left out = on.
   // quoteSend (the "Send it to them" button on a lead's saved price). OFF unless exactly true; the database has its own switch, cv_config quote_send_enabled.
   // team (More > Team, owner only: add or remove the people who can read your leads and notes). OFF unless exactly true; leave false until Kevin rules.
   // noQuoteFilter (owner only): the "No quote" chip under the filter chips and the "No quote sent" tag on rows. Same rule as the "without a quote yet" count in Metrics.
@@ -63,7 +68,7 @@ window.CV_CUSTOM = {
   waitWarnHours: 24,
   // Days after which a saved price on a lead (not sent yet) says how old it is: 7–29, default 21, 0 = never. The server refuses to text a price older than 30 days.
   quoteAgeWarnDays: 21,
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: true, noQuoteFilter: true, quoteDraft: true, guide: true, editLead: true, money: true, hideLead: true, addLeadNoPhone: true },
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: true, noQuoteFilter: true, quoteDraft: true, guide: true, editLead: true, money: true, hideLead: true, addLeadNoPhone: true, quoteCard: true, today: true },
 
   // Quote calculator pick-lists (More details). Leave a list out and that field stays a plain text box.
   // quoteOccasions: exactly the Occasion choices on the client's booking form, same words, same order.
@@ -84,10 +89,10 @@ window.CV_CUSTOM = {
   askStarters: ['How much did I book this month?', 'Who needs me right now?', "What's booked this weekend?", 'Where are my leads coming from?'],
 
   // Bottom bar and More: which tabs show, in this order (a tab whose feature is off is skipped).
-  // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar; 'ask', 'quote', 'guide', 'support' and 'export' sit under More
+  // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar (with features.today on: Today first, and 'metrics' moves to the top of More); 'ask', 'quote', 'guide', 'support' and 'export' sit under More
   // (More itself is always the last slot and also holds Alerts and Sign out).
   tabs: ['list', 'followups', 'calendar', 'ask', 'quote', 'guide', 'support', 'export', 'hidden', 'metrics', 'team'],
-  tabLabels: { list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet', hidden: 'Hidden leads', team: 'Team' },
+  tabLabels: { today: 'Today', list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet', hidden: 'Hidden leads', team: 'Team' },
 
   // Status wording on chips, filter chips, the three buttons and the history lines.
   // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, booked, lost, opted_out.
