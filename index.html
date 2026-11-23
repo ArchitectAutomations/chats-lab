@@ -22,7 +22,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Leads">
-<link rel="stylesheet" href="styles.css?v=2026-11-21-r3b">
+<link rel="stylesheet" href="styles.css?v=2026-11-21-r5">
 </head>
 <body>
 <div class="app" id="app">
@@ -241,14 +241,14 @@
         <label class="toggle cal-toggle">
           <input type="checkbox" id="cal-possible">
           <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
-          <span>Include leads not booked yet</span>
+          <span id="cal-possible-label">Include leads not booked yet</span>
         </label>
         <p class="status-line" id="cal-loading">Loading your events…</p>
         <table class="cal-grid" id="cal-grid" hidden>
           <thead><tr id="cal-head"></tr></thead>
           <tbody id="cal-body"></tbody>
         </table>
-        <p class="cal-legend" aria-hidden="true"><span class="cal-key is-booked"></span>Booked <span class="cal-key is-possible"></span>Not booked yet</p>
+        <p class="cal-legend" id="cal-legend" aria-hidden="true"><span class="cal-key is-booked"></span><span id="cal-legend-yes">Booked</span> <span class="cal-key is-possible"></span><span id="cal-legend-no">Not booked yet</span></p>
         <p class="cal-month-note" id="cal-month-note" hidden></p>
         </div>
         <section class="cal-day" id="cal-day" aria-labelledby="cal-day-title" hidden>
@@ -686,6 +686,7 @@
           <div class="actions" id="actions" role="group" aria-label="Change status"></div>
           <p class="actions-note" id="actions-note" hidden></p>
           <p class="error" id="action-error" role="alert" hidden></p>
+          <p class="sr-only" id="status-live" role="status" aria-live="polite"></p>
         </section>
 
         <!-- R7 (sql/033, owner only, behind features.money and the 033 columns): the AI re-quote line, the Deposit received tick, the money kept from a cancellation. -->
@@ -1058,13 +1059,13 @@
 
 <noscript><p class="noscript">This page needs JavaScript to show your leads.</p></noscript>
 
-<script src="config.js?v=2026-11-21-r3b"></script>
+<script src="config.js?v=2026-11-21-r5"></script>
 <!-- supabase-js 2.45.4 UMD, pinned. SRI sha384 computed from the file served by jsDelivr on 2026-11-04.
      Recompute: curl -s https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js | openssl dgst -sha384 -binary | openssl base64 -A -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
         integrity="sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o"
         crossorigin="anonymous"></script>
-<script src="lib.js?v=2026-11-21-r3b"></script>
-<script src="app.js?v=2026-11-21-r3b"></script>
+<script src="lib.js?v=2026-11-21-r5"></script>
+<script src="app.js?v=2026-11-21-r5"></script>
 </body>
 </html>

@@ -152,7 +152,7 @@
      configure(window.CV_CUSTOM) applies the client's wording, money format and time zone.
      Anything left out keeps the default. Called once by app.js before the first render. */
 
-  var CUSTOM = { status: {}, tiers: {}, lost: {}, sources: {}, sortLabels: {}, locale: 'en-CA', currency: 'CAD', waitWarnHours: 24, quoteAgeWarnDays: 21 };
+  var CUSTOM = { stages: false, status: {}, tiers: {}, lost: {}, sources: {}, sortLabels: {}, locale: 'en-CA', currency: 'CAD', waitWarnHours: 24, quoteAgeWarnDays: 21 };
 
   function plainMap(o) {
     var out = {};
@@ -167,6 +167,8 @@
 
   function configure(c) {
     c = c || {};
+    // Round 5: the five-status words and tabs. ON only when the client's config says exactly true (it needs SQL 052 + 053 and the n8n write live).
+    CUSTOM.stages = !!(c.features && c.features.stages === true);
     CUSTOM.status = plainMap(c.statusLabels);
     CUSTOM.tiers = plainMap(c.tierLabels);
     CUSTOM.lost = plainMap(c.lostReasons);
@@ -305,14 +307,73 @@
     quoted: ['Quoted', 'active'],
     handed_off: ['Needs you', 'needs'],
     contacted: ['Contacted', 'active'],
+    offer_sent: ['Offer sent', 'active'],
+    negotiation: ['Negotiation', 'active'],
     booked: ['Booked', 'booked'],
     lost: ['Lost', 'lost'],
     opted_out: ['Opted out', 'optout']
   };
+  // Round 5: with the stages switch ON the default word for the stored `booked` status is "Deal closed" (a client's statusLabels still wins).
+  var STAGE_LABELS = { booked: 'Deal closed' };
+
+  function stagesOn() { return CUSTOM.stages === true; }
+
+  /* ---------- round 5: the words that change with the stages switch ----------
+     ONE table of ON words keyed by the W-numbers of design/redesign-2026-11/ROUND5_WORDS.md. stageWord(key, offWords, vars) returns the ON text when
+     the switch is ON, else `offWords` exactly (the old literal stays in the call site, so OFF is byte-identical). {m} / {n} / {r} are filled from vars. */
+  var STAGE_WORDS = {
+    W1: 'No new leads right now. Form leads and first texts land here while the assistant handles them.',
+    W2: 'No leads at Offer sent. Send your price from a lead, or tap Offer sent on it, to move it here.',
+    W3: 'No leads in Negotiation. Tap Negotiation on a lead while you agree the price.',
+    W4: 'No closed deals yet. Tap Deal closed on a lead when they say yes.',
+    W26: "This deal is already closed, so it can't go back to Contacted.",
+    W27: 'Only the owner can change a lead at Deal closed or Lost.',
+    W28: 'Only the owner can enter a final price. Move the lead to Deal closed without one and the owner adds it.',
+    W29: 'Staff can only change a lead that is still open. Ask the owner to change a Deal closed or Lost lead.',
+    W29b: 'Only a Deal closed lead can be marked Cancelled after booking. The page is up to date now.',
+    W30: '{m} closed',
+    W31: 'Closed at {m}',
+    W32: 'This deal is not closed any more, so the tick was not saved. The page is up to date now.',
+    W33: 'Money you kept after the cancellation, for example a deposit. It is counted on its own line in Metrics, never in Deals closed.',
+    W33b: 'Not included in Deals closed.',
+    W36: 'Closed deals, lost leads and future events are left alone.',
+    W37: 'Moving a lead to Offer sent, Negotiation, Deal closed or Lost stops its follow-up text.',
+    W38: ' It is a closed deal for {m}, and that leaves Metrics too.',
+    W41: 'Final price, else the quote',
+    W45: 'Deal closed for ($)',
+    W48: 'Include leads not closed yet',
+    W49yes: 'Deal closed',
+    W49no: 'Not closed yet',
+    W50: 'No closed deals in {m} yet.',
+    W51: 'No closed deals on this day. Turn on \u201CInclude leads not closed yet\u201D to also see the rest.',
+    W52a: '{n} closed',
+    W52b: '{n} not closed yet',
+    W53: 'Not closed yet',
+    W54: 'No closed deals in the next 7 days.',
+    W55: '{m} deals closed',
+    W56: 'No deals closed for {m} yet',
+    W57: 'Deals closed',
+    W58: 'No deals closed yet.',
+    W59: '{n} closed',
+    W60: 'Solid = closed deals. Outline = open quotes for that month, counted in full.',
+    W61: 'Deals closed, by event month',
+    W62: 'Nothing closed',
+    W63: ' closed',
+    W64: 'Not enough history yet to estimate what will close.',
+    W65: ' Marking them Deal closed or Lost makes this forecast possible.',
+    W66: 'Closed deals and open quotes by event month. ',
+    W66b: '{m}: {a} closed, {b} in open quotes'
+  };
+  function stageWord(key, offWords, vars) {
+    if (!CUSTOM.stages || !Object.prototype.hasOwnProperty.call(STAGE_WORDS, key)) return offWords;
+    var t = STAGE_WORDS[key];
+    if (vars && typeof vars === 'object') t = t.replace(/\{(\w+)\}/g, function (all, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : all; });
+    return t;
+  }
 
   function statusInfo(status) {
     var k = String(status || '').toLowerCase();
-    if (STATUS[k]) return { label: CUSTOM.status[k] || STATUS[k][0], tone: STATUS[k][1] };
+    if (STATUS[k]) return { label: CUSTOM.status[k] || (CUSTOM.stages && STAGE_LABELS[k]) || STATUS[k][0], tone: STATUS[k][1] };
     if (CUSTOM.status[k]) return { label: CUSTOM.status[k], tone: 'neutral' };
     if (!k) return { label: 'No status', tone: 'neutral' };
     return { label: k.replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); }), tone: 'neutral' };
@@ -348,9 +409,12 @@
   // Which bucket a status belongs to. Anything unknown counts as still open.
   var STATUS_GROUP = {
     'new': 'open', engaged: 'open', quoted: 'open', handed_off: 'open', contacted: 'open',
+    offer_sent: 'open', negotiation: 'open',
     booked: 'booked', won: 'booked',
     lost: 'lost', opted_out: 'lost', dormant: 'lost'
   };
+  // Round 5: the server's "New" tab count (cv_list_counts key new): the leads the assistant is still handling.
+  var NEW_GROUP = { 'new': 1, engaged: 1, quoted: 1, handed_off: 1 };
 
   function statusGroup(status) {
     var k = String(status || '').toLowerCase();
@@ -366,9 +430,25 @@
   // 'noquote' (gap 1) is a sixth, page-counted chip shown only when it has leads: it is remembered like the others, so a saved 'noquote' is valid here
   // and app.js falls back to 'open' when the chip is off or empty. It is not in FILTER_KEYS / filterCounts (the server counts those five).
   var CHIP_KEYS = ['open', 'contacted', 'booked', 'lost', 'all', 'noquote'];
+  // Round 5 (stages switch ON): the eight tabs, in Kevin's order. 'needs' stays remembered-but-chipless, 'noquote' stays beside Sort.
+  var STAGE_FILTER_KEYS = ['all', 'needs', 'open', 'new', 'contacted', 'offer_sent', 'negotiation', 'booked', 'lost'];
+  var STAGE_CHIP_KEYS = ['open', 'new', 'contacted', 'offer_sent', 'negotiation', 'booked', 'lost', 'all', 'noquote'];
+  var STAGE_COUNT_KEYS = ['open', 'new', 'contacted', 'offer_sent', 'negotiation', 'booked', 'lost', 'all'];
   // The five chips on Home, in display order. Open is the default. Contacted (round 4, Kevin 11-09) is the part of Open
   // he has already reached: status contacted (so never booked or lost).
   function filters() {
+    if (CUSTOM.stages) {
+      return [
+        { key: 'open', label: 'All open' },
+        { key: 'new', label: statusInfo('new').label },
+        { key: 'contacted', label: statusInfo('contacted').label },
+        { key: 'offer_sent', label: statusInfo('offer_sent').label },
+        { key: 'negotiation', label: statusInfo('negotiation').label },
+        { key: 'booked', label: statusInfo('booked').label },
+        { key: 'lost', label: statusInfo('lost').label },
+        { key: 'all', label: 'All' }
+      ];
+    }
     return [
       { key: 'open', label: 'Open' },
       { key: 'contacted', label: statusInfo('contacted').label },
@@ -381,7 +461,7 @@
   // A remembered list choice: a chip only. The full Needs-you list ("See all") is never remembered across reloads (review r4
   // item 6): a reload always opens on the chips with the Needs-you block on top.
   function isFilterKey(key) {
-    return CHIP_KEYS.indexOf(key) !== -1;
+    return (CUSTOM.stages ? STAGE_CHIP_KEYS : CHIP_KEYS).indexOf(key) !== -1;
   }
 
   // Gap 1: an open lead the customer has not been quoted. The SAME rule as the Metrics count open_no_quote (sql/005: open = not booked / lost /
@@ -422,6 +502,8 @@
     if (key === 'noquote') return noQuoteOpen(lead);
     if (key === 'needs') return st === 'handed_off';
     if (key === 'contacted') return st === 'contacted';
+    if (key === 'new') return NEW_GROUP[st] === 1;
+    if (key === 'offer_sent' || key === 'negotiation') return st === key;
     if (key === 'open' || key === 'booked' || key === 'lost') return statusGroup(st) === key;
     return true;
   }
@@ -432,16 +514,20 @@
 
   function filterCounts(leads) {
     var out = {};
-    FILTER_KEYS.forEach(function (k) { out[k] = filterLeads(leads, k).length; });
+    (CUSTOM.stages ? STAGE_FILTER_KEYS : FILTER_KEYS).forEach(function (k) { out[k] = filterLeads(leads, k).length; });
     return out;
   }
 
   // The three statuses the owner can set from the page (same as his DONE / BOOKED / LOST texts).
   var ACTION_STATUSES = ['contacted', 'booked', 'lost'];
+  // Round 5 (stages ON): five. Contacted and Lost keep "Mark as ...", the three others say "Move to ...".
+  var STAGE_ACTION_STATUSES = ['contacted', 'offer_sent', 'negotiation', 'booked', 'lost'];
+  function actionList() { return CUSTOM.stages ? STAGE_ACTION_STATUSES : ACTION_STATUSES; }
   function actions() {
-    return ACTION_STATUSES.map(function (st) {
+    return actionList().map(function (st) {
       var label = statusInfo(st).label;
-      return { status: st, label: label, confirm: 'Mark as ' + label.toLowerCase() };
+      var move = CUSTOM.stages && st !== 'contacted' && st !== 'lost';
+      return { status: st, label: label, confirm: (move ? 'Move to ' : 'Mark as ') + (move ? label : label.toLowerCase()) };
     });
   }
 
@@ -490,20 +576,33 @@
   // Plain-words question for the confirm sheet. `now` is for tests.
   function confirmText(name, status, lead, plain, now) {
     var who = String(name || '').trim() || 'this lead';
-    if (ACTION_STATUSES.indexOf(status) === -1) return '';
+    if (actionList().indexOf(status) === -1) return '';
     var lc = function (st) { return statusInfo(st).label.toLowerCase(); };
-    var q = 'Mark ' + who + ' as ' + lc(status) + '?';
+    var moves = CUSTOM.stages && status !== 'contacted' && status !== 'lost';
+    var q = moves ? 'Move ' + who + ' to ' + statusInfo(status).label + '?' : 'Mark ' + who + ' as ' + lc(status) + '?';
+    var cur = String((lead && lead.status) || '').toLowerCase();
+    var curStage = cur === 'offer_sent' || cur === 'negotiation';
+    // What a going-back move clears, in words: ON the booked outcome is "The final price" (W11 / W17), lost stays "The lost reason".
+    var clears = function (st) { return 'The ' + (st === 'booked' ? (CUSTOM.stages ? 'final' : lc(st)) + ' price' : lc(st) + ' reason') + ' will be cleared.'; };
     // A1 (Kevin 11-10): a lead who texted STOP can be marked Contacted by the owner; the sheet says plainly that no follow-up goes to them. Before the
     // booked / lost line (which it adds to) and the no-consent line (the STOP fact matters more to the owner).
     if (status === 'contacted' && isOptedOut(lead)) {
-      var gone = lead.status === 'booked' || lead.status === 'lost' ? ' The ' + lc(lead.status) + (lead.status === 'booked' ? ' price' : ' reason') + ' will be cleared.' : '';
+      var gone = lead.status === 'booked' || lead.status === 'lost' ? ' ' + clears(lead.status) : '';
       return q + gone + ' ' + STOP_NO_FOLLOWUP;
     }
     if (plain) return q; // no promise about texts: used where the page cannot tell which leads get follow-ups
     // 021: moving a booked or lost lead back uses up the day-5 text and removes what was recorded (sql/021), so the sheet says both. Before the no-consent line: an added lead has a price to lose too.
     if (status === 'contacted' && lead && (lead.status === 'booked' || lead.status === 'lost')) {
       var tick = lead.deposit_received_at ? ' The deposit tick is cleared too; the history keeps it.' : '';   // R7: the tick goes with the outcome (sql/033)
-      return q + ' The ' + lc(lead.status) + (lead.status === 'booked' ? ' price' : ' reason') + ' will be cleared.' + tick + ' No follow-up text will go out.';
+      return q + ' ' + clears(lead.status) + tick + ' No follow-up text will go out.';
+    }
+    // Round 5 (always, safety; Kevin's changed ruling 8): from Offer sent / Negotiation the server (SQL 053) says in followup_possible whether this move can still
+    // arm the lead's one follow-up. True = the usual Contacted sentences below (and the send / none choice). Anything else = no text goes out.
+    if (status === 'contacted' && curStage && lead.followup_possible !== true) return q + ' No follow-up text will go out.';
+    // Round 5 (ON): Deal closed / Lost back to Offer sent or Negotiation clears the outcome and uses up the day-5 text (SQL 052).
+    if (CUSTOM.stages && (status === 'offer_sent' || status === 'negotiation') && (cur === 'booked' || cur === 'lost')) {
+      var tick2 = lead.deposit_received_at ? ' The deposit tick is cleared too; the history keeps it.' : '';
+      return q + ' ' + clears(cur) + tick2 + ' No follow-up text will go out.';
     }
     if (status === 'contacted' && noConsent(lead)) return q + (personConsent(lead) ? ' No automatic follow-up texts go to leads you added.' : ' No automatic texts go to leads you added.');
     if (status === 'contacted') {
@@ -512,9 +611,11 @@
       if (lead && (lead.contacted_at || lead.nudge_sent_at)) return q;
       // 022: the server's own answer (lead_detail.followup_possible) beats the promise below; absent (older read, staff) = as before.
       if (lead && lead.followup_possible === false) return q + ' No follow-up text will go out.';
-      return q + " They'll get one follow-up text in 5 days unless you mark them " + lc('booked') + ' or ' + lc('lost') + '.';
+      return q + " They'll get one follow-up text in 5 days unless you " + (CUSTOM.stages ? 'move them to ' + statusInfo('booked').label + ' or ' + statusInfo('lost').label : 'mark them ' + lc('booked') + ' or ' + lc('lost')) + '.';
     }
     if (noConsent(lead)) return q;
+    // Round 5 (ON): a lead already at Offer sent / Negotiation has no day-5 text waiting, so no promise about one.
+    if (CUSTOM.stages && curStage) return q;
     return q + " They won't get the next follow-up text.";
   }
 
@@ -656,6 +757,8 @@
   var NOT_ALLOWED = {
     opted_out: 'This lead opted out of texts, so the page cannot change their status.',
     already_booked: "This lead is already booked, so it can't go back to contacted.",
+    already_offer_sent: "This lead is already at Offer sent, so it can't go back to Contacted.",
+    already_negotiation: "This lead is already in Negotiation, so it can't go back to Contacted.",
     already_lost: "This lead is already marked lost, so it can't go back to contacted.",
     closed: "This lead is closed, so its status can't be changed here.",
     not_with_owner: "The assistant is still handling this lead. You can mark it once they've asked for you."
@@ -689,12 +792,13 @@
     var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).trim();
     var msg = raw.toLowerCase();
     var sm = /\b(staff_no_price|staff_open_leads_only|staff_no_cancelled)\b/.exec(msg);
-    if (sm) return STAFF_ERRORS[sm[1]];
+    if (sm) return sm[1] === 'staff_no_price' ? stageWord('W28', STAFF_ERRORS[sm[1]]) : sm[1] === 'staff_open_leads_only' ? stageWord('W29', STAFF_ERRORS[sm[1]]) : STAFF_ERRORS[sm[1]];
     var m = /\b(not_owner|bad_status|not_found|not_allowed|bad_input)\b\s*(?::\s*([^\n]*))?/.exec(msg);
     if (m) {
       if (m[1] === 'bad_input') {
         var why = String(m[2] || (err && err.details) || '').trim().toLowerCase().replace(/[.\s]+$/, '').replace(/[\s-]+/g, '_');
         if (why === 'opted_out_no_followup') return stopRefusalText();
+        if (why === 'cancelled_only_after_booked') return stageWord('W29b', BAD_INPUT[why]);
         return BAD_INPUT[why] || 'Check the price or the reason and try again.';
       }
       if (m[1] === 'not_owner' && role === 'staff') return 'The owner has switched this off for your account.';
@@ -703,7 +807,7 @@
       if (m[1] === 'not_found') return "This lead can't be found any more. Go back to your list.";
       var reason = String(m[2] || (err && err.details) || '').trim().toLowerCase().replace(/[.\s]+$/, '');
       var key = reason.replace(/[\s-]+/g, '_');
-      if (NOT_ALLOWED[key]) return NOT_ALLOWED[key];
+      if (NOT_ALLOWED[key]) return key === 'already_booked' ? stageWord('W26', NOT_ALLOWED[key]) : NOT_ALLOWED[key];
       return reason ? "This change isn't allowed for this lead (" + reason.replace(/_/g, ' ') + ').' : "This change isn't allowed for this lead.";
     }
     var status = err && err.status;
@@ -716,7 +820,7 @@
 
   var HISTORY_ACTIONS = {
     'new': 'New lead', engaged: 'Started texting', quoted: 'Quoted', handed_off: 'Asked for you',
-    contacted: 'Contacted', booked: 'Booked', lost: 'Lost', opted_out: 'Opted out', reopened: 'Reopened',
+    contacted: 'Contacted', offer_sent: 'Offer sent', negotiation: 'Negotiation', booked: 'Booked', lost: 'Lost', opted_out: 'Opted out', reopened: 'Reopened',
     stopped: 'Texted STOP', started: 'Texted START',   // S13 R1 (STOP rule, sql/042): they texted STOP / START; the status before STOP comes back after START
     quote_priced: 'Priced by you', quote_sent: 'Quote sent', edited: 'Details edited',
     deposit: 'Deposit received', deposit_undone: 'Deposit unticked',   // R7 (C5, sql/033): the owner's tick; owner history only
@@ -729,6 +833,10 @@
 
   // lead_history.no_followup (sql/022): why a page Contacted took the day-5 text away.
   var NO_FOLLOWUP_HISTORY = { chosen: 'No follow-up text (you chose)', no_quote: 'No follow-up text (no quote then)', opted_out: 'No follow-up text (they texted STOP)' };
+  // The label of one history row. ON, a booked row reads like the status word ("Deal closed"); a client's statusLabels still wins.
+  function historyLabel(a) {
+    return CUSTOM.status[a] || (CUSTOM.stages && a === 'booked' ? statusInfo('booked').label : HISTORY_ACTIONS[a]) || statusInfo(a).label;
+  }
   function historyLine(h, now) {
     if (!h) return '';
     var a = String(h.action || '').toLowerCase();
@@ -740,7 +848,7 @@
     }
     // R5 (A3): "Hidden by you", "Shown again by you", "Shown again: new activity" (source auto): the words already say who.
     if (a === 'hidden' || a === 'unhidden') return [hideHistoryText(a, h.source), fmtStamp(h.at, now)].filter(Boolean).join(' \u00b7 ');
-    var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
+    var label = historyLabel(a);
     var s = String(h.source || '').toLowerCase();
     var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
     // R7 (C5): a booking cancelled after it was made reads "Lost: cancelled after booking ($300 kept)".
@@ -748,7 +856,7 @@
       var kept = fmtMoney(h.amount);
       return [label + ': ' + lostReasonLabel(CANCELLED_KEY).toLowerCase() + (kept ? ' (' + kept + ' kept)' : ''), fmtStamp(h.at, now), src].filter(Boolean).join(' \u00b7 ');
     }
-    var extra = a === 'booked' || a === 'quote_priced' || a === 'quote_sent' ? fmtMoney(h.amount) : a === 'lost' ? lostReasonLabel(h.reason) : a === 'contacted' ? NO_FOLLOWUP_HISTORY[h.no_followup] || '' : '';
+    var extra = a === 'booked' || a === 'quote_priced' || a === 'quote_sent' || a === 'offer_sent' ? fmtMoney(h.amount) : a === 'lost' ? lostReasonLabel(h.reason) : a === 'contacted' ? NO_FOLLOWUP_HISTORY[h.no_followup] || '' : '';
     return [label, extra, fmtStamp(h.at, now), src].filter(Boolean).join(' \u00b7 ');
   }
 
@@ -1030,9 +1138,11 @@
       return 'Follow-up text goes out ' + fmtDueAt(nudge.due_at, now) + ' — ' + fmtCountdown(nudge.due_at, now);
     }
     var lc = function (k) { return statusInfo(k).label.toLowerCase(); };
-    var markWhen = 'Mark ' + lc('booked') + ' or ' + lc('lost') + ' when you know.';
+    var markWhen = CUSTOM.stages ? 'Move to ' + statusInfo('booked').label + ' or ' + statusInfo('lost').label + ' when you know.'
+      : 'Mark ' + lc('booked') + ' or ' + lc('lost') + ' when you know.';
     if (st === 'booked' || st === 'won') {
       var ev = fmtEventDate(lead.event_date, now);
+      if (CUSTOM.stages) return ev ? statusInfo('booked').label + ' \u00b7 event ' + ev : statusInfo('booked').label;
       return ev ? statusInfo('booked').label + ' for ' + ev : statusInfo('booked').label;
     }
     if (st === 'lost') {
@@ -1066,6 +1176,19 @@
       var inb = realTime(lead.last_inbound_at);
       if (inb && (!q || inb.getTime() > q.getTime())) return 'They replied ' + fmtSince(inb, now);
       return q ? 'Quote sent ' + fmtSince(q, now) + ', no reply' : 'Quote sent, no reply yet';
+    }
+    // Round 5: Offer sent (mirrors Quoted) and Negotiation. Words are label-driven, so they read sensibly with the switch OFF too.
+    if (st === 'offer_sent') {
+      var os = realTime(lead.status_at) || realTime(lead.last_outbound_at);
+      var osIn = realTime(lead.last_inbound_at);
+      if (osIn && (!os || osIn.getTime() > os.getTime())) return 'They replied ' + fmtSince(osIn, now);
+      return os ? statusInfo('offer_sent').label + ' ' + fmtSince(os, now) + ', no reply yet' : statusInfo('offer_sent').label + ', no reply yet';
+    }
+    if (st === 'negotiation') {
+      var ng = realTime(lead.status_at);
+      var ngIn = realTime(lead.last_inbound_at);
+      if (ngIn && ng && ngIn.getTime() > ng.getTime()) return 'They replied ' + fmtSince(ngIn, now);
+      return ng ? 'In negotiation since ' + fmtShortDate(ng, now) + '. ' + markWhen : 'In negotiation. ' + markWhen;
     }
     if (st === 'engaged') {
       return 'Texting with the assistant' + (lead.last_inbound_at ? ', last reply ' + fmtSince(lead.last_inbound_at, now) : '');
@@ -1236,7 +1359,7 @@
     // Booked: the booked price, else the quote, as "booked" (what Metrics, Ask and the spreadsheet count; review r3 item 2).
     if (statusGroup(lead.status) === 'booked') {
       var bk = toCents(lead.booked_amount) !== null ? fmtMoney(lead.booked_amount) : fmtMoney(lead.quote_total);
-      if (bk) return bk + ' booked';
+      if (bk) return CUSTOM.stages ? stageWord('W30', '', { m: bk }) : bk + ' booked';
     }
     // R7 (C5): a booking cancelled after it was made shows the money kept, not the old quote (owner only: staff never get the column).
     if (isCancelledLost(lead) && toCents(lead.kept_amount) !== null) return fmtMoney(lead.kept_amount) + ' kept';
@@ -1301,13 +1424,13 @@
       notReadyLines: []
     };
     if (!ready && !v.noOpenQuotes) {
-      v.notReadyLines.push('Not enough history yet to estimate what will book.');
+      v.notReadyLines.push(stageWord('W64', 'Not enough history yet to estimate what will book.'));
       v.notReadyLines.push('Outcome recorded for ' + recorded + ' of ' + cohort + ' past events.');
       // The sentence agrees with the Did-these-happen list: N = cohort - recorded (same leads cv_past_events returns).
       var n = Math.max(0, cohort - recorded), mt = num(f.past_event && f.past_event.markable_total);
       if (n > 0) {
         v.notReadyLines.push(plural(n, 'open lead has', 'open leads have') + ' an event date that has passed' +
-          (mt !== null && mt > 0 ? ' (' + fmtMoney(mt) + ' in quotes)' : '') + '. Marking them Booked or Lost makes this forecast possible.');
+          (mt !== null && mt > 0 ? ' (' + fmtMoney(mt) + ' in quotes)' : '') + '.' + stageWord('W65', ' Marking them Booked or Lost makes this forecast possible.'));
       }
     }
     v.pastCount = Math.max(0, cohort - recorded);
@@ -1404,7 +1527,7 @@
       stopLine: n > 0 && !tooMany ? bulkStopLine(res) : '',
       headline: !before ? '' : n === 0 ? 'No open leads have an event before ' + before + '.'
         : plural(n, 'lead', 'leads') + ' with an event before ' + before + ' will be marked ' + statusInfo('lost').label + '.',
-      note: n > 0 && !tooMany ? 'No texts are sent. Reason: ' + lostReasonLabel(BULK_REASON_KEY) + '. Booked, lost and future events are left alone. You can undo this.' : '',
+      note: n > 0 && !tooMany ? 'No texts are sent. Reason: ' + lostReasonLabel(BULK_REASON_KEY) + '. ' + stageWord('W36', 'Booked, lost and future events are left alone.') + ' You can undo this.' : '',
       capText: tooMany ? 'That is more than ' + cap.toLocaleString('en-CA') + ' at once. Pick an earlier date and clear them in steps.' : '',
       confirm: n > 0 && !tooMany && fp ? 'Mark ' + plural(n, 'lead', 'leads') + ' ' + statusInfo('lost').label : '',
       undo: u ? { batchId: u.batch_id, count: Math.floor(num(u.can_undo)), at: u.at, text: bulkUndoLine(u.marked, u.at, now) } : null
@@ -1460,7 +1583,7 @@
     var b = num(cr && cr.booked) || 0, l = num(cr && cr.lost) || 0;
     var done = b + l;
     if (!done) return '\u2014';
-    return b + ' of ' + plural(done, 'finished lead', 'finished leads') + ' booked (' + Math.round(b / done * 100) + '%)';
+    return b + ' of ' + plural(done, 'finished lead', 'finished leads') + stageWord('W63', ' booked') + ' (' + Math.round(b / done * 100) + '%)';
   }
 
   // Plain sentences: no averages-vs-medians, no sample sizes.
@@ -2326,7 +2449,7 @@
     var money = hideBookedMoney(lead), kept = hideKeptMoney(lead);
     return {
       text: 'Hide ' + displayName(lead) + '?',
-      note: HIDE_CONFIRM_NOTE + (money ? ' It is booked for ' + money + ', and that leaves Metrics too.' : kept ? ' It was cancelled with ' + kept + ' kept, and that leaves Metrics too.' : ''),
+      note: HIDE_CONFIRM_NOTE + (money ? stageWord('W38', ' It is booked for {m}, and that leaves Metrics too.'.replace('{m}', money), { m: money }) : kept ? ' It was cancelled with ' + kept + ' kept, and that leaves Metrics too.' : ''),
       yes: HIDE_YES
     };
   }
@@ -3277,11 +3400,17 @@ function renderPriceBlockSms(lineItems, total, currency) {
   //   lost:   p_reason required; p_reason_note only for 'other' and only when something was typed
   //   lost + cancelled (R7, owner only): p_reason 'cancelled' AND p_amount = the Amount you kept (never left out: a blank would let the server
   //          fall back to the booked price, so the field is required and 0 is typed when nothing was kept). ctx.staff = true refuses it.
+  var PRICE_REQUIRED = 'Type the final price. Type 0 if there was no charge.';
   function statusExtras(status, form, quote, ctx) {
     form = form || {};
     if (status === 'booked') {
       var a = parseAmount(form.amount);
       if (!a.ok) return { ok: false, error: a.error, field: 'amount' };
+      // Round 5 (ruling 3): with ctx.required (the owner, stages ON) the price box can't be left empty, and what the owner confirmed is always sent.
+      if (ctx && ctx.required === true) {
+        if (a.value === null) return { ok: false, error: PRICE_REQUIRED, field: 'amount' };
+        return { ok: true, args: { p_amount: a.value } };
+      }
       var q = toCents(quote);
       if (a.value === null || (q !== null && Math.round(a.value * 100) === q)) return { ok: true, args: {} };
       return { ok: true, args: { p_amount: a.value } };
@@ -3355,7 +3484,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     // DEFAULT-PENDING-KEVIN: if the owner's sent price and an AI re-quote were ever the same number, the neutral wording is used (never a false "from the AI").
     var oq = lead.owner_quote && typeof lead.owner_quote === 'object' ? lead.owner_quote : null;
     var ownerSent = !!oq && !!oq.sent_at && toCents(oq.total) === q;
-    return { text: (ownerSent ? 'New price: ' : 'New price from the AI: ') + fmtMoney(lead.quote_total) + '. Update?', booked: 'Booked at ' + fmtMoney(lead.booked_amount),
+    return { text: (ownerSent ? 'New price: ' : 'New price from the AI: ') + fmtMoney(lead.quote_total) + '. Update?', booked: stageWord('W31', 'Booked at ' + fmtMoney(lead.booked_amount), { m: fmtMoney(lead.booked_amount) }),
       button: AI_PRICE_BUTTON, amount: q / 100, owner: ownerSent };
   }
   // The deposit tick on a booked lead. On a lead lost as cancelled the tick that was there stays visible and can be UNTICKED (never ticked again:
@@ -3381,7 +3510,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var raw = String((err && err.message) || (typeof err === 'string' ? err : '')).toLowerCase();
     var det = String((err && err.details) || '').toLowerCase();
     var all = raw + ' ' + det;
-    if (/\bnot_booked\b/.test(all)) return 'This lead is not booked any more, so the tick was not saved. The page is up to date now.';
+    if (/\bnot_booked\b/.test(all)) return stageWord('W32', 'This lead is not booked any more, so the tick was not saved. The page is up to date now.');
     if (/\bnot_owner\b/.test(all)) return 'Only the owner can tick the deposit.';
     if (/\bnot_found\b/.test(all)) return "This lead can't be found any more. Go back to your list.";
     var status = err && err.status;
@@ -3396,7 +3525,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var all = fcPair(kept.all_time);
     if (!(all.count > 0)) return null;
     function pair(o) { return moneyCount(o, 'cancellation', 'cancellations'); }
-    return { title: 'Kept from cancellations', note: 'Not included in Money booked.',
+    return { title: 'Kept from cancellations', note: stageWord('W33b', 'Not included in Money booked.'),
       tiles: [{ label: 'This month', pair: pair(kept.this_month) }, { label: 'Last month', pair: pair(kept.last_month) }, { label: 'All time', pair: pair(kept.all_time) }] };
   }
 
@@ -3500,8 +3629,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // Words for a day button: "Sat, Nov 14: 1 booked, 2 possible" (screen readers).
   function dayLabel(dayYmd, day, now) {
     var bits = [];
-    if (day && day.booked.length) bits.push(day.booked.length + ' booked');
-    if (day && day.possible.length) bits.push(day.possible.length + ' not booked yet');
+    if (day && day.booked.length) bits.push(stageWord('W52a', day.booked.length + ' booked', { n: day.booked.length }));
+    if (day && day.possible.length) bits.push(stageWord('W52b', day.possible.length + ' not booked yet', { n: day.possible.length }));
     return fmtEventDate(dayYmd, now) + (bits.length ? ': ' + bits.join(', ') : ': nothing');
   }
 
@@ -3673,7 +3802,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     return '';
   }
   function calDayEmpty(showPossible) {
-    return showPossible ? 'No events on this day.' : 'Nothing booked on this day. Turn on \u201CInclude leads not booked yet\u201D to also see leads not booked yet.';
+    return showPossible ? 'No events on this day.' : stageWord('W51', 'Nothing booked on this day. Turn on \u201CInclude leads not booked yet\u201D to also see leads not booked yet.');
   }
   function nudgeLine(r, now) { var w = fmtDueAt(r && r.due_at, now); return w ? 'Goes out ' + w : ''; }
   // "Sent Nov 3 · 3 days ago"
@@ -3824,6 +3953,17 @@ function renderPriceBlockSms(lineItems, total, currency) {
   // past what the page fetched. A server count with a missing or bad number is not used at all.
   var COUNT_KEYS = ['open', 'contacted', 'booked', 'lost', 'all'];
   function homeCounts(leads, now, server) {
+    if (CUSTOM.stages) {
+      // Round 5: eight tabs. The server's numbers only when ALL eight are good (never mixed with page counts; an older server without SQL 052 page-counts).
+      if (server && typeof server === 'object' && STAGE_COUNT_KEYS.every(function (k) { var v = server[k]; return typeof v === 'number' && v >= 0 && Math.floor(v) === v; })) {
+        var so = {};
+        STAGE_COUNT_KEYS.forEach(function (k) { so[k] = server[k]; });
+        return so;
+      }
+      var sc = filterCounts(leads), po = {};
+      STAGE_COUNT_KEYS.forEach(function (k) { po[k] = sc[k]; });
+      return po;
+    }
     if (server && typeof server === 'object' && COUNT_KEYS.every(function (k) { var v = server[k]; return typeof v === 'number' && v >= 0 && Math.floor(v) === v; })) {
       var out = {};
       COUNT_KEYS.forEach(function (k) { out[k] = server[k]; });
@@ -3944,7 +4084,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var staff = !!(opts && opts.staff);
     return LIST_SORTS.filter(function (r) { return !(staff && r.ownerOnly); }).map(function (r) {
       var custom = CUSTOM.sortLabels[r.key];
-      return { key: r.key, label: custom || r.label, short: custom || r.short, sub: r.sub };
+      return { key: r.key, label: custom || r.label, short: custom || r.short, sub: r.key === 'quote_high' ? stageWord('W41', r.sub) : r.sub };
     });
   }
   function listSortNormalize(v) {
@@ -4129,7 +4269,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   function agendaView(item, now) {
     var rv = rowView(item.lead, now, { noDate: true });
     var guests = jobBits(item.lead, { money: false, date: false, now: now }).join(' · ');
-    var chip = item.kind === 'possible' ? { label: 'Not booked yet', tone: 'active' } : rv.chip;
+    var chip = item.kind === 'possible' ? { label: stageWord('W53', 'Not booked yet'), tone: 'active' } : rv.chip;
     return { name: rv.name, money: rv.money, line: guests, chip: chip };
   }
 
@@ -4167,7 +4307,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var b = num(cr && cr.booked) || 0, l = num(cr && cr.lost) || 0;
     var done = b + l;
     if (!done) return null;
-    return { pct: Math.round(b / done * 100) + '%', text: b + ' of ' + plural(done, 'finished lead', 'finished leads') + ' booked' };
+    return { pct: Math.round(b / done * 100) + '%', text: b + ' of ' + plural(done, 'finished lead', 'finished leads') + stageWord('W63', ' booked') };
   }
 
   /* ---------- bottom bar (CV_CUSTOM.tabs + feature switches) ---------- */
@@ -4205,7 +4345,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
      own names, filled in here: {tab_<route>} = the tab / More label, {contacted} {booked} {lost} {needs} = the status words ({x_lc} lower case),
      {lost_reasons} and {sources} = the pick-lists. The guide never names a person, and never mentions a feature that is not on. */
   var GUIDE_FLAGS = ['followups', 'calendar', 'metrics', 'quote', 'export', 'ask', 'support', 'supportContact', 'supportNoContact', 'supportSend', 'supportNoSend', 'pastEvents', 'bulk',
-    'addLead', 'search', 'push', 'noQuoteFilter', 'quoteDraft', 'quoteAge', 'forecast', 'value', 'quotePromoEnds', 'exportOff', 'money', 'hideLead'];
+    'addLead', 'search', 'push', 'noQuoteFilter', 'quoteDraft', 'quoteAge', 'forecast', 'value', 'quotePromoEnds', 'exportOff', 'money', 'hideLead', 'stages', 'quoteSend'];
   var GUIDE = {
     lede: 'Short steps for the jobs you do most. Tap a heading to open it.',
     quickstart: {
@@ -4226,6 +4366,13 @@ function renderPriceBlockSms(lineItems, total, currency) {
         'Under Conversation you can read what was said. Tap Open full to read it all.',
         'After you have reached them, under Change status tap {contacted}, then Mark as {contacted_lc}. Sometimes the box offers two buttons: Mark {contacted_lc} and send the follow-up, or Mark {contacted_lc}, no follow-up. If they texted STOP, no follow-up goes out.'
       ], note: 'You reply in your phone\'s own apps, not here. Someone who texted STOP gets no automatic texts; you can still call or text them.' },
+      { id: 'stages', title: 'Move a lead along', f: ['stages'], steps: [
+        'Leads the assistant is still handling are under {new}.',
+        { t: 'When you send your price from a lead, it moves to {offer_sent} by itself.', f: ['stages', 'quoteSend'] },
+        'Sent a price from your own phone? Tap {offer_sent} yourself.',
+        'While you agree the price or the details, tap {negotiation}.',
+        'When they say yes, tap {booked}; if they say no, tap {lost}.'
+      ] },
       { id: 'outcome', title: 'Mark a lead {booked} or {lost}', f: [], steps: [
         'Open the lead. Under Change status, tap {booked} or {lost}. A box opens.',
         'For {booked}, check the Final price (it starts from the quote, if there is one). For {lost}, pick Why was it lost? ({lost_reasons}).',
@@ -4306,6 +4453,21 @@ function renderPriceBlockSms(lineItems, total, currency) {
       { q: 'How do I sign out?', a: 'Tap More, then Sign out.', f: [] }
     ]
   };
+  // Round 5 (stages ON): the guide lines that change, keyed by the exact old template. G3 and the placeholders already follow the status word.
+  var GUIDE_STAGE = {
+    'After the event, under Change status, tap {booked} or {lost}.': 'When they say yes, under Change status, tap {booked} and check the final price. If they say no, tap {lost}.',
+    'Mark a lead {booked} or {lost}': 'Close a deal or mark it lost',
+    'For {booked}, check the Final price (it starts from the quote, if there is one). For {lost}, pick Why was it lost? ({lost_reasons}).': "For {booked}, check the Final price (it starts from the quote, if there is one; it can't be left empty). For {lost}, pick Why was it lost? ({lost_reasons}).",
+    'Tap Mark as {booked_lc} or Mark as {lost_lc} to confirm.': 'Tap Move to {booked} or Mark as {lost_lc} to confirm.',
+    'On a {booked} lead, tick Deposit received once it arrives. If the booking is cancelled, tap {lost}, pick Cancelled after booking and type what you kept.': 'On a {booked} lead, tick Deposit received once it arrives. If the deal falls through, tap {lost}, pick Cancelled after booking and type what you kept.',
+    'On {tab_list}, tap a button near the top to narrow the list: Open, {contacted}, {booked}, {lost} or All.': 'On {tab_list}, tap a tab near the top to narrow the list: All open, {new}, {contacted}, {offer_sent}, {negotiation}, {booked}, {lost} or All. Slide the row sideways to see them all.',
+    "Tap Booked or Didn't book on each. A box asks you to confirm (and why, for Didn't book).": 'Tap {booked} or {lost} on each. A box asks you to confirm (the final price for {booked}, why for {lost}).',
+    'Tap {tab_calendar}. This week and Later list coming events; the month grid shows booked ones. Switch on Include leads not booked yet to add the rest.': 'Tap {tab_calendar}. This week and Later list coming events; the month grid shows closed deals. Switch on Include leads not closed yet to add the rest.',
+    '{metrics_open}. Scroll through sections such as Money booked, Money on the table, Close rate and Speed.': '{metrics_open}. Scroll through sections such as Deals closed, Money on the table, Close rate and Speed.',
+    'Looking ahead shows bookings by event month, open quotes at full price, and a likely range once there is enough history.': 'Looking ahead shows closed deals by event month, open quotes at full price, and a likely range once there is enough history.',
+    'Mark leads {booked} or {lost} so these numbers stay right.': 'Mark each lead {booked} or {lost} when you know, so these numbers stay right.',
+    'Yes. On the lead, under Change status, tap the right one. Going back from {booked} or {lost} to {contacted} clears its price or reason. A lead who texted STOP can be marked too.': 'Yes. On the lead, under Change status, tap the right one. Going back from {booked} or {lost} clears its final price or reason. Moving a lead from {offer_sent} or {negotiation} back to {contacted} sends no follow-up text. A lead who texted STOP can be marked too.'
+  };
   var GUIDE_TAB_NAMES = { today: 'Today', list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet' };
 
   // The guide, filtered: { lede, quickstart: { title, steps } | null, sections: [{ id, title, steps, note }], faq: [{ q, a }] }.
@@ -4315,10 +4477,13 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var tabLabel = opts && typeof opts.tab === 'function' ? opts.tab : null;
     // Round 3 review FIX-4: with Today on (opts.today), Metrics is no longer in the bar: it opens from Today's All numbers or from More.
     var metricsOpen = opts && opts.today === true ? 'On {tab_today}, tap All numbers (or tap More, then {tab_metrics})' : 'Tap {tab_metrics}';
-    function all(flags) { return (Array.isArray(flags) ? flags : []).every(function (f) { return GUIDE_FLAGS.indexOf(f) !== -1 && !!isOn(f); }); }
+    // 'stages' is also a lib switch: with it OFF the guide never says a word about the new statuses, whatever the page answers (OFF text is byte-identical).
+    function all(flags) { return (Array.isArray(flags) ? flags : []).every(function (f) { return GUIDE_FLAGS.indexOf(f) !== -1 && (f !== 'stages' || CUSTOM.stages) && !!isOn(f); }); }
     function listWords(rows) { return rows.length > 1 ? rows.slice(0, -1).join(', ') + ' or ' + rows[rows.length - 1] : rows.join(''); }
     function words(text) {
-      var map = { contacted: statusInfo('contacted').label, booked: statusInfo('booked').label, lost: statusInfo('lost').label, needs: statusInfo('handed_off').label, opted_out: statusInfo('opted_out').label };
+      var map = { contacted: statusInfo('contacted').label, booked: statusInfo('booked').label, lost: statusInfo('lost').label, needs: statusInfo('handed_off').label, opted_out: statusInfo('opted_out').label,
+        'new': statusInfo('new').label, offer_sent: statusInfo('offer_sent').label, negotiation: statusInfo('negotiation').label };
+      text = CUSTOM.stages && Object.prototype.hasOwnProperty.call(GUIDE_STAGE, text) ? GUIDE_STAGE[text] : text;
       return String(text).replace(/\{([a-z_]+)\}/g, function (m, k) {
         if (k === 'lost_reasons') return listWords(lostReasons().map(function (x) { return x.label; }));
         if (k === 'old_lead') return lostReasonLabel('old_lead');
@@ -4688,7 +4853,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var z = tzWord(tz);
     return ['Received (' + z + ' time)', 'Customer #', 'Name', 'Phone', 'Email', 'Status', 'Status changed (' + z + ' time)',
       'Event date', 'Occasion', 'Guests', 'Hours', 'Event city', 'Distance (km)', 'Bar rental', 'Quote', 'Quote total ($)', 'Your price (not sent) ($)',
-      'Quote details', 'Promotion', 'Value', 'Booked for ($)', 'Deposit received (' + z + ' time)', 'Kept from cancellation ($)', 'Lost reason', 'Came from', 'Texts', 'Consent', 'Follow-up',
+      'Quote details', 'Promotion', 'Value', stageWord('W45', 'Booked for ($)'), 'Deposit received (' + z + ' time)', 'Kept from cancellation ($)', 'Lost reason', 'Came from', 'Texts', 'Consent', 'Follow-up',
       'Last activity (' + z + ' time)', 'Events for this customer', 'Other dates (from form)', 'Additional details',
       'History', 'Notes', 'Record ID'];
   }
@@ -4784,10 +4949,10 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var h = (Array.isArray(r.history) ? r.history : []).filter(Boolean).map(function (e) {
       var a = String(e.action || '').toLowerCase();
       if (a === 'hidden' || a === 'unhidden') return [exportLocal(e.at), hideHistoryText(a, e.source)].filter(Boolean).join(' ');   // R5: never the raw word in the spreadsheet
-      var label = CUSTOM.status[a] || HISTORY_ACTIONS[a] || statusInfo(a).label;
+      var label = historyLabel(a);
       var s = String(e.source || '').toLowerCase();
       var src = HISTORY_SOURCES[s] || (s ? s.replace(/_/g, ' ') : '');
-      var extra = a === 'booked' ? fmtMoney(e.amount) : a === 'lost' ? lostReasonLabel(e.reason) + (String(e.reason || '').toLowerCase() === CANCELLED_KEY && fmtMoney(e.amount) ? ' (' + fmtMoney(e.amount) + ' kept)' : '') : '';
+      var extra = a === 'booked' || a === 'offer_sent' ? fmtMoney(e.amount) : a === 'lost' ? lostReasonLabel(e.reason) + (String(e.reason || '').toLowerCase() === CANCELLED_KEY && fmtMoney(e.amount) ? ' (' + fmtMoney(e.amount) + ' kept)' : '') : '';
       return [exportLocal(e.at), label, extra, src].filter(Boolean).join(' ');
     });
     var more = Number(r.history_more) || 0;
@@ -4869,9 +5034,9 @@ function renderPriceBlockSms(lineItems, total, currency) {
 
   // The four choices, labels from the client's status words. All first and pre-selected.
   function exportGroups() {
-    var f = filters();
-    function lab(k) { return f.filter(function (x) { return x.key === k; })[0].label; }
-    return ['all', 'open', 'booked', 'lost'].map(function (k) { return { key: k, label: lab(k) }; });
+    // Fixed words (not the tabs'): ON the first tab reads "All open", but the file choice stays "Open".
+    var lab = { all: 'All', open: 'Open', booked: statusInfo('booked').label, lost: statusInfo('lost').label };
+    return ['all', 'open', 'booked', 'lost'].map(function (k) { return { key: k, label: lab[k] }; });
   }
 
   // Page choices -> RPC arguments, or { ok: false, error }.
@@ -5368,13 +5533,16 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var cur = String(current || '').toLowerCase();
     if (cur === 'booked' || cur === 'lost' || statusGroup(cur) !== 'open') return [];
     var p = perms || {};
-    return actionsAhead(cur).filter(function (st) { return p['status_' + st] === true; });
+    // Round 5 (always, safety): the server refuses staff Contacted on Offer sent / Negotiation (SQL 052), so it is never offered.
+    var onStage = cur === 'offer_sent' || cur === 'negotiation';
+    // And a staff member never gets Offer sent / Negotiation at all: those two are the owner's (no staff switch exists, SQL 052).
+    return actionsAhead(cur).filter(function (st) { return !(onStage && st === 'contacted') && st !== 'offer_sent' && st !== 'negotiation' && p['status_' + st] === true; });
   }
 
   // One plain line under the buttons for staff; '' when nothing needs saying.
   function staffActionsNote(current, perms) {
     var cur = String(current || '').toLowerCase();
-    if (cur === 'booked' || cur === 'lost') return 'Only the owner can change a booked or lost lead.';
+    if (cur === 'booked' || cur === 'lost') return stageWord('W27', 'Only the owner can change a booked or lost lead.');
     var base = actionsNote(cur);
     if (base) return base;
     if (canSetStatus(cur, 'contacted') || canSetStatus(cur, 'booked') || canSetStatus(cur, 'lost')) {
@@ -5457,7 +5625,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
   var TODAY_NEEDS_EMPTY = 'Nobody is waiting on you right now. When a customer asks for you, or a price is waiting for you, they show here.';
   // "This week" with nothing in it: says what to do. showPossible = the Calendar's own "Include leads not booked yet" switch (Today follows it).
   function todayWeekEmpty(showPossible) {
-    return (showPossible ? 'No events in the next 7 days.' : 'Nothing booked in the next 7 days.') + ' Open Calendar to see the whole month.';
+    return (showPossible ? 'No events in the next 7 days.' : stageWord('W54', 'Nothing booked in the next 7 days.')) + ' Open Calendar to see the whole month.';
   }
 
   // Today's three numbers (owner only: the page passes metricsOn = the Metrics switch, which staff never get). Each one has its own state:
@@ -5484,14 +5652,14 @@ function renderPriceBlockSms(lineItems, total, currency) {
 
     var f = o.forecast;
     if (o.forecastOn && !(f && typeof f === 'object' && f.enabled === false)) {
-      var b = { key: 'month', label: mon + ' events ' + statusInfo('booked').label.toLowerCase(), state: 'loading', value: '', sub: '', bar: null };
+      var b = { key: 'month', label: CUSTOM.stages ? stageWord('W55', '', { m: mon }) : mon + ' events ' + statusInfo('booked').label.toLowerCase(), state: 'loading', value: '', sub: '', bar: null };
       var fs = o.forecastState;
       if (fs === 'error' || (fs === 'ok' && (!f || !Array.isArray(f.months)))) b.state = 'error';
       else if (fs === 'ok') {
         var ym = t.ymd.slice(0, 7);
         var row = f.months.filter(function (x) { return x && x.month === ym; })[0];
         var bk = fcPair(row && row.booked), op = fcPair(row && row.open);
-        if (!row || (!bk.count && !op.count)) { b.state = 'empty'; b.value = fmtMoney(0); b.sub = 'Nothing booked for ' + mon + ' yet'; }
+        if (!row || (!bk.count && !op.count)) { b.state = 'empty'; b.value = fmtMoney(0); b.sub = stageWord('W56', 'Nothing booked for ' + mon + ' yet', { m: mon }); }
         else {
           b.state = 'ok';
           b.value = fcBooked(bk);
@@ -5540,8 +5708,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
     });
     return {
       cols: cols, empty: !max,
-      label: 'Booked money and open quotes by event month. ' + cols.map(function (c) {
-        return c.label + ': ' + fmtMoney(c.booked) + ' booked, ' + fmtMoney(c.open) + ' in open quotes';
+      label: stageWord('W66', 'Booked money and open quotes by event month. ') + cols.map(function (c) {
+        return stageWord('W66b', c.label + ': ' + fmtMoney(c.booked) + ' booked, ' + fmtMoney(c.open) + ' in open quotes', { m: c.label, a: fmtMoney(c.booked), b: fmtMoney(c.open) });
       }).join('; ') + '.'
     };
   }
@@ -5556,6 +5724,8 @@ function renderPriceBlockSms(lineItems, total, currency) {
 
   return {
     TZ: TZ,
+    // round 5 (status stages switch + its words)
+    stagesOn: stagesOn, stageWord: stageWord, STAGE_WORDS: STAGE_WORDS,
     normalizePhone: normalizePhone,
     maskPhone: maskPhone,
     fmtStamp: fmtStamp,
@@ -5612,7 +5782,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     STALE_QUOTE_HINT: STALE_QUOTE_HINT,
     CANCELLED_KEY: CANCELLED_KEY,
     KEPT_REQUIRED: KEPT_REQUIRED,
-    KEPT_HINT: KEPT_HINT,
+    get KEPT_HINT() { return stageWord('W33', KEPT_HINT); },
     KEPT_GOING_BACK: KEPT_GOING_BACK,
     keptBackText: keptBackText,
     DEPOSIT_LABEL: DEPOSIT_LABEL,

@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261121-1544-6ac73b6f";
+window.CV_BUILD = "20261123-1827-20c2a0c3";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -60,6 +60,9 @@ window.CV_CUSTOM = {
   // today (round 3 redesign, Kevin "All A" 11-20): the Today home screen. On = it is the first bottom-bar tab and where the app opens: the alerts line,
   // Needs you as cards (Call, Text, Open; today's rule), three numbers (owner only: open quotes, this month's events booked, first reply), "Did these happen?"
   // and This week; Metrics then leaves the bar and opens from Today ("All numbers") and from More. false = the page exactly as before (Leads home, today's bar). Left out = on.
+  // stages (round 5 redesign, Kevin "All A" 11-21): the five-status switch. On = tabs All open / New / Contacted / Offer sent / Negotiation / Deal closed / Lost / All, five status buttons
+  // (Contacted, Offer sent, Negotiation, Deal closed, Lost), the new words ("Deal closed" for "Booked"), and a required final price when the owner moves a lead to Deal closed.
+  // OFF unless exactly true (it needs sql 052 + 053 and the round-5 n8n write on that client's side). Left out = off = the page exactly as before.
   // quoteSend (the "Send it to them" button on a lead's saved price). OFF unless exactly true; the database has its own switch, cv_config quote_send_enabled.
   // team (More > Team, owner only: add or remove the people who can read your leads and notes). OFF unless exactly true; leave false until Kevin rules.
   // noQuoteFilter (owner only): the "No quote" chip under the filter chips and the "No quote sent" tag on rows. Same rule as the "without a quote yet" count in Metrics.
@@ -68,7 +71,7 @@ window.CV_CUSTOM = {
   waitWarnHours: 24,
   // Days after which a saved price on a lead (not sent yet) says how old it is: 7–29, default 21, 0 = never. The server refuses to text a price older than 30 days.
   quoteAgeWarnDays: 21,
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: true, noQuoteFilter: true, quoteDraft: true, guide: true, editLead: true, money: true, hideLead: true, addLeadNoPhone: true, quoteCard: true, today: true },
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: true, noQuoteFilter: true, quoteDraft: true, guide: true, editLead: true, money: true, hideLead: true, addLeadNoPhone: true, quoteCard: true, today: true, stages: true },
 
   // Quote calculator pick-lists (More details). Leave a list out and that field stays a plain text box.
   // quoteOccasions: exactly the Occasion choices on the client's booking form, same words, same order.
@@ -95,7 +98,7 @@ window.CV_CUSTOM = {
   tabLabels: { today: 'Today', list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet', hidden: 'Hidden leads', team: 'Team' },
 
   // Status wording on chips, filter chips, the three buttons and the history lines.
-  // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, booked, lost, opted_out.
+  // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, offer_sent, negotiation, booked, lost, opted_out.
   statusLabels: {},
 
   // Contact buttons on a lead's record, in this order. Known: 'call', 'text', 'email'.

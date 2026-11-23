@@ -1501,6 +1501,27 @@ input.field[type="date"]::-webkit-datetime-edit, input.field[type="time"]::-webk
 .action.is-current, .action.is-current[disabled] { border-style: solid; border-color: var(--accent); background: var(--accent-tint); color: var(--accent-ink); }
 .action.is-current .action-check { display: block; }
 .action.is-busy .action-check { display: none; }
+/* Round 5 (switch features.stages): five status buttons. Under 380px: 2 columns (Contacted | Offer sent, Negotiation | Deal closed, Lost across both), so
+   no label ever breaks inside a word. From 380px: 3 + 2 (a 6-column grid, each button spans 2, the last two span 3). From 600px: one row of five. */
+.actions.actions-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.actions.actions-5 .action { min-width: 0; padding: 0 6px; }
+.actions.actions-5 .action:nth-child(5) { grid-column: span 2; }
+.actions.actions-5 .action-label { min-width: 0; overflow-wrap: normal; word-break: normal; hyphens: none; text-align: center; }
+/* Below 600px the current-status tick is left out of these buttons (the label needs the room: "Negotiation" overflowed with it). The current one still shows by its
+   solid accent border (2px here), tint and bold label, and by aria-current + disabled; it is never colour alone. */
+.actions.actions-5 .action-check, .actions.actions-5 .action.is-current .action-check { display: none; }
+.actions.actions-5 .action.is-current { border-width: 2px; font-weight: 800; }
+@media (min-width: 380px) {
+  .actions.actions-5 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .actions.actions-5 .action { grid-column: span 2; }
+  .actions.actions-5 .action:nth-child(n+4) { grid-column: span 3; }
+}
+@media (min-width: 600px) {
+  .actions.actions-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .actions.actions-5 .action.is-current .action-check { display: block; }
+  .actions.actions-5 .action.is-current { border-width: 1px; font-weight: 650; }
+  .actions.actions-5 .action, .actions.actions-5 .action:nth-child(n+4) { grid-column: auto; }
+}
 
 /* ---------- Lead record: Event card as a two-column grid (label over value); Maps link, km, check address, dates and offer kept ---------- */
 .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px var(--sp-3); }
@@ -1931,6 +1952,7 @@ input.field[type="date"]::-webkit-datetime-edit, input.field[type="time"]::-webk
 /* Change status (Contacted / Booked / Lost): three equal columns no longer fit ("Lost" ran off the card); as many columns as fit (one full-width button when only one status is left, 2 + 1 at 320 px, 3 on wide screens). */
 :root[data-text-size="large"] .actions, :root[data-text-size="larger"] .actions { grid-template-columns: repeat(auto-fit, minmax(min(100%, 7.5rem), 1fr)) !important; }   /* !important: app.js sets the column count inline */
 :root[data-text-size="large"] .action, :root[data-text-size="larger"] .action { min-width: 0; }
+:root[data-text-size="large"] .actions.actions-5 .action, :root[data-text-size="larger"] .actions.actions-5 .action { grid-column: auto; }   /* round 5: the auto-fit grid above needs no spans */
 /* Conversation bar: "Conversation" + the two pill buttons wrap onto a second line instead of running off the right edge. */
 :root[data-text-size="large"] .convo-bar, :root[data-text-size="larger"] .convo-bar { flex-wrap: wrap; }
 :root[data-text-size="large"] .convo-tools, :root[data-text-size="larger"] .convo-tools { min-width: 0; justify-content: flex-start; }

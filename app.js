@@ -215,7 +215,7 @@
     recQuote: $('rec-quote'), quoteBody: $('quote-body'), recOthers: $('rec-others'), othersList: $('others-list'), recShared: $('rec-shared'), sharedList: $('shared-list'),
     convo: $('convo'), convoScroll: $('convo-scroll'),
     convoOpen: $('convo-open'), convoFull: $('convo-full'), convoFullH: $('convo-full-h'), convoFullClose: $('convo-full-close'), convoFullScroll: $('convo-full-scroll'), fullThread: $('full-thread'), fullEmpty: $('full-empty'), fullSysFold: $('full-sys-fold'),
-    actions: $('actions'), actionsNote: $('actions-note'), actionErr: $('action-error'), history: $('history'), historyMore: $('history-more'),
+    actions: $('actions'), actionsNote: $('actions-note'), actionErr: $('action-error'), statusLive: $('status-live'), history: $('history'), historyMore: $('history-more'),
     threadScroll: $('thread-scroll'), threadLoading: $('thread-loading'), threadBox: $('thread'), threadEmpty: $('thread-empty'),
     threadErr: $('thread-error'), pill: $('new-pill'),
     // Round 1 redesign: the scroll fade on the tab row, the list's spoken summary, the next-step box, the ONE Quote card.
@@ -1088,6 +1088,9 @@
     lost: 'No lost leads. Try another tab.',
     noquote: 'Every open lead has a quote. Try another tab.'
   };
+  // Round 5 (switch features.stages): the new tabs' empty lines (words W1-W4 live in lib.js STAGE_WORDS). applyStageWords() merges them over the map
+  // above at start-up when the switch is on; off = the map above, unchanged.
+  var FILTER_EMPTY_STAGES = { 'new': 'W1', offer_sent: 'W2', negotiation: 'W3', booked: 'W4' };
 
   // Gap 1: the "Without a quote yet" chip and row tag (G6 11-13: were "No quote" / "No quote sent"; key stays 'noquote'). Owner only (a staff list has no prices), per-client switch
   // features.noQuoteFilter, and the rule is the Metrics one (L.noQuoteOpen). The chip shows only while it has leads in it.
@@ -3101,6 +3104,8 @@
       case 'search': return HAS_SEARCH;
       case 'push': return HAS_PUSH && L.pushState(pushEnv()) !== 'hidden';
       case 'noQuoteFilter': return noQuoteOn();
+      case 'stages': return L.stagesOn();   // round 5: the five-status switch
+      case 'quoteSend': return feature('quoteSend');
       case 'quoteDraft': return feature('quoteDraft');
       case 'quotePromoEnds': return feature('quoteDraft') && L.quotePromosEnd(custom);
       case 'exportOff': return guideFlag('export') && !!S.exp && S.exp.on === false;   // D10: only once the database has said off
@@ -3888,7 +3893,7 @@
     el.calBody.replaceChildren(frag);
     show(el.calGrid, true);
     if (focused) { var back = el.calBody.querySelector('[data-day="' + focused + '"]'); if (back) try { back.focus(); } catch (e) { /* ignore */ } }
-    setText(el.calMonthNote, bookedInMonth ? '' : 'Nothing booked in ' + L.monthTitle(c.y, c.m).split(' ')[0] + ' yet.');
+    setText(el.calMonthNote, bookedInMonth ? '' : L.stageWord('W50', 'Nothing booked in ' + L.monthTitle(c.y, c.m).split(' ')[0] + ' yet.', { m: L.monthTitle(c.y, c.m).split(' ')[0] }));
     renderDay(days);
   }
 
@@ -4016,7 +4021,8 @@
     a.appendChild(make('span', 'pe-meta', it.meta));
     li.appendChild(a);
     var btns = make('div', 'pe-btns');
-    [['booked', 'Booked'], ['lost', "Didn't book"]].forEach(function (d) {
+    // Round 5 (switch on): Deal closed / Lost, the same words as the status buttons. Off: today's two.
+    (L.stagesOn() ? [['booked', L.statusInfo('booked').label], ['lost', L.statusInfo('lost').label]] : [['booked', 'Booked'], ['lost', "Didn't book"]]).forEach(function (d) {
       var b = make('button', 'pe-btn pe-' + d[0], d[1]);
       b.type = 'button';
       b.disabled = !!S.pastBusy;
@@ -4332,7 +4338,7 @@
     // Grouped Today / This week / Later; the "how to stop it" rule is said once, under the heading.
     var sched = fuBlock('Scheduled follow-up texts', g.scheduled.length ? '' : L.fuEmptyText('scheduled'));
     if (g.scheduled.length) {
-      sched.appendChild(make('p', 'fu-rule', 'Marking a lead ' + L.statusInfo('booked').label.toLowerCase() + ' or ' + L.statusInfo('lost').label.toLowerCase() + ' stops its texts.'));
+      sched.appendChild(make('p', 'fu-rule', L.stageWord('W37', 'Marking a lead ' + L.statusInfo('booked').label.toLowerCase() + ' or ' + L.statusInfo('lost').label.toLowerCase() + ' stops its texts.')));
       L.groupScheduled(g.scheduled).forEach(function (grp) {
         var gs = make('section', 'fu-group');
         var gh = make('h3', 'fu-group-h', grp.label);
@@ -4484,9 +4490,9 @@
     },
     booked: function (m) {
       var bk = m.booked || {};
-      var b = block('Money booked');
+      var b = block(L.stageWord('W57', 'Money booked'));
       if (!(Number(bk.all_time && bk.all_time.count) > 0)) {
-        b.appendChild(make('p', 'm-line m-empty', 'Nothing booked yet.'));
+        b.appendChild(make('p', 'm-line m-empty', L.stageWord('W58', 'Nothing booked yet.')));
         return b;
       }
       var tiles = make('div', 'm-tiles');
@@ -4574,7 +4580,7 @@
       li.appendChild(left);
       var right = make('span', 'vt-right');
       right.appendChild(make('span', 'vt-count', L.plural(r.leads, 'lead', 'leads') + ' \u00b7 ' + r.month + ' this month'));
-      if (r.booked) right.appendChild(make('span', 'vt-count', r.booked + ' booked' + (r.bookedMoney ? ' (' + r.bookedMoney + ')' : '')));
+      if (r.booked) right.appendChild(make('span', 'vt-count', L.stageWord('W59', r.booked + ' booked', { n: r.booked }) + (r.bookedMoney ? ' (' + r.bookedMoney + ')' : '')));
       li.appendChild(right);
       ul.appendChild(li);
     });
@@ -4627,16 +4633,16 @@
         fig.appendChild(col);
       });
       b.appendChild(fig);
-      b.appendChild(make('p', 'm-sub fc-key', 'Solid = ' + L.statusInfo('booked').label.toLowerCase() + '. Outline = open quotes for that month, counted in full.'));
+      b.appendChild(make('p', 'm-sub fc-key', L.stageWord('W60', 'Solid = ' + L.statusInfo('booked').label.toLowerCase() + '. Outline = open quotes for that month, counted in full.')));
     }
-    b.appendChild(make('p', 'm-sub fc-head', 'Already booked, by event month'));
+    b.appendChild(make('p', 'm-sub fc-head', L.stageWord('W61', 'Already booked, by event month')));
     var ul = make('ul', 'vt-list fc-list');
     v.rows.forEach(function (r) {
       var li = make('li', 'vt-row' + (r.bookedCount ? '' : ' is-zero'));
       li.appendChild(make('span', 'vt-name', r.label));
       var right = make('span', 'vt-right');
       if (r.bookedCount) right.appendChild(make('span', 'vt-money', r.bookedMoney));
-      right.appendChild(make('span', 'vt-count', r.bookedCount ? L.plural(r.bookedCount, 'job', 'jobs') : 'Nothing booked'));
+      right.appendChild(make('span', 'vt-count', r.bookedCount ? L.plural(r.bookedCount, 'job', 'jobs') : L.stageWord('W62', 'Nothing booked')));
       li.appendChild(right);
       ul.appendChild(li);
     });
@@ -4644,7 +4650,7 @@
     lt.appendChild(make('span', 'vt-name', 'Later'));
     var lr = make('span', 'vt-right');
     if (v.later.bookedCount) lr.appendChild(make('span', 'vt-money', v.later.bookedMoney));
-    lr.appendChild(make('span', 'vt-count', v.later.bookedCount ? L.plural(v.later.bookedCount, 'job', 'jobs') : 'Nothing booked'));
+    lr.appendChild(make('span', 'vt-count', v.later.bookedCount ? L.plural(v.later.bookedCount, 'job', 'jobs') : L.stageWord('W62', 'Nothing booked')));
     lt.appendChild(lr);
     ul.appendChild(lt);
     b.appendChild(ul);
@@ -4768,12 +4774,15 @@
       if (isCurrent) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
       b.classList.toggle('is-busy', busy);
       if (busy) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy');
-      b.title = isCurrent ? 'Already ' + a.label.toLowerCase() : '';
+      b.title = isCurrent ? (L.stagesOn() ? 'Now: ' + a.label : 'Already ' + a.label.toLowerCase()) : '';
     });
     setText(el.actionsNote, actionsNoteFor(current));
     var count = showAll ? L.actions().length : ahead.length;
     el.actions.hidden = !!lead && count === 0 && !S.pending;
-    el.actions.style.gridTemplateColumns = 'repeat(' + Math.max(1, Math.min(3, count || 3)) + ', 1fr)';
+    // Round 5: five buttons (owner, switch on) sit 3 + 2 by CSS (class actions-5, one row from 600 px); every other case keeps the inline columns.
+    var five = L.stagesOn() && showAll && count === 5;
+    el.actions.classList.toggle('actions-5', five);
+    el.actions.style.gridTemplateColumns = five ? '' : 'repeat(' + Math.max(1, Math.min(3, count || 3)) + ', 1fr)';
     renderMoney();
   }
 
@@ -4903,6 +4912,8 @@
     if (priced) {
       var bp = L.bookedPrefill(lead);   // R7 (C4): the quote, as the server's freeze order assumes; a quote older than an edit says so
       el.price.value = bp.value; el.price.removeAttribute('aria-invalid');
+      // Round 5 ruling 3: the owner's Deal closed needs a final price (type 0 if none); only with the status switch on.
+      if (L.stagesOn()) { el.price.required = true; el.price.setAttribute('aria-required', 'true'); } else { el.price.required = false; el.price.removeAttribute('aria-required'); }   // no <form> around it: the sheet's own check (statusExtras) still decides, nothing is blocked natively
       setText(el.priceHint, bp.hint);   // "From the quote" only when a price really was filled in from one
     }
     show(el.reasonBox, lost);
@@ -4956,7 +4967,7 @@
     var lead = c.ctx ? c.ctx.lead : S.thread.lead;
     var x = isStaff() && c.status === 'booked'
       ? { ok: true, args: {} }
-      : L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value, kept: el.kept.value }, lead && L.bookedPrefill(lead).quote, { staff: isStaff() });
+      : L.statusExtras(c.status, { amount: el.price.value, reason: pickedReason(), note: el.reasonNote.value, kept: el.kept.value }, lead && L.bookedPrefill(lead).quote, { staff: isStaff(), required: L.stagesOn() && !isStaff() });
     if (!x.ok) {
       setText(el.confirmErr, x.error);
       if (x.field === 'amount') { el.price.setAttribute('aria-invalid', 'true'); try { el.price.focus(); } catch (e) { /* ignore */ } }
@@ -5003,6 +5014,7 @@
     setText(el.actionErr, '');
     renderActions();
     Promise.resolve().then(function () { return S.api.setStatus(id, status, extra || {}); }).then(function () {
+      if (el.statusLive && id === S.thread.id) el.statusLive.textContent = 'Saved: ' + L.statusInfo(status).label + '.';   // round 5: polite live line for screen readers
       S.historyOpen = false;
       // This lead's follow-up rows are out of date now: forget them so renderNext cannot repeat an old promise before the refetch lands.
       if (S.followUps) S.followUps = S.followUps.filter(function (r) { return r.lead_id !== id; });
@@ -5706,6 +5718,7 @@
       show(el.pill, false);
       setText(el.threadErr, '');
       setText(el.actionErr, '');
+      el.statusLive.textContent = '';   // round 5: the "Saved: ..." line belongs to the lead just left
       setText(el.moneyErr, '');
       S.depositBusy = false;
       setText(el.noteErr, '');
@@ -5775,6 +5788,16 @@
   /* ---------- auth + sign-in UI ---------- */
 
   // One app name (L.appName): sign-in heading and browser tab. Backend-offered names only fill the tab/heading when config has none.
+  // Round 5 (switch features.stages): the calendar's static words follow the new status words. Off: index.html keeps today's words untouched.
+  function applyStageWords() {
+    if (!L.stagesOn()) return;
+    Object.keys(FILTER_EMPTY_STAGES).forEach(function (k) { FILTER_EMPTY[k] = L.stageWord(FILTER_EMPTY_STAGES[k], FILTER_EMPTY[k]); });
+    [['cal-possible-label', 'W48', 'Include leads not booked yet'], ['cal-legend-yes', 'W49yes', 'Booked'], ['cal-legend-no', 'W49no', 'Not booked yet']].forEach(function (r) {
+      var n = document.getElementById(r[0]);
+      if (n) n.textContent = L.stageWord(r[1], r[2]);
+    });
+  }
+
   function applyAppName(name) {
     var n = name || L.appName(custom);
     document.title = n;
@@ -5829,7 +5852,7 @@
     if (el.today) { el.todayNeedsList.replaceChildren(); el.todayTiles.replaceChildren(); el.todayWeekList.replaceChildren(); el.todayLive.textContent = ''; }   // round 3: no name stays on Today
     el.eventFacts.replaceChildren(); el.recEmail.replaceChildren(); S.eventMoreFor = null; el.quoteBody.replaceChildren(); el.othersList.replaceChildren(); el.sharedList.replaceChildren(); el.history.replaceChildren();
     el.recPhone.removeAttribute('href'); el.contactActions.replaceChildren();
-    ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recAutoFail', 'recAlertFail', 'recPhone', 'recEmail', 'eventDetails', 'confirmText', 'confirmNote', 'stripNote', 'actionErr', 'moneyErr', 'noteErr', 'contactNote']
+    ['recName', 'recNext', 'recJob', 'recSource', 'recNoauto', 'recAutoFail', 'recAlertFail', 'recPhone', 'recEmail', 'eventDetails', 'confirmText', 'confirmNote', 'stripNote', 'actionErr', 'statusLive', 'moneyErr', 'noteErr', 'contactNote']
       .forEach(function (k) { if (el[k]) el[k].textContent = ''; });
     el.noteText.value = ''; syncNoteSave();
     closeConfirm();
@@ -6540,6 +6563,7 @@
     buildExportGroups();
     show(el.searchWrap, HAS_SEARCH);
     applyAppName();
+    applyStageWords();
     restorePrefs();
     qDraftSweep();
     bindEvents();
