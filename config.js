@@ -3,7 +3,7 @@ if (location.protocol === 'http:' && location.hostname !== 'localhost' && locati
   location.replace('https://' + location.host + location.pathname + location.search + location.hash);
 }
 /* Build id: 'dev' in the repo; publish_lab.sh fills it (YYYYMMDD-HHMM-<hash>) so a help request says which version the owner had. */
-window.CV_BUILD = "20261123-1827-20c2a0c3";
+window.CV_BUILD = "20261124-1627-8fbec898";
 /* Public by design: the project URL and the publishable (anon) key. Row access is enforced
    by RLS, so these two values are safe to ship in the page. Replace the placeholders at deploy. */
 window.CV_CONFIG = {
@@ -71,7 +71,27 @@ window.CV_CUSTOM = {
   waitWarnHours: 24,
   // Days after which a saved price on a lead (not sent yet) says how old it is: 7–29, default 21, 0 = never. The server refuses to text a price older than 30 days.
   quoteAgeWarnDays: 21,
-  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: true, noQuoteFilter: true, quoteDraft: true, guide: true, editLead: true, money: true, hideLead: true, addLeadNoPhone: true, quoteCard: true, today: true, stages: true },
+  // desktop (rounds 7-9 redesign, Kevin "All A" 11-20): the computer layout over 1200 px wide: a sidebar, the list and the lead side by side (desktopLeads),
+  // the Pipeline board (desktopPipeline, needs stages + sql 052/053), the Dashboard (desktopDashboard, needs sql 055 for the period switch), J / K / E / L / R keys (desktopKeys).
+  // ON for the lab since Kevin's publish yes 11-24 ("Yes, apply and publish", choice 12A). OFF unless exactly true; desktop is the master switch. Under 1201 px the page is exactly as before whatever these say.
+  // Built: desktop, desktopLeads, desktopKeys (round 7), desktopPipeline (round 8: the board in dollars, owner only, only with stages on), desktopDashboard (round 9: replaces Metrics in the sidebar, owner only, needs 'metrics' in tabs; its period switch shows once sql/055 is on the database). Staff never get Pipeline or Dashboard.
+  // A second client sets only what it wants, e.g. desktop: true, desktopLeads: true (no keys; no Pipeline without stages + sql 052/053), plus its own savedViews below.
+  features: { followups: true, calendar: true, quote: true, value: true, metrics: true, forecast: true, pastEvents: true, search: true, notes: true, push: true, addLead: true, support: true, export: true, ask: true, team: false, quoteSend: true, noQuoteFilter: true, quoteDraft: true, guide: true, editLead: true, money: true, hideLead: true, addLeadNoPhone: true, desktop: true, desktopLeads: true, desktopPipeline: true, desktopDashboard: true, desktopKeys: true, quoteCard: true, today: true, stages: true },
+
+  // Saved views (rounds 7-9 redesign, ruling 19A): the fixed list under "Saved views" in the computer sidebar (features.desktop + desktopLeads). At most 6, in this order.
+  // Each view: id (a-z, 0-9 and -, up to 24), label (up to 32 characters), and any of:
+  //   tab (open, new, contacted, offer_sent, negotiation, booked, lost, all; new / offer_sent / negotiation need features.stages; default all),
+  //   eventFrom / eventTo (YYYY-MM-DD, both included), minMoney / maxMoney (dollars: final price on a closed deal, else the quote, else a price you saved but did not send yet),
+  //   minGuests / maxGuests, sources (form, text, manual:instagram, manual:phone_call, manual:referral, manual:other, other),
+  //   noQuote: true (open, no quote yet), needsYou: true (waiting on you), sort (newest, quiet, event_soon, event_late, quote_high, customer_text, name_az).
+  // A view with a mistake is left out whole (never half used). Views with money, noQuote or the quote_high sort are owner only (staff never see them).
+  // These three are Kevin's K5 A picks for this client (nothing shows while features.desktop is off). A second client writes its own list here
+  // (its own dates, money lines, sources) and records it in its setup notes; [] = no Saved views heading.
+  savedViews: [
+    { id: 'events-2027', label: 'Events in 2027', eventFrom: '2027-01-01', eventTo: '2027-12-31' },
+    { id: 'over-2k', label: 'Quotes over $2k', minMoney: 2000 },
+    { id: 'big-parties', label: '100 guests or more', minGuests: 100 }
+  ],
 
   // Quote calculator pick-lists (More details). Leave a list out and that field stays a plain text box.
   // quoteOccasions: exactly the Occasion choices on the client's booking form, same words, same order.
@@ -95,7 +115,7 @@ window.CV_CUSTOM = {
   // 'list', 'followups', 'calendar', 'metrics' sit in the bottom bar (with features.today on: Today first, and 'metrics' moves to the top of More); 'ask', 'quote', 'guide', 'support' and 'export' sit under More
   // (More itself is always the last slot and also holds Alerts and Sign out).
   tabs: ['list', 'followups', 'calendar', 'ask', 'quote', 'guide', 'support', 'export', 'hidden', 'metrics', 'team'],
-  tabLabels: { today: 'Today', list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet', hidden: 'Hidden leads', team: 'Team' },
+  tabLabels: { today: 'Today', list: 'Leads', followups: 'Follow-ups', calendar: 'Calendar', metrics: 'Metrics', more: 'More', ask: 'Ask your CRM', quote: 'Quote calculator', guide: 'How to use the CRM', support: 'Help & support', export: 'Download spreadsheet', hidden: 'Hidden leads', team: 'Team', pipeline: 'Pipeline', dashboard: 'Dashboard', settings: 'Settings' },
 
   // Status wording on chips, filter chips, the three buttons and the history lines.
   // e.g. contacted: 'Called'. Keys: new, engaged, quoted, handed_off, contacted, offer_sent, negotiation, booked, lost, opted_out.

@@ -5516,6 +5516,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
 
   // Is a page feature on for this role? Owner: the config switch alone, exactly as before. Staff: also each cv_my_role switch.
   function roleFeatureOn(role, perms, features, key) {
+    if (DESK_KEYS.indexOf(key) !== -1) return desktopFeatureOn(features, key) && !(role === 'staff' && (key === 'desktopPipeline' || key === 'desktopDashboard'));   // rounds 7-9: desktop switches are OFF unless exactly true
     if (!featureOn(features, key)) return false;
     if (key === 'team') return role !== 'staff' && teamFeatureOn(features);   // Team is OFF unless config says exactly true; owner only
     if (key === 'hidden') return role !== 'staff';   // R5: the Hidden leads list is always reachable for the owner (a hidden lead can always come back, whatever the page's hideLead switch says); the More row still shows only while something is hidden
@@ -5720,6 +5721,416 @@ function renderPriceBlockSms(lineItems, total, currency) {
     var h = String(hash || '');
     if (r.name === 'list' && !r.needs && (h === '' || h === '#') && Array.isArray(routes) && routes.indexOf('today') !== -1) return { name: 'today' };
     return r;
+  }
+
+  /* ---------- ROUNDS 7-9 REDESIGN: desktop (over 1200 px) ---------- */
+
+  // Every desktop switch is OFF unless exactly true (unlike featureOn, where a missing key = on). Pure: no DOM, no window.
+  var DESK_MEDIA = '(min-width: 1201px)';
+  var DESK_KEYS = ['desktopLeads', 'desktopPipeline', 'desktopDashboard', 'desktopKeys'];
+  function desktopOn(features) {
+    return !!features && typeof features === 'object' && features.desktop === true;
+  }
+  function desktopFeatureOn(features, key) {
+    return desktopOn(features) && DESK_KEYS.indexOf(key) !== -1 && features[key] === true;
+  }
+
+  // The sidebar: { main: [route...], foot: [route...] } from the page's TAB_ROUTES. opts = { pipeline, dashboard } (booleans).
+  function deskNav(routes, opts) {
+    var r = Array.isArray(routes) ? routes : [];
+    var o = opts || {};
+    var has = function (x) { return r.indexOf(x) !== -1; };
+    var main = [];
+    if (has('today')) main.push('today');
+    main.push('list');
+    if (o.pipeline === true) main.push('pipeline');
+    if (has('followups')) main.push('followups');
+    if (has('calendar')) main.push('calendar');
+    if (o.dashboard === true && has('metrics')) main.push('dashboard'); else if (has('metrics')) main.push('metrics');
+    if (has('ask')) main.push('ask');
+    if (has('quote')) main.push('quote');
+    var foot = [];
+    ['export', 'hidden', 'support'].forEach(function (x) { if (has(x)) foot.push(x); });
+    foot.push('more');
+    return { main: main, foot: foot };
+  }
+  // The extra routes the router must know on desktop.
+  function deskRoutes(routes, opts) {
+    var r = Array.isArray(routes) ? routes : [];
+    var o = opts || {};
+    var out = [];
+    if (o.pipeline === true) out.push('pipeline');
+    if (o.dashboard === true && r.indexOf('metrics') !== -1) out.push('dashboard');
+    return out;
+  }
+
+  // Saved views (a fixed list per client, ruling 19A).
+  var SAVED_VIEW_MAX = 6;
+  var SOURCE_KEYS = ['form', 'text', 'manual:instagram', 'manual:phone_call', 'manual:referral', 'manual:other', 'other'];
+  var SAVED_VIEW_KEYS = ['id', 'label', 'tab', 'eventFrom', 'eventTo', 'minMoney', 'maxMoney', 'minGuests', 'maxGuests', 'sources', 'noQuote', 'needsYou', 'sort'];
+  var SAVED_VIEW_TABS = ['open', 'new', 'contacted', 'offer_sent', 'negotiation', 'booked', 'lost', 'all'];
+
+  // The cv_metrics source rule (053): one of SOURCE_KEYS.
+  function leadSourceBucket(lead) {
+    var s = lead && typeof lead === 'object' ? lead.source : null;
+    if (s === 'tally_form') return 'form';
+    if (s === 'sms_inbound') return 'text';
+    if (s === 'manual') {
+      var m = lead.manual_source;
+      return 'manual:' + (m === 'instagram' || m === 'phone_call' || m === 'referral' || m === 'other' ? m : 'other');
+    }
+    return 'other';
+  }
+
+  // A real YYYY-MM-DD between 2000-01-01 and 2100-12-31, else ''.
+  function viewDate(v) {
+    if (typeof v !== 'string') return '';
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if (!m) return '';
+    var y = +m[1], mo = +m[2], d = +m[3];
+    if (y < 2000 || y > 2100) return '';
+    var t = new Date(Date.UTC(y, mo - 1, d));
+    return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d ? v : '';
+  }
+  function viewNumber(v) { return typeof v === 'number' && isFinite(v) && v >= 0; }
+
+  // Validate one view -> { id, label, f } or null (dropped, never half-applied).
+  function savedViewOne(v, opts, seen) {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+    var keys = Object.keys(v);
+    for (var i = 0; i < keys.length; i++) if (SAVED_VIEW_KEYS.indexOf(keys[i]) === -1) return null;
+    var has = function (k) { return Object.prototype.hasOwnProperty.call(v, k) && v[k] !== undefined; };
+    if (typeof v.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,23}$/.test(v.id) || seen[v.id]) return null;
+    if (typeof v.label !== 'string') return null;
+    var label = v.label.trim();
+    if (!label || label.length > 32 || /[\u0000-\u001f\u007f-\u009f]/.test(label)) return null;
+    var f = {};
+    var stages = !!(opts && opts.stages), staff = !!(opts && opts.staff);
+    if (has('tab')) {
+      if (typeof v.tab !== 'string' || SAVED_VIEW_TABS.indexOf(v.tab) === -1) return null;
+      if (!stages && (v.tab === 'new' || v.tab === 'offer_sent' || v.tab === 'negotiation')) return null;
+      f.tab = v.tab;
+    } else f.tab = 'all';
+    ['eventFrom', 'eventTo'].forEach(function (k) { if (has(k)) f[k] = viewDate(v[k]); });
+    if ((has('eventFrom') && !f.eventFrom) || (has('eventTo') && !f.eventTo)) return null;
+    if (f.eventFrom && f.eventTo && f.eventTo < f.eventFrom) return null;
+    var bad = false;
+    ['minMoney', 'maxMoney', 'minGuests', 'maxGuests'].forEach(function (k) {
+      if (!has(k)) return;
+      if (!viewNumber(v[k])) bad = true; else f[k] = v[k];
+    });
+    if (bad) return null;
+    if (f.minMoney !== undefined && f.maxMoney !== undefined && f.minMoney > f.maxMoney) return null;
+    if (f.minGuests !== undefined && f.maxGuests !== undefined && f.minGuests > f.maxGuests) return null;
+    if (has('sources')) {
+      if (!Array.isArray(v.sources) || !v.sources.length) return null;
+      for (var j = 0; j < v.sources.length; j++) if (SOURCE_KEYS.indexOf(v.sources[j]) === -1) return null;
+      f.sources = v.sources.slice();
+    }
+    if (has('noQuote')) { if (v.noQuote !== true) return null; f.noQuote = true; }
+    if (has('needsYou')) { if (v.needsYou !== true) return null; f.needsYou = true; }
+    if (has('sort')) {
+      var known = false, all = listSorts();
+      for (var s = 0; s < all.length; s++) if (all[s].key === v.sort) known = true;
+      if (!known) return null;
+      f.sort = v.sort;
+    }
+    if (staff && (f.minMoney !== undefined || f.maxMoney !== undefined || f.noQuote === true || f.sort === 'quote_high')) return null;
+    return { id: v.id, label: label, f: f };
+  }
+  // opts = { staff, stages } -> [{ id, label, f }], at most SAVED_VIEW_MAX.
+  function savedViews(list, opts) {
+    var out = [], seen = {};
+    (Array.isArray(list) ? list : []).forEach(function (v) {
+      if (out.length >= SAVED_VIEW_MAX) return;
+      var r = savedViewOne(v, opts, seen);
+      // A view dropped for a later reason does not reserve its id; a kept one does.
+      if (r) { seen[r.id] = true; out.push(r); }
+    });
+    return out;
+  }
+  // The leads that match ALL the view's filters, order kept, as a NEW array. `view` may be the { id, label, f } from savedViews or just its f.
+  function savedViewRows(leads, view, now) {
+    var f = view && typeof view === 'object' ? (view.f && typeof view.f === 'object' ? view.f : view) : {};
+    var has = function (k) { return f[k] !== undefined && f[k] !== null; };
+    return (Array.isArray(leads) ? leads : []).filter(function (lead) {
+      if (!lead || typeof lead !== 'object') return false;
+      if (!matchesFilter(lead, has('tab') ? f.tab : 'all')) return false;
+      if (has('eventFrom') || has('eventTo')) {
+        var d = dateOnly(lead.event_date);
+        if (!d) return false;
+        if (has('eventFrom') && d < f.eventFrom) return false;
+        if (has('eventTo') && d > f.eventTo) return false;
+      }
+      if (has('minMoney') || has('maxMoney')) {
+        var c = leadMoneyCents(lead);
+        if (c === null) return false;
+        if (has('minMoney') && c < Math.round(f.minMoney * 100)) return false;
+        if (has('maxMoney') && c > Math.round(f.maxMoney * 100)) return false;
+      }
+      if (has('minGuests') || has('maxGuests')) {
+        var raw = lead.guests;
+        if (raw === null || raw === undefined || raw === '' || typeof raw === 'boolean') return false;
+        var g = Number(raw);
+        if (!isFinite(g)) return false;
+        if (has('minGuests') && g < f.minGuests) return false;
+        if (has('maxGuests') && g > f.maxGuests) return false;
+      }
+      if (has('sources') && Array.isArray(f.sources) && f.sources.indexOf(leadSourceBucket(lead)) === -1) return false;
+      if (f.noQuote === true && !noQuoteOpen(lead)) return false;
+      if (f.needsYou === true && !waitsOnOwner(lead)) return false;
+      return true;
+    });
+  }
+
+  // J / K: the next (dir 1) or previous (dir -1) id in `ids`; null at either end or for an empty list.
+  function deskStep(ids, currentId, dir) {
+    var list = Array.isArray(ids) ? ids : [];
+    if (!list.length) return null;
+    var at = -1;
+    if (currentId !== null && currentId !== undefined) {
+      for (var i = 0; i < list.length; i++) if (String(list[i]) === String(currentId)) { at = i; break; }
+    }
+    if (at === -1) return dir === -1 ? list[list.length - 1] : list[0];
+    var to = at + (dir === -1 ? -1 : 1);
+    return to < 0 || to >= list.length ? null : list[to];
+  }
+
+  // A key press -> 'next' | 'prev' | 'booked' | 'lost' | 'text' | 'search' | null. Typing in a field or a dialog being open = null.
+  function deskKey(ev) {
+    var e = ev && typeof ev === 'object' ? ev : {};
+    if (e.editable || e.dialog || e.alt) return null;
+    var k = typeof e.key === 'string' ? e.key.toLowerCase() : '';
+    if (e.meta || e.ctrl) return k === 'k' && !e.shift ? 'search' : null;
+    if (e.shift) return null;
+    if (k === 'j') return 'next';
+    if (k === 'k') return 'prev';
+    var one = k === 'e' ? 'booked' : (k === 'l' ? 'lost' : (k === 'r' ? 'text' : null));
+    return one && !e.repeat ? one : null;
+  }
+  function deskKeyHint() {
+    return 'Keys: J / K move · E ' + statusInfo('booked').label + ' · L ' + statusInfo('lost').label + ' · R Text';
+  }
+  function deskSearchPlaceholder(isMac) {
+    return 'Search name, phone or email (' + (isMac ? '⌘K' : 'Ctrl+K') + ')';
+  }
+
+  /* ----- round 8: Pipeline in dollars ----- */
+
+  var PIPE_COLUMNS = ['new', 'contacted', 'offer_sent', 'negotiation', 'booked', 'lost'];
+  var PIPE_OPEN_COLUMNS = ['new', 'contacted', 'offer_sent', 'negotiation'];
+  var PIPE_FIRST = 8;
+  var PIPE_MORE = 25;
+
+  // Opted out by any of the page's three tests (the flag, the opted_out status, or the phone lookup noQuoteOpen also uses).
+  function pipeOptedOut(lead) {
+    if (isOptedOut(lead)) return true;
+    var k = phoneKey(lead && lead.phone);
+    return !!(k && OPTED_KEYS[k]);
+  }
+  // A lead's dollars on the board, in cents, or null. The cv_metrics rule: Deal closed (status exactly booked) = final price, else the quote;
+  // an open lead = its quote, but nothing when it texted STOP; a lost lead = its quote (for the "in lost quotes" figure only).
+  // A saved-not-sent owner price (owner_price) is never counted.
+  function pipeMoneyCents(lead) {
+    if (!lead || typeof lead !== 'object') return null;
+    var st = String(lead.status || '').toLowerCase();
+    if (st === 'booked') {
+      var fin = toCents(lead.booked_amount);
+      return fin !== null ? fin : toCents(lead.quote_total);
+    }
+    var g = statusGroup(st);
+    if (g === 'open') return pipeOptedOut(lead) ? null : toCents(lead.quote_total);
+    if (g === 'lost') return toCents(lead.quote_total);
+    return null;
+  }
+  function pipeHasQuote(lead) {
+    return !(lead.quote_total === null || lead.quote_total === undefined || lead.quote_total === '');
+  }
+  // opts = { staff, shown: { key: n }, lostOpen, now } -> { columns, open, other }
+  function pipelineView(leads, opts) {
+    var o = opts || {};
+    var staff = !!o.staff;
+    var rows = (Array.isArray(leads) ? leads : []).filter(function (l) { return l && typeof l === 'object'; });
+    var shown = o.shown && typeof o.shown === 'object' ? o.shown : {};
+    var seen = 0;
+    var openRows = [];
+    var columns = PIPE_COLUMNS.map(function (key) {
+      var mine = filterLeads(rows, key);
+      seen += mine.length;
+      var cents = 0;
+      mine.forEach(function (l) { var c = pipeMoneyCents(l); if (c !== null) cents += c; });
+      var isLost = key === 'lost';
+      if (PIPE_OPEN_COLUMNS.indexOf(key) !== -1) openRows = openRows.concat(mine);
+      var want = Number(shown[key]);
+      var take = isFinite(want) && want >= 1 ? Math.floor(want) : PIPE_FIRST;
+      var hidden = isLost && o.lostOpen !== true;
+      var cards = hidden ? [] : mine.slice(0, take).map(function (l) {
+        var row = rowView(l, o.now);
+        if (staff && row) row.money = '';
+        return { id: l.lead_id, row: row, lead: l };
+      });
+      var more = hidden ? 0 : Math.max(0, mine.length - cards.length);
+      var money = staff ? '' : fmtMoney(cents / 100);
+      var col = {
+        key: key, label: statusInfo(key).label, count: mine.length,
+        cents: staff ? null : cents, money: money,
+        moneyText: isLost && money ? money + ' in lost quotes' : money,
+        cards: cards, more: more, moreText: more > 0 ? 'Show ' + Math.min(more, PIPE_MORE) + ' more' : ''
+      };
+      if (isLost) {
+        var obj = {};
+        mine.forEach(function (l) {
+          var k = l.lost_reason || (String(l.status || '').toLowerCase() === 'opted_out' ? 'opted_out' : 'unknown');
+          obj[k] = (obj[k] || 0) + 1;
+        });
+        col.reasons = lostReasonRows(obj).map(function (r) { return r.key === 'opted_out' ? Object.assign({}, r, { label: statusInfo('opted_out').label }) : r; });
+        col.lostText = 'Show lost cards (' + mine.length + ')';
+      }
+      return col;
+    });
+    var oc = columns.filter(function (c) { return PIPE_OPEN_COLUMNS.indexOf(c.key) !== -1; });
+    var count = 0, cents = 0;
+    oc.forEach(function (c) { count += c.count; cents += c.cents || 0; });
+    var quoted = 0, noQuote = 0, stop = 0;
+    openRows.forEach(function (l) {
+      if (pipeOptedOut(l)) stop++;
+      else if (pipeHasQuote(l)) quoted++;
+      else noQuote++;
+    });
+    var money = staff ? '' : fmtMoney(cents / 100);
+    var sentence = staff ? 'Open: ' + plural(count, 'lead', 'leads')
+      : 'Open: ' + money + ' across ' + plural(count, 'lead', 'leads') + ' (' + quoted + ' quoted, ' + noQuote + ' without a quote yet' + (stop ? ', ' + stop + ' who texted STOP' : '') + ')';
+    return {
+      columns: columns,
+      open: { cents: staff ? null : cents, money: money, count: count, quoted: quoted, noQuote: noQuote, stop: stop, sentence: sentence },
+      other: rows.length - seen
+    };
+  }
+  // The statuses this lead may be moved to, in actions() order, with the client's words: the owner's own list on the record.
+  function pipelineMoveOptions(lead) {
+    return actionsAhead(actionsKey(lead), true).map(function (st) { return { status: st, label: statusInfo(st).label }; });
+  }
+  function pipeMoveDone(name, status) {
+    return 'Moved ' + (name || 'the lead') + ' to ' + statusInfo(status).label + '.';
+  }
+  var PIPE_EMPTY = { 'new': 'No new leads.', contacted: 'Nobody at Contacted.', offer_sent: 'No offers out.', negotiation: 'Nothing in Negotiation.', booked: 'No closed deals yet.', lost: 'No lost leads.' };
+  function pipeEmptyColumn(key) { return Object.prototype.hasOwnProperty.call(PIPE_EMPTY, key) ? PIPE_EMPTY[key] : ''; }
+
+  /* ----- round 9: Dashboard + period switch ----- */
+
+  var PERIOD_KEYS = ['week', 'month', 'season', 'year'];
+  var PERIOD_DEFAULT = 'year';
+  var PERIOD_BUTTON_LABELS = { week: 'Week', month: 'Month', season: 'Season', year: 'Year' };
+  var PERIOD_LABELS = { week: 'this week', month: 'this month', season: 'this season', year: 'this year' };
+  var PERIOD_MIN = '2000-01-01', PERIOD_MAX = '2100-12-31';
+  // The current calendar period up to today (the client's time zone): week from Sunday (as the Calendar), month from the 1st, season
+  // (Dec-Feb Winter, Mar-May Spring, Jun-Aug Summer, Sep-Nov Fall; December starts the Winter that ends in February), year from Jan 1.
+  // An unknown key = year. The two dates are always inside the range cv_metrics_period accepts (2000-01-01 .. 2100-12-31, at most 731 days).
+  function periodRange(key, now) {
+    var k = PERIOD_KEYS.indexOf(key) !== -1 ? key : PERIOD_DEFAULT;
+    var t = today(now);
+    var from, name = PERIOD_BUTTON_LABELS[k], label = PERIOD_LABELS[k];
+    if (k === 'week') {
+      var dow = new Date(Date.UTC(t.y, t.m - 1, t.d)).getUTCDay();
+      from = new Date(Date.UTC(t.y, t.m - 1, t.d) - dow * 86400000).toISOString().slice(0, 10);
+    } else if (k === 'month') {
+      from = ymd(t.y, t.m, 1);
+    } else if (k === 'season') {
+      var sm, sy = t.y;
+      if (t.m >= 3 && t.m <= 5) { sm = 3; name = 'Spring'; }
+      else if (t.m >= 6 && t.m <= 8) { sm = 6; name = 'Summer'; }
+      else if (t.m >= 9 && t.m <= 11) { sm = 9; name = 'Fall'; }
+      else { sm = 12; name = 'Winter'; if (t.m <= 2) sy = t.y - 1; }
+      from = ymd(sy, sm, 1);
+      label = 'this season (' + name + ')';
+    } else {
+      from = ymd(t.y, 1, 1);
+    }
+    var to = t.ymd;
+    if (to > PERIOD_MAX) to = PERIOD_MAX;
+    if (to < PERIOD_MIN) to = PERIOD_MIN;
+    if (from < PERIOD_MIN) from = PERIOD_MIN;
+    if (from > to) from = to;
+    return { key: k, from: from, to: to, label: label, name: name };
+  }
+  function periodButtons(current) {
+    var cur = PERIOD_KEYS.indexOf(current) !== -1 ? current : PERIOD_DEFAULT;
+    return PERIOD_KEYS.map(function (k) { return { key: k, label: PERIOD_BUTTON_LABELS[k], pressed: k === cur }; });
+  }
+  // True only for "the function is not there on this database": PostgREST PGRST202 or an HTTP 404. Nothing else.
+  function periodMissing(err) {
+    return !!err && typeof err === 'object' && (err.code === 'PGRST202' || err.status === 404);
+  }
+  function wholeCount(v) { return typeof v === 'number' && isFinite(v) && v >= 0 && Math.floor(v) === v; }
+  var FUNNEL_STAGES = ['new', 'contacted', 'offer_sent', 'negotiation', 'booked'];
+  // The "got at least that far" funnel from cv_metrics_period().funnel -> { rows: [{ key, label, count, width }], drop, empty }, or null
+  // when the numbers are not all whole numbers >= 0.
+  function stageFunnel(f) {
+    if (!f || typeof f !== 'object') return null;
+    for (var i = 0; i < FUNNEL_STAGES.length; i++) if (!wholeCount(f[FUNNEL_STAGES[i]])) return null;
+    var counts = FUNNEL_STAGES.map(function (k) { return f[k]; });
+    var widths = barWidths(counts);
+    var rows = FUNNEL_STAGES.map(function (k, j) { return { key: k, label: statusInfo(k).label, count: counts[j], width: widths[j] }; });
+    var best = 0, at = -1;
+    for (var j = 0; j < rows.length - 1; j++) {
+      var fall = rows[j].count - rows[j + 1].count;
+      if (fall > best) { best = fall; at = j; }
+    }
+    return {
+      rows: rows,
+      drop: at === -1 ? '' : 'Biggest drop: ' + rows[at].label + ' to ' + rows[at + 1].label + ' (' + best + ')',
+      empty: f['new'] === 0 ? 'No new leads in this period.' : ''
+    };
+  }
+  var FOLLOWUP_BUCKETS = [
+    { key: 'lt_1h', label: 'Under 1 h' }, { key: 'h1_4', label: '1–4 h' }, { key: 'h4_12', label: '4–12 h' },
+    { key: 'h12_24', label: '12–24 h' }, { key: 'over_1d', label: 'Over a day' }
+  ];
+  // The follow-up time histogram from speed.followup_buckets -> [{ key, label, count, width, late }] or null (missing, bad, or all zero).
+  function followupBuckets(sp) {
+    var b = sp && typeof sp === 'object' ? sp.followup_buckets : null;
+    if (!b || typeof b !== 'object') return null;
+    var sum = 0;
+    for (var i = 0; i < FOLLOWUP_BUCKETS.length; i++) {
+      if (!wholeCount(b[FOLLOWUP_BUCKETS[i].key])) return null;
+      sum += b[FOLLOWUP_BUCKETS[i].key];
+    }
+    if (sum === 0) return null;
+    var widths = barWidths(FOLLOWUP_BUCKETS.map(function (x) { return b[x.key]; }));
+    return FOLLOWUP_BUCKETS.map(function (x, j) { return { key: x.key, label: x.label, count: b[x.key], width: widths[j], late: x.key === 'over_1d' }; });
+  }
+  // The two speed tiles. value = the average as a duration (or today's plain sentence when there is none), sub = "median ..." or ''.
+  function speedTiles(sp) {
+    var s = sp && typeof sp === 'object' ? sp : {};
+    function tile(label, avgSeconds, medSeconds, line) {
+      var a = num(avgSeconds) !== null ? fmtDuration(avgSeconds) : '';
+      if (!a) return { label: label, value: line, sub: '' };
+      var m = num(medSeconds) !== null ? fmtDuration(medSeconds) : '';
+      return { label: label, value: a, sub: m ? 'median ' + m : '' };
+    }
+    var fa = num(s.owner_followup_avg_minutes), fm = num(s.owner_followup_median_minutes);
+    return [
+      tile('First text to a new lead', s.first_text_avg_seconds, s.first_text_median_seconds, firstTextLine(s)),
+      tile('Your follow-up time', fa === null ? null : fa * 60, fm === null ? null : fm * 60, followupLine(s))
+    ];
+  }
+  // The "Outcomes recorded" meter from cv_forecast().tracking, or null (no forecast data, switched off, no tracking block).
+  function outcomesMeter(f) {
+    if (!f || typeof f !== 'object' || f.enabled === false) return null;
+    var tr = f.tracking;
+    if (!tr || typeof tr !== 'object') return null;
+    var cov = num(tr.coverage), minCov = num(tr.min_coverage), minRes = num(tr.min_resolved);
+    var pct = Math.max(0, Math.min(100, Math.round((cov === null ? 0 : cov) * 100)));
+    var need = Math.max(0, Math.min(100, Math.round((minCov === null ? 0.7 : minCov) * 100)));
+    var ready = tr.ready === true;
+    return {
+      pct: pct, need: need, recorded: num(tr.recorded) || 0, cohort: num(tr.cohort) || 0, ready: ready,
+      title: 'Outcomes recorded', value: pct + '%',
+      sub: ready ? 'Enough history for the forecast.' : 'The forecast unlocks at ' + need + '% and ' + (minRes === null ? 20 : minRes) + ' outcomes.'
+    };
+  }
+  function periodErrorText(range) {
+    return "Couldn't load the numbers for " + (range && range.label ? range.label : 'this period') + '.';
   }
 
   return {
@@ -6105,6 +6516,17 @@ function renderPriceBlockSms(lineItems, total, currency) {
     askErrorText: askErrorText,
     // round 3 redesign (Today + Metrics bars)
     barWidths: barWidths, sharePct: sharePct, todayDateLine: todayDateLine, todayAlert: todayAlert, todayCard: todayCard, todayNeeds: todayNeeds, TODAY_STOP_CUE: TODAY_STOP_CUE,
-    todayNumbers: todayNumbers, forecastChart: forecastChart, startRoute: startRoute, TODAY_NEEDS_EMPTY: TODAY_NEEDS_EMPTY, todayWeekEmpty: todayWeekEmpty
+    todayNumbers: todayNumbers, forecastChart: forecastChart, startRoute: startRoute, TODAY_NEEDS_EMPTY: TODAY_NEEDS_EMPTY, todayWeekEmpty: todayWeekEmpty,
+    // rounds 7-9 redesign: desktop (over 1200 px)
+    DESK_MEDIA: DESK_MEDIA, DESK_KEYS: DESK_KEYS, SOURCE_KEYS: SOURCE_KEYS, SAVED_VIEW_MAX: SAVED_VIEW_MAX,
+    desktopOn: desktopOn, desktopFeatureOn: desktopFeatureOn, deskNav: deskNav, deskRoutes: deskRoutes,
+    leadSourceBucket: leadSourceBucket, savedViews: savedViews, savedViewRows: savedViewRows,
+    deskStep: deskStep, deskKey: deskKey, deskKeyHint: deskKeyHint, deskSearchPlaceholder: deskSearchPlaceholder,
+    // round 8: Pipeline in dollars
+    PIPE_COLUMNS: PIPE_COLUMNS, PIPE_FIRST: PIPE_FIRST, PIPE_MORE: PIPE_MORE, pipeMoneyCents: pipeMoneyCents, pipelineView: pipelineView,
+    pipelineMoveOptions: pipelineMoveOptions, pipeMoveDone: pipeMoveDone, pipeEmptyColumn: pipeEmptyColumn,
+    // round 9: Dashboard + period switch
+    PERIOD_KEYS: PERIOD_KEYS, PERIOD_DEFAULT: PERIOD_DEFAULT, periodRange: periodRange, periodButtons: periodButtons, periodMissing: periodMissing,
+    stageFunnel: stageFunnel, followupBuckets: followupBuckets, speedTiles: speedTiles, outcomesMeter: outcomesMeter, periodErrorText: periodErrorText
   };
 });

@@ -1938,6 +1938,138 @@ input.field[type="date"]::-webkit-datetime-edit, input.field[type="time"]::-webk
 /* W18 (s15): at Small (0.92) these boxes (Ask, Leads search, the three note boxes) would fall under 16 px, and iOS zooms the page when a box under 16 px gets the cursor. --fs-lg = 16.56 px at Small. */
 :root[data-text-size="small"] .ask-input, :root[data-text-size="small"] .search-field, :root[data-text-size="small"] .note-field { font-size: var(--fs-lg); }
 
+/* Rounds 7-9 redesign: the [hidden] belt for the computer-only parts (the global [hidden] rule already hides them; this keeps them hidden if it ever changes). */
+.sidebar[hidden], .desk-pick[hidden], .desk-keys[hidden], .pipe-menu[hidden], .pipe-board[hidden] { display: none; }
+
+/* ===== ROUNDS 7-9 DESKTOP (over 1200 px) =====
+   Only with CV_CUSTOM.features.desktop exactly true AND a window over 1200 px: app.js then puts .desk (and .desk-split on Leads) on .app.
+   Every rule below sits inside this one media query and starts with .app.desk, so a phone, a tablet, a 1200 px window and the switch off
+   are exactly as before. Today's 1200 px record split (above) is not touched; the split view only narrows it. */
+@media (min-width: 1201px) {
+  /* Shell: the sidebar takes the bottom bar's place. */
+  .app.desk .sidebar:not([hidden]) { display: flex; flex-direction: column; flex: 0 0 220px; width: 220px; min-width: 0; overflow-y: auto; overflow-x: hidden; background: var(--primary-deep); border-right: 1px solid var(--line-on-primary); padding: var(--sp-4) var(--sp-2); }
+  .app.desk .tabbar { display: none; }
+  .app.desk .main { min-width: 0; }
+  .app.desk .sidebar-brand { margin: 0 0 var(--sp-3); padding: 0 10px; font-size: var(--fs-lg); font-weight: 750; color: var(--on-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app.desk .sidebar-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .app.desk .sidebar-list li { list-style: none; min-width: 0; }
+  .app.desk .sidebar-h { margin: var(--sp-4) 0 var(--sp-1); padding: 0 10px; font-size: var(--fs-xs); font-weight: 700; color: var(--muted-on-primary); text-transform: uppercase; letter-spacing: 0.04em; }
+  .app.desk .sidebar-foot { margin-top: auto; padding-top: var(--sp-4); }
+  .app.desk .side-item {
+    display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--tap); padding: 0 10px; margin: 0;
+    border: 0; border-radius: var(--r-sm); background: transparent; color: var(--on-primary);
+    font: inherit; font-size: var(--fs-md); text-align: left; text-decoration: none; cursor: pointer;
+  }
+  .app.desk .side-item svg { flex: none; }
+  .app.desk .side-item:hover { background: var(--primary-raised); }
+  /* The picked item: tint, bold and a bar on its left edge (the state is also in aria-current / aria-pressed: never colour alone). */
+  .app.desk .side-item[aria-current="page"], .app.desk .side-item[aria-pressed="true"] { background: var(--accent-wash); color: var(--accent-ink); font-weight: 700; box-shadow: inset 3px 0 0 var(--accent); }
+  .app.desk .side-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app.desk .side-view { font-size: var(--fs-sm); }
+  .app.desk .side-badge {
+    flex: none; margin-left: auto; min-width: var(--badge-box); height: var(--badge-box); padding: 0 5px;
+    border-radius: var(--r-pill); background: var(--secondary); color: var(--on-secondary); box-shadow: 0 0 0 1px var(--card-ring);
+    font-size: var(--fs-badge); font-weight: 750; line-height: var(--badge-box); text-align: center; font-variant-numeric: tabular-nums;
+  }
+
+  /* Leads split view: the list on the left, the lead (or "Pick a lead") on the right; the top bar and the reconnecting strip span both. */
+  .app.desk.desk-split .main { display: grid; grid-template-columns: minmax(320px, 380px) minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); }
+  .app.desk.desk-split .topbar, .app.desk.desk-split .conn { grid-column: 1 / -1; }
+  .app.desk.desk-split #screen-list { grid-column: 1; grid-row: 3; min-height: 0; min-width: 0; border-right: 1px solid var(--line-on-primary); }
+  .app.desk.desk-split #screen-thread, .app.desk.desk-split .desk-pick { grid-column: 2; grid-row: 3; min-height: 0; min-width: 0; }
+  /* Inside the narrow list column: no 760 px centring, small side gaps. */
+  .app.desk.desk-split #screen-list .lead-list, .app.desk.desk-split #screen-list .search, .app.desk.desk-split #screen-list .tabs-row,
+  .app.desk.desk-split #screen-list .list-tools, .app.desk.desk-split #screen-list .filter-note, .app.desk.desk-split #screen-list .list-head { max-width: none; }
+  .app.desk.desk-split #screen-list .search { grid-template-columns: minmax(0, 1fr); }
+  .app.desk.desk-split #screen-list .needs, .app.desk.desk-split #screen-list .push-banner, .app.desk.desk-split #screen-list #filter-empty { max-width: none; margin-left: var(--sp-3); margin-right: var(--sp-3); }
+  .app.desk.desk-split #screen-list #list-more { max-width: none; width: calc(100% - 24px); }
+  .app.desk.desk-split #screen-list .list-head-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The lead beside the list keeps today's wide record (conversation left, cards right), only narrower (K8 A). */
+  .app.desk.desk-split .record-layout { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
+  /* Five status buttons sit 3 + 2 in the narrow details column at every computer width (never one row of five). */
+  .app.desk .actions.actions-5 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .app.desk .actions.actions-5 .action { grid-column: span 2; }
+  .app.desk .actions.actions-5 .action:nth-child(n+4) { grid-column: span 3; }
+  .app.desk .actions.actions-5 .action.is-current .action-check { display: none; }
+  .app.desk .actions.actions-5 .action.is-current { border-width: 2px; font-weight: 800; }
+  /* Large / Larger text: the auto-fit grid from the bigger-text rules needs no spans (as on a phone). */
+  :root[data-text-size="large"] .app.desk .actions.actions-5 .action, :root[data-text-size="larger"] .app.desk .actions.actions-5 .action { grid-column: auto; }
+  /* The open lead's row: a bar on its left edge (aria-current="true" says it too). */
+  .app.desk .lead-row.is-selected { box-shadow: inset 4px 0 0 var(--accent), var(--shadow-card); }
+  .app.desk .need-link.is-selected { box-shadow: inset 4px 0 0 var(--accent); }
+  .app.desk .desk-pick:not([hidden]) { display: flex; align-items: center; justify-content: center; padding: var(--sp-6); background: var(--primary); color: var(--muted-on-primary); text-align: center; font-size: var(--fs-md); }
+  .app.desk .desk-pick p { margin: 0; max-width: 32ch; }
+  .app.desk .desk-keys { margin: 0; padding: var(--sp-2) var(--gutter) var(--sp-4); color: var(--muted-on-primary); font-size: var(--fs-xs); text-align: center; }
+
+  /* Round 8: the Pipeline board. Six columns side by side; the board may scroll sideways inside itself, the page never does. Paper cards on cream. */
+  .app.desk .pipe-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--sp-1) var(--sp-4); padding: var(--sp-4) var(--gutter) var(--sp-2); }
+  .app.desk .pipe-total { margin: 0; font-size: var(--fs-lg); font-weight: 700; color: var(--on-primary); font-variant-numeric: tabular-nums; min-width: 0; }
+  .app.desk .pipe-hint { margin: 0; font-size: var(--fs-sm); color: var(--muted-on-primary); }
+  .app.desk .pipe-board:not([hidden]) { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(184px, 1fr); gap: var(--sp-3); align-items: start; overflow-x: auto; padding: var(--sp-2) var(--gutter) var(--sp-5); }
+  .app.desk .pipe-col { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-2); background: var(--primary-raised); border-radius: var(--r-md); }
+  .app.desk .pipe-col-h { margin: 0; padding: 0 var(--sp-1); font-size: var(--fs-md); font-weight: 700; color: var(--on-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app.desk .pipe-count { font-weight: 600; color: var(--muted-on-primary); font-variant-numeric: tabular-nums; }
+  .app.desk .pipe-money { margin: 0; padding: 0 var(--sp-1); font-size: var(--fs-lg); font-weight: 750; color: var(--on-primary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .app.desk .pipe-reasons { list-style: none; margin: 0; padding: 0 var(--sp-1); font-size: var(--fs-sm); color: var(--muted-on-primary); }
+  .app.desk .pipe-empty { margin: 0; padding: var(--sp-2) var(--sp-1); font-size: var(--fs-sm); color: var(--muted-on-primary); }
+  .app.desk .pipe-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+  .app.desk .pipe-cards li { list-style: none; min-width: 0; }
+  .app.desk .pipe-card { display: flex; flex-direction: column; gap: 2px; padding: var(--sp-2) var(--sp-3); background: var(--secondary); color: var(--on-secondary); border-radius: var(--r-sm); box-shadow: var(--shadow-card); min-width: 0; }
+  .app.desk .pipe-name { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 28px; font-weight: 650; color: var(--on-secondary); text-decoration: none; }
+  .app.desk .pipe-name:hover .pipe-name-text { text-decoration: underline; }
+  .app.desk .pipe-name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app.desk .pipe-card-money { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
+  .app.desk .pipe-card-money.is-none { font-weight: 500; color: var(--muted-on-secondary); }
+  .app.desk .pipe-card-stop { margin: 0; font-size: var(--fs-xs); font-weight: 650; color: var(--danger-on-secondary); }
+  .app.desk .pipe-card-job { margin: 0; font-size: var(--fs-sm); color: var(--muted-on-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app.desk .pipe-card-cue { margin: 0; font-size: var(--fs-sm); color: var(--muted-on-secondary); overflow-wrap: anywhere; }   /* "Waiting 1 day · overdue" may take two lines, never cut */
+  .app.desk .pipe-card-cue .row-wait { white-space: normal; }
+  .app.desk .pipe-move { align-self: flex-start; min-height: var(--tap); margin-top: var(--sp-1); padding: 0 var(--sp-3); border: 1px solid var(--field-border); border-radius: var(--r-pill); background: transparent; color: var(--accent-strong); font: inherit; font-size: var(--fs-sm); font-weight: 650; cursor: pointer; }
+  .app.desk .pipe-move:hover, .app.desk .pipe-move[aria-expanded="true"] { background: var(--accent-wash); color: var(--accent-ink); }
+  .app.desk .pipe-more, .app.desk .pipe-lost-toggle { width: 100%; margin: 0; }
+  .app.desk .pipe-menu:not([hidden]) { position: fixed; z-index: 30; display: flex; flex-direction: column; min-width: 184px; padding: var(--sp-1); background: var(--secondary); border-radius: var(--r-sm); box-shadow: var(--shadow-card), 0 8px 24px rgba(43, 39, 35, 0.18); }
+  .app.desk .pipe-menu-item { min-height: var(--tap); padding: 0 var(--sp-3); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--on-secondary); font: inherit; font-size: var(--fs-md); text-align: left; cursor: pointer; }
+  .app.desk .pipe-menu-item:hover, .app.desk .pipe-menu-item:focus-visible { background: var(--accent-wash); color: var(--accent-ink); }
+  .app.desk .pipe-menu-item[disabled] { color: var(--muted-on-secondary); cursor: default; }
+  .app.desk #screen-pipeline .filter-note { max-width: none; }
+
+  /* Round 9: the Dashboard. A 12-column grid of today's Metrics cards (paper on cream); the period switch is a pill segmented control. */
+  .app.desk .dash-wrap { padding: var(--sp-4) var(--gutter) var(--sp-6); }
+  .app.desk .dash-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); margin: 0 0 var(--sp-4); }
+  .app.desk .dash-head .m-updated { margin: 0; font-size: var(--fs-sm); color: var(--muted-on-primary); }
+  .app.desk .dash-period:not([hidden]) { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-pill); background: var(--secondary); box-shadow: 0 0 0 1px var(--card-ring); }
+  .app.desk .dash-period-btn { min-height: var(--tap); min-width: 72px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-pill); background: transparent; color: var(--on-secondary); font: inherit; font-size: var(--fs-sm); font-weight: 650; cursor: pointer; }
+  .app.desk .dash-period-btn[aria-pressed="true"] { background: var(--accent-strong); color: var(--on-accent); }
+  .app.desk .dash-period-btn[disabled] { cursor: progress; }
+  .app.desk .dash-period-btn[disabled]:not([aria-pressed="true"]) { color: var(--muted-on-secondary); }
+  .app.desk .dash-period-note { flex: 1 1 100%; margin: 0; font-size: var(--fs-sm); color: var(--muted-on-primary); }
+  .app.desk .dash-grid:not([hidden]) { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--sp-4); align-items: start; }
+  .app.desk .dash-grid > .m-block { margin: 0; min-width: 0; }
+  .app.desk .dash-s3 { grid-column: span 3; }
+  .app.desk .dash-s4 { grid-column: span 4; }
+  .app.desk .dash-s5 { grid-column: span 5; }
+  .app.desk .dash-s8 { grid-column: span 8; }
+  .app.desk .dash-range { margin: 0 0 var(--sp-2); color: var(--muted); }
+  .app.desk .dash-drop { font-weight: 650; color: var(--ink); }
+  .app.desk .dash-bars .funnel-row.is-late .funnel-bar { background: var(--danger); }
+  .app.desk .dash-bars .funnel-row.is-late .funnel-num { color: var(--danger); font-weight: 700; white-space: normal; }
+  .app.desk .dash-meter { margin: var(--sp-2) 0; }
+  .app.desk .dash-grid .m-block .m-tiles { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .app.desk .dash-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+  .app.desk .dash-table th, .app.desk .dash-table td { padding: var(--sp-2) var(--sp-1); border-bottom: 1px solid var(--line); text-align: left; }
+  .app.desk .dash-table thead th { color: var(--muted); font-weight: 650; }
+  .app.desk .dash-table th.dash-src { font-weight: 650; overflow-wrap: anywhere; }   /* a long source name takes two lines, never cut */
+  .app.desk .dash-table .is-num { white-space: nowrap; }
+  .app.desk .dash-table .is-num, .app.desk .dash-table thead th:not(:first-child) { text-align: right; }
+  .app.desk .dash-table tr:last-child th, .app.desk .dash-table tr:last-child td { border-bottom: 0; }
+}
+/* 1201-1359 px: two cards per row (wide ones across) so nothing is squeezed. */
+@media (min-width: 1201px) and (max-width: 1359px) {
+  .app.desk .dash-s3, .app.desk .dash-s4, .app.desk .dash-s5 { grid-column: span 6; }
+  .app.desk .dash-s8 { grid-column: span 12; }
+}
+/* ===== END ROUNDS 7-9 DESKTOP ===== */
+
 /* ---------- bigger text sizes (More > Text size: Large, Larger): layout only. Nothing here applies at Normal. ---------- */
 /* Five filter chips: one row at Normal; at Large / Larger they wrap onto a second row rather than clip ("Contacted" is ~81 px at Larger). */
 :root[data-text-size="large"] #filters, :root[data-text-size="larger"] #filters { flex-wrap: wrap; }
@@ -1962,3 +2094,4 @@ input.field[type="date"]::-webkit-datetime-edit, input.field[type="time"]::-webk
 :root[data-text-size="large"] .titles h1, :root[data-text-size="larger"] .titles h1 { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 /* R5: Hide this lead sits under Edit details when the pills no longer share a row (flush left, no stray indent). */
 :root[data-text-size="large"] .btn-hide, :root[data-text-size="larger"] .btn-hide { margin-left: 0; }
+

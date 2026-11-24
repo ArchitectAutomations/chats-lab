@@ -22,10 +22,19 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Leads">
-<link rel="stylesheet" href="styles.css?v=2026-11-21-r5">
+<link rel="stylesheet" href="styles.css?v=2026-11-24-r9">
 </head>
 <body>
 <div class="app" id="app">
+
+  <!-- Rounds 7-9 redesign: the computer sidebar (features.desktop, over 1200 px only). Built by buildSidebar(); hidden on a phone and with the switch off. -->
+  <nav class="sidebar" id="sidebar" aria-label="Main" hidden>
+    <p class="sidebar-brand" id="sidebar-brand"></p>
+    <ul class="sidebar-list" id="sidebar-main"></ul>
+    <p class="sidebar-h" id="sidebar-views-h" hidden>Saved views</p>
+    <ul class="sidebar-list" id="sidebar-views" aria-labelledby="sidebar-views-h" hidden></ul>
+    <ul class="sidebar-list sidebar-foot" id="sidebar-foot"></ul>
+  </nav>
 
   <div class="main" id="main">
 
@@ -136,6 +145,8 @@
         <h2 class="list-head-title" id="list-head-title"></h2>
         <button class="list-back" id="list-back" type="button">Back to leads</button>
       </div>
+      <!-- Rounds 7-9 (computer only): a saved view's heading and the way back to every lead. -->
+      <div class="list-head view-head" id="view-head" hidden><h2 class="list-head-title" id="view-title"></h2><button class="list-back" id="view-clear" type="button">Show all leads</button></div>
       <p class="filter-note" id="filter-note" hidden></p>
       <p class="filter-note" id="list-trunc" hidden></p>
       <p class="status-line" id="list-loading">Loading your leads…</p>
@@ -149,6 +160,7 @@
       <p class="status-line" id="filter-empty" hidden></p>
       <p class="error pad" id="list-error" role="alert" hidden></p>
       </div>
+      <p class="desk-keys" id="desk-keys" hidden></p>
     </div>
   </main>
 
@@ -620,6 +632,36 @@
     </div>
   </main>
 
+  <!-- Round 8 redesign (computer only, features.desktopPipeline + stages, owner only): the Pipeline board. Built by renderPipeline(); names are textContent only.
+       No dragging (ruling 13A): every card has a Move to button that opens the lead with today's confirm sheet. -->
+  <main class="screen pipeline-screen" id="screen-pipeline" hidden>
+    <div class="scroller" id="pipe-scroll">
+      <div class="pipe-head"><p class="pipe-total" id="pipe-total"></p><p class="pipe-hint" id="pipe-hint">Use Move to on a card to change its status.</p></div>
+      <p class="status-line" id="pipe-loading">Loading your leads…</p>
+      <p class="error pad" id="pipe-error" role="alert" hidden></p>
+      <div class="pipe-board" id="pipe-board" hidden></div>
+      <p class="filter-note" id="pipe-other" hidden></p>
+      <p class="sr-only" id="pipe-live" role="status" aria-live="polite"></p>
+    </div>
+    <div class="pipe-menu" id="pipe-menu" role="menu" hidden></div>
+  </main>
+
+  <!-- Round 9 redesign (computer only, features.desktopDashboard, owner only): the Dashboard. Built by renderDashboard(); charts drawn by the page.
+       The period switch shows only once cv_metrics_period (sql/055) answers; without it the funnel is left out and lost reasons + speed are all time. -->
+  <main class="screen dash-screen" id="screen-dashboard" hidden>
+    <div class="scroller" id="dash-scroll"><div class="dash-wrap">
+      <div class="dash-head">
+        <p class="m-updated" id="dash-updated"></p>
+        <div class="dash-period" id="dash-period" role="group" aria-label="Period for the funnel, lost reasons and speed" hidden></div>
+        <p class="dash-period-note" id="dash-period-note" hidden>The switch changes the funnel, lost reasons and speed. The other blocks have their own dates.</p>
+      </div>
+      <p class="status-line" id="dash-loading">Loading your numbers…</p>
+      <p class="error pad" id="dash-error" role="alert" hidden></p>
+      <div class="dash-grid" id="dash-grid" hidden></div>
+      <p class="sr-only" id="dash-live" role="status" aria-live="polite"></p>
+    </div></div>
+  </main>
+
   <!-- Lead record. Phones: ONE page scroll: who + job + contact + status, then the conversation (its own box, opened at the newest
        text), then event, quote, notes, history. Wide screens: conversation on the left, everything else in a right column. -->
   <main class="screen thread-screen" id="screen-thread" hidden>
@@ -796,6 +838,10 @@
     </div>
     <button class="pill" id="new-pill" type="button" hidden>New message</button>
   </main>
+
+  <!-- Rounds 7-9 (computer only): the right side of Leads while no lead is open, and what the keys say. -->
+  <div class="desk-pick" id="desk-pick" hidden><p>Pick a lead from the list to see it here.</p></div>
+  <p class="sr-only" id="desk-live" role="status" aria-live="polite"></p>
 
   <!-- Bottom bar: the tabs come from CV_CUSTOM.tabs (see tabPlan in lib.js). Built by buildTabbar(). -->
   <nav class="tabbar" id="tabbar" aria-label="Main" hidden>
@@ -1059,13 +1105,13 @@
 
 <noscript><p class="noscript">This page needs JavaScript to show your leads.</p></noscript>
 
-<script src="config.js?v=2026-11-21-r5"></script>
+<script src="config.js?v=2026-11-24-r9"></script>
 <!-- supabase-js 2.45.4 UMD, pinned. SRI sha384 computed from the file served by jsDelivr on 2026-11-04.
      Recompute: curl -s https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js | openssl dgst -sha384 -binary | openssl base64 -A -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
         integrity="sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o"
         crossorigin="anonymous"></script>
-<script src="lib.js?v=2026-11-21-r5"></script>
-<script src="app.js?v=2026-11-21-r5"></script>
+<script src="lib.js?v=2026-11-24-r9"></script>
+<script src="app.js?v=2026-11-24-r9"></script>
 </body>
 </html>

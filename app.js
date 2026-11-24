@@ -28,7 +28,7 @@
   // Every backend call goes through one wrapper that records FAILURES only: the call's name, a status and a short code word.
   var API_NAMES = {
     fetchList: 'lead_list', fetchThread: 'lead_detail', searchLeads: 'lead_detail', optedOutPhones: 'lead_detail', fetchFollowUps: 'follow_ups',
-    setStatus: 'cv_set_lead_status', setDeposit: 'cv_set_deposit', addLead: 'cv_add_lead', editLead: 'cv_edit_lead', hideLead: 'cv_hide_lead', unhideLead: 'cv_unhide_lead', hiddenLeads: 'cv_hidden_leads', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
+    setStatus: 'cv_set_lead_status', setDeposit: 'cv_set_deposit', addLead: 'cv_add_lead', editLead: 'cv_edit_lead', hideLead: 'cv_hide_lead', unhideLead: 'cv_unhide_lead', hiddenLeads: 'cv_hidden_leads', addNote: 'cv_add_note', deleteNote: 'cv_delete_note', metrics: 'cv_metrics', metricsPeriod: 'cv_metrics_period', forecast: 'cv_forecast', pastEvents: 'cv_past_events',
     quote: 'cv-quote', pushConfig: 'cv_push_config', pushSubscribe: 'cv_push_subscribe', pushUnsubscribe: 'cv_push_unsubscribe', pushTest: 'cv_push_test', markSeen: 'cv_mark_seen', pushStatus: 'cv_push_status',
     supportConfig: 'cv_support_config', supportSubmit: 'cv_support_submit', supportList: 'cv_support_list', exportLeads: 'cv_export_leads', exportConfig: 'cv_config', addLeadConfig: 'cv_config', ask: 'cv-ask', askConfig: 'cv_ask_config', team: 'cv-team', sendCode: 'auth', verify: 'auth', myRole: 'cv_my_role'
   };
@@ -68,6 +68,27 @@
   // Mock only (round 3 review FIX-3): ?tabs=list,followups,calendar replaces CV_CUSTOM.tabs, for a client whose tabs leave Metrics out.
   if (MOCK && qs.get('tabs')) custom.tabs = String(qs.get('tabs')).split(',').map(function (k) { return k.trim(); }).filter(function (k) { return /^[a-z]{2,24}$/.test(k); });
   if (MOCK && !(typeof custom.businessName === 'string' && custom.businessName.trim())) custom.businessName = 'Mock Bartending Co';
+  if (MOCK) mockDesk(custom, qs);
+  // Mock only (rounds 7-9): ?desk=1 turns the computer layout on (desktop, desktopLeads, desktopPipeline, desktopDashboard, desktopKeys, and stages) with
+  // three sample saved views; ?desk=bad adds one invalid view (it must not show); ?deskoff=leads,keys,pipeline,dashboard turns those parts off again.
+  // config.js keeps every desktop switch OFF; this changes the copy in memory only.
+  function mockDesk(c, q) {
+    var d = q.get('desk');
+    if (d !== '1' && d !== 'bad') return;
+    var on = { desktop: true, desktopLeads: true, desktopPipeline: true, desktopDashboard: true, desktopKeys: true, stages: true };
+    var names = { leads: 'desktopLeads', keys: 'desktopKeys', pipeline: 'desktopPipeline', dashboard: 'desktopDashboard' };
+    String(q.get('deskoff') || '').split(',').forEach(function (k) { var m = names[k.trim()]; if (m) on[m] = false; });
+    c.features = Object.assign({}, c.features, on);
+    c.savedViews = [
+      { id: 'events-2027', label: 'Events in 2027', eventFrom: '2027-01-01', eventTo: '2027-12-31' },
+      { id: 'over-2k', label: 'Quotes over $2k', minMoney: 2000 },
+      { id: 'big-parties', label: '100 guests or more', minGuests: 100 }
+    ].concat(d === 'bad' ? [{ id: 'Bad Id', label: 'x' }] : []);
+  }
+  // Rounds 7-9 redesign: the computer layout (sidebar, list + lead side by side, keys). OFF unless CV_CUSTOM.features.desktop is exactly true; then only
+  // while the window is over 1200 px wide (L.DESK_MEDIA). Switch off = DESK_MQ is null: no listener, no class, nothing; the page is exactly as before.
+  var DESK_MQ = L.desktopOn(custom.features) && window.matchMedia ? window.matchMedia(L.DESK_MEDIA) : null;
+  function deskOn() { return !!DESK_MQ && DESK_MQ.matches; }
   var TARGET_KEY = 'cv_target_lead';
   var FILTER_KEY = 'cv_filter';
   var POSSIBLE_KEY = 'cv_cal_possible';
@@ -101,6 +122,10 @@
     { route: 'export', href: '#/export', label: 'Download spreadsheet', show: showExport, icon: 'M12 4v11M7 10l5 5 5-5M5 20h14' },
     { route: 'hidden', href: '#/hidden', label: 'Hidden leads', show: showHidden, icon: 'M3.5 12s3.2-6 8.5-6 8.5 6 8.5 6-3.2 6-8.5 6-8.5-6-8.5-6zM12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM4.5 4.5l15 15' },
     { route: 'team', href: '#/team', label: 'Team', show: showTeam, icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3.5 19c.5-3 2.6-4.5 5.5-4.5s5 1.5 5.5 4.5M16 11a2.5 2.5 0 1 0 0-5M17.5 14.7c1.8.4 2.8 1.7 3 4.3' },
+    // Round 8 redesign (computer only): the Pipeline board. Never in the bottom bar or More; the router knows it only on a computer with the switch on (L.deskRoutes).
+    { route: 'pipeline', href: '#/pipeline', label: 'Pipeline', show: showPipeline, icon: 'M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z' },
+    // Round 9 redesign (computer only): the Dashboard. Replaces Metrics in the sidebar when on; never in the bottom bar or More.
+    { route: 'dashboard', href: '#/dashboard', label: 'Dashboard', show: showDashboard, icon: 'M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z' },
     { route: 'more', href: '#/more', label: 'More', show: showMore, icon: 'M5 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM12 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM19 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z' }
   ];
 
@@ -114,6 +139,7 @@
 
   // The client's bar and More list (CV_CUSTOM.tabs order, labels from CV_CUSTOM.tabLabels).
   var PLAN, BAR, MORE_ITEMS, NAV, TAB_ROUTES, HAS_FOLLOWUPS, HAS_SEARCH, HAS_NOTES, HAS_PUSH, HAS_ADD, HAS_TODAY;
+  var DESK_NAV = null;   // rounds 7-9: the sidebar's { main, foot } route lists (L.deskNav); null on a phone or with the switch off
   function labelled(route) {
     var t = tabByRoute(route);
     var labels = custom.tabLabels || {};
@@ -127,6 +153,9 @@
     MORE_ITEMS = PLAN.more.map(labelled);
     // Every screen the router can open (bar tabs, More and the tools under it).
     NAV = BAR.concat(MORE_ITEMS);
+    // Rounds 7-9: the sidebar on a computer, and the screens only it opens (none in round 7). A phone: DESK_NAV null, NAV unchanged.
+    DESK_NAV = deskOn() ? L.deskNav(NAV.map(function (n) { return n.route; }), deskNavOpts()) : null;
+    if (deskOn()) NAV = NAV.concat(L.deskRoutes(NAV.map(function (n) { return n.route; }), deskNavOpts()).map(labelled));
     TAB_ROUTES = NAV.map(function (n) { return n.route; });
     HAS_FOLLOWUPS = TAB_ROUTES.indexOf('followups') !== -1;
     HAS_SEARCH = feature('search');
@@ -135,6 +164,9 @@
     HAS_ADD = feature('addLead');
     HAS_TODAY = TAB_ROUTES.indexOf('today') !== -1;
   }
+  // Round 8: Pipeline = its switch + the five statuses (stages) + the owner (staff never). Round 9: Dashboard = its switch + the owner + Metrics on
+  // (L.deskNav also needs 'metrics' in the client's tabs).
+  function deskNavOpts() { return { pipeline: feature('desktopPipeline') && L.stagesOn() && !isStaff(), dashboard: feature('desktopDashboard') && !isStaff() && feature('metrics') }; }
   computeNav();
 
   function $(id) { return document.getElementById(id); }
@@ -230,7 +262,16 @@
     todayPast: $('today-past'), todayPastH: $('today-past-h'), todayPastBtn: $('today-past-btn'),
     todayWeek: $('today-week'), todayWeekList: $('today-week-list'), todayWeekEmpty: $('today-week-empty'),
     metricsLive: $('metrics-live'),
-    confirm: $('confirm'), confirmText: $('confirm-text'), confirmYes: $('confirm-yes'), confirmAlt: $('confirm-alt'), confirmNote: $('confirm-note'), confirmNo: $('confirm-no')
+    confirm: $('confirm'), confirmText: $('confirm-text'), confirmYes: $('confirm-yes'), confirmAlt: $('confirm-alt'), confirmNote: $('confirm-note'), confirmNo: $('confirm-no'),
+    // Rounds 7-9 redesign (computer only): the sidebar, a saved view's heading, the key hint, the "pick a lead" side and the keys' spoken line.
+    sidebar: $('sidebar'), sidebarBrand: $('sidebar-brand'), sidebarMain: $('sidebar-main'), sidebarViewsH: $('sidebar-views-h'), sidebarViews: $('sidebar-views'), sidebarFoot: $('sidebar-foot'),
+    viewHead: $('view-head'), viewTitle: $('view-title'), viewClear: $('view-clear'), deskKeys: $('desk-keys'), deskPick: $('desk-pick'), deskLive: $('desk-live'),
+    // Round 8 (computer only): the Pipeline board.
+    pipeline: $('screen-pipeline'), pipeScroll: $('pipe-scroll'), pipeTotal: $('pipe-total'), pipeHint: $('pipe-hint'), pipeLoading: $('pipe-loading'), pipeError: $('pipe-error'),
+    pipeBoard: $('pipe-board'), pipeOther: $('pipe-other'), pipeLive: $('pipe-live'), pipeMenu: $('pipe-menu'),
+    // Round 9 (computer only): the Dashboard.
+    dashboard: $('screen-dashboard'), dashScroll: $('dash-scroll'), dashUpdated: $('dash-updated'), dashPeriod: $('dash-period'), dashPeriodNote: $('dash-period-note'),
+    dashLoading: $('dash-loading'), dashError: $('dash-error'), dashGrid: $('dash-grid'), dashLive: $('dash-live')
   };
 
   // From this width the record shows the conversation and the details side by side, each scrolling on its own.
@@ -314,7 +355,17 @@
     support: { cfg: null, cfgState: 'idle', key: null, busy: false, removeLead: false, rows: null, listErr: false, listSeq: 0, cfgSeq: 0 },
     ask: { cfg: null, cfgState: 'idle', cfgSeq: 0, cfgPromise: null, items: [], turns: [], day: '', viaLead: false, busy: false, seq: 0, waitTimer: null },  // Ask your CRM: memory only, never stored
     exp: { busy: false, seq: 0, prepared: null, on: null, cfgSeq: 0 },  // spreadsheet download: the file made by tap 1, kept in memory for tap 2
-    actionButtons: {}
+    actionButtons: {},
+    desk: deskOn(),      // rounds 7-9: the computer layout is showing (switch on AND over 1200 px); kept in step by onDeskChange
+    view: null,          // rounds 7-9: the saved view picked in the sidebar (an id), computer only; memory only, never stored
+    viewSay: false,      // rounds 7-9: say the view's name and count once its list is drawn
+    // Round 8 (computer only), memory only: the board's "Show more" counts per column, Lost cards open, what was said, the open Move-to menu,
+    // a redraw held back while that menu or a sheet is up, the Move to waiting for its lead to load, the board to go back to, the card to focus there.
+    pipeShown: {}, pipeLostOpen: false, pipeSaid: false, pipeSay: '', pipeMenu: null, pipeDirty: false, deskIntent: null, deskReturn: null, pipeFocus: null,
+    // Round 9 (computer only): the Dashboard's period (remembered for this tab only) and cv_metrics_period's last answer.
+    // state: idle | loading | ok | error | missing (the database has no cv_metrics_period yet: no switch, no funnel, all-time lost reasons and speed).
+    period: { key: 'year', data: null, dataKey: '', state: 'idle', seq: 0, range: null, known: false },
+    dashSaid: false
   };
 
   /* ---------- theme ----------
@@ -666,6 +717,8 @@
       addNote: function (id, body) { return client.rpc('cv_add_note', { p_lead_id: id, p_body: body }).then(ok); },
       deleteNote: function (noteId) { return client.rpc('cv_delete_note', { p_note_id: noteId }).then(ok); },
       metrics: function () { return client.rpc('cv_metrics').then(ok); },
+      // Round 9 (sql/055, owner only; staff map has none): funnel, lost reasons and speed for one period. Missing on a database without 055 (PGRST202 / 404).
+      metricsPeriod: function (from, to) { return client.rpc('cv_metrics_period', { p_from: from, p_to: to }).then(ok); },
       forecast: function () { return client.rpc('cv_forecast').then(ok); },
       pastEvents: function (limit) { return client.rpc('cv_past_events', { p_limit: limit || 10 }).then(ok); },
       // sql/025: clear old leads in bulk (owner only). Errors keep their { message, details } for L.bulkErrorText.
@@ -844,6 +897,482 @@
       if (items[i].getAttribute('data-route') === cur) items[i].setAttribute('aria-current', 'page');
       else items[i].removeAttribute('aria-current');
     }
+    markSidebar();
+  }
+
+  /* ---------- rounds 7-9 redesign: the computer sidebar (features.desktop, over 1200 px) ----------
+     Drawn from L.deskNav: the same tabs the phone has (each only when it is on for this client), Settings (= today's More screen) last.
+     Ask / Help & support / Hidden leads rows follow the More rows' rules (deskRows). Saved views (desktopLeads) come from CV_CUSTOM.savedViews
+     through L.savedViews (a bad view is left out whole; staff never get the money ones). Phone or switch off: hidden and empty. */
+  var deskRows = {};
+  var ICON_VIEW = 'M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z';
+  function settingsLabel() {
+    var t = custom.tabLabels || {};
+    return typeof t.settings === 'string' && t.settings.trim() ? t.settings.trim() : 'Settings';
+  }
+  function deskSplit() { return deskOn() && feature('desktopLeads') && !!S.tab && S.tab.route === 'list'; }
+  function deskSplitActive() { return deskSplit() && (S.screen === 'list' || S.screen === 'thread'); }
+  function deskNavHas(r) { return !!DESK_NAV && (DESK_NAV.main.indexOf(r) !== -1 || DESK_NAV.foot.indexOf(r) !== -1); }
+  function deskViews() { return feature('desktopLeads') ? L.savedViews(custom.savedViews, { staff: isStaff(), stages: L.stagesOn() }) : []; }
+  // The saved view showing now, or null (a view that is no longer offered, e.g. after the role answered, is dropped).
+  function deskView() {
+    var v = S.view ? deskViews().filter(function (x) { return x.id === S.view; })[0] : null;
+    if (!v) S.view = null;
+    return v || null;
+  }
+  function sideItem(n, label) {
+    var li = make('li');
+    var a = make('a', 'side-item');
+    a.href = n.href;
+    a.setAttribute('data-route', n.route);
+    a.appendChild(icon(n.icon, 20));
+    var lab = make('span', 'side-label', label);
+    a.appendChild(lab);
+    li.appendChild(a);
+    return { li: li, a: a, label: lab };
+  }
+  function buildSidebar() {
+    deskRows = {};
+    if (!deskOn() || !DESK_NAV) {
+      el.sidebar.hidden = true;
+      el.sidebarMain.replaceChildren(); el.sidebarViews.replaceChildren(); el.sidebarFoot.replaceChildren();
+      show(el.sidebarViewsH, false); show(el.sidebarViews, false);
+      return;
+    }
+    el.sidebarBrand.textContent = (typeof custom.businessName === 'string' && custom.businessName.trim()) || el.moreBrand.textContent || L.appName(custom);
+    var byRoute = function (r) { return NAV.filter(function (n) { return n.route === r; })[0]; };
+    var main = document.createDocumentFragment();
+    DESK_NAV.main.forEach(function (r) {
+      var n = byRoute(r);
+      if (!n) return;
+      var it = sideItem(n, n.label);
+      if (r === 'list') {
+        // The one badge (K10 A: on Leads, as on the phone): built like the tab badge, filled by renderBadge().
+        var badge = make('span', 'side-badge');
+        badge.hidden = true;
+        var num = make('span', '', '0');
+        num.setAttribute('aria-hidden', 'true');
+        badge.appendChild(num);
+        badge.appendChild(make('span', 'sr-only', ''));
+        it.a.appendChild(badge);
+      }
+      if (r === 'ask') { it.li.hidden = true; deskRows.ask = it.li; }   // shown once the database says Ask is on (as the More row)
+      main.appendChild(it.li);
+    });
+    el.sidebarMain.replaceChildren(main);
+    var foot = document.createDocumentFragment();
+    DESK_NAV.foot.forEach(function (r) {
+      var n = byRoute(r);
+      if (!n) return;
+      var it = sideItem(n, r === 'more' ? settingsLabel() : n.label);
+      if (r === 'support') { it.li.hidden = true; deskRows.support = it.li; }   // shown once the database says support is on
+      if (r === 'hidden') { it.li.hidden = true; deskRows.hidden = it.li; deskRows.hiddenLabel = it.label; deskRows.hiddenBase = n.label; }   // shown while a lead is hidden
+      foot.appendChild(it.li);
+    });
+    el.sidebarFoot.replaceChildren(foot);
+    var views = deskViews();
+    var vf = document.createDocumentFragment();
+    views.forEach(function (v) {
+      var li = make('li');
+      var b = make('button', 'side-item side-view');
+      b.type = 'button';
+      b.setAttribute('data-view', v.id);
+      b.setAttribute('aria-pressed', String(S.view === v.id));
+      b.appendChild(icon(ICON_VIEW, 20));
+      b.appendChild(make('span', 'side-label', v.label));
+      b.addEventListener('click', function () { applyView(v.id); });
+      li.appendChild(b);
+      vf.appendChild(li);
+    });
+    el.sidebarViews.replaceChildren(vf);
+    show(el.sidebarViewsH, views.length > 0);
+    show(el.sidebarViews, views.length > 0);
+    applyDeskRows();
+    renderBadge();
+    markSidebar();
+  }
+  // The three rows that show only once the database (or a hidden lead) says so: the same answer as their More rows.
+  function applyDeskRows() {
+    if (deskRows.ask) deskRows.ask.hidden = !askOn();
+    if (deskRows.support) deskRows.support.hidden = !(S.support.cfg && S.support.cfg.enabled);
+    renderHiddenRow();
+  }
+  // aria-current="page" on the sidebar item of the tab showing (Settings for the tools under it that have no item); views say which is picked.
+  function markSidebar() {
+    if (!el.sidebar || !DESK_NAV) return;
+    var links = el.sidebar.querySelectorAll('a.side-item[data-route]');
+    var cur = S.tab ? S.tab.route : '';
+    if (cur === 'metrics' && el.sidebar.querySelector('a.side-item[data-route="dashboard"]')) cur = 'dashboard';   // round 9: Metrics (from Today) lights the Dashboard item
+    var found = false;
+    for (var i = 0; i < links.length; i++) if (links[i].getAttribute('data-route') === cur) found = true;
+    if (!found) cur = 'more';
+    for (var j = 0; j < links.length; j++) {
+      if (links[j].getAttribute('data-route') === cur) links[j].setAttribute('aria-current', 'page');
+      else links[j].removeAttribute('aria-current');
+    }
+    var vb = el.sidebarViews.querySelectorAll('button[data-view]');
+    for (var k = 0; k < vb.length; k++) vb[k].setAttribute('aria-pressed', String(!!S.view && S.view === vb[k].getAttribute('data-view')));
+  }
+  // A saved view: the Leads list filtered by it (S.view, memory only). On Leads already = redraw; anywhere else = go to Leads.
+  function applyView(id) {
+    S.view = id;
+    S.shown['view:' + id] = L.LIST_PAGE;
+    S.listTop = 0;
+    S.viewSay = true;   // deskAfterList says "Showing <view> (n)" once the list is drawn
+    if (location.hash !== '#/') location.hash = '#/';
+    else if (S.screen !== 'list') route();
+    else { renderList(); el.listScroll.scrollTop = 0; }
+    markTabs();
+  }
+  function clearView() {
+    if (!S.view) return;
+    S.view = null;
+    if (S.screen === 'list' || (S.desk && S.screen === 'thread' && deskSplit())) renderList();
+    markTabs();
+  }
+
+  // After every list draw on a computer: mark the open lead's row, the key hint under the list, and say a newly picked view once.
+  function deskAfterList() {
+    deskMarkSelected();
+    var keysOn = deskSplitActive() && feature('desktopKeys');
+    if (keysOn) el.deskKeys.textContent = L.deskKeyHint();
+    show(el.deskKeys, keysOn);
+    if (S.viewSay) {
+      S.viewSay = false;
+      if (S.view && !el.viewHead.hidden && el.listAnnounce) el.listAnnounce.textContent = 'Showing ' + el.viewTitle.textContent;
+    }
+  }
+  // The open lead's row (list, search results, Needs you block) gets a bar on its left edge and aria-current="true". No redraw: the links are marked in place.
+  function deskMarkSelected() {
+    var id = S.desk && S.screen === 'thread' && deskSplit() ? S.thread.id : null;
+    var href = id ? '#/lead/' + encodeURIComponent(id) : '';
+    [el.leadList, el.searchResults, el.needsList].forEach(function (box) {
+      var links = box.querySelectorAll('a[href^="#/lead/"]');
+      for (var i = 0; i < links.length; i++) {
+        var on = !!href && links[i].getAttribute('href') === href;
+        links[i].classList.toggle('is-selected', on);
+        if (on) links[i].setAttribute('aria-current', 'true'); else links[i].removeAttribute('aria-current');
+      }
+    });
+  }
+  function deskFocusedHref(box) {
+    var a = document.activeElement;
+    return a && a !== document.body && box.contains(a) && a.getAttribute ? (a.getAttribute('href') || '') : '';
+  }
+  function deskRefocus(box, href) {
+    var links = box.querySelectorAll('a[href^="#/lead/"]');
+    for (var i = 0; i < links.length; i++) {
+      if (links[i].getAttribute('href') === href) { try { links[i].focus({ preventScroll: true }); } catch (e) { /* ignore */ } return; }
+    }
+  }
+  // A polite line for the keys ("No more leads in this list."): emptied first so the same words are said again.
+  function deskSay(text) {
+    el.deskLive.textContent = '';
+    setTimeout(function () { el.deskLive.textContent = text; }, 60);
+  }
+  // Search box words on a computer name the shortcut ("(⌘K)" on a Mac, "(Ctrl+K)" elsewhere); a phone keeps today's words.
+  var SEARCH_PLACEHOLDER = el.search ? el.search.placeholder : '';
+  function deskPlaceholder() {
+    if (!el.search) return;
+    var keys = S.desk && feature('desktopKeys') && HAS_SEARCH;
+    el.search.placeholder = keys ? L.deskSearchPlaceholder(/Mac|iPhone|iPad/.test(navigator.platform || '')) : SEARCH_PLACEHOLDER;
+  }
+
+  // The window crossed 1200 px (or the role answered): the shell is worked out again. A sheet that is open stays open; the switch waits for it to close.
+  function onDeskChange() {
+    S.desk = deskOn();
+    if (!S.desk) S.view = null;
+    computeNav();
+    buildSidebar();
+    deskRelayout();
+  }
+  function deskRelayout() {
+    var open = document.querySelector('dialog[open]');
+    if (open) {
+      if (!open.deskWait) {
+        open.deskWait = true;
+        open.addEventListener('close', function again() { open.removeEventListener('close', again); open.deskWait = false; deskRelayout(); });
+      }
+      return;
+    }
+    deskPlaceholder();
+    if (!S.desk) { show(el.deskKeys, false); deskMarkSelected(); }
+    if (!S.screen) return;
+    // Round 8: the window narrowed (or the switch went) while the Pipeline was showing: it is not a phone screen, so Leads opens (as any unknown link).
+    if ((S.screen === 'pipeline' || S.screen === 'dashboard') && TAB_ROUTES.indexOf(S.screen) === -1) { closePipeMenu(false); location.replace('#/'); route(); return; }   // round 9: the Dashboard too
+    setScreen(S.screen);   // which screens, bars, back arrow and classes show; nothing is closed (no sheet is open) and nothing is saved
+    if (S.screen === 'list' || (S.screen === 'thread' && S.desk && deskSplit())) { renderList(); renderSearch(); }
+    if (S.screen === 'thread') deskMarkSelected();
+  }
+
+  function isEditable(n) {
+    if (!n || n === document.body) return false;
+    var t = String(n.tagName || '').toLowerCase();
+    return t === 'input' || t === 'textarea' || t === 'select' || n.isContentEditable === true;
+  }
+  // The ids of the rows on screen in the left column, top to bottom: the search results while searching, else the list.
+  function deskRowIds() {
+    var box = searchActive() ? el.searchResults : el.leadList;
+    var links = box.querySelectorAll('a.lead-row[href^="#/lead/"]');
+    var ids = [];
+    for (var i = 0; i < links.length; i++) {
+      try { ids.push(decodeURIComponent(links[i].getAttribute('href').slice(7))); } catch (e) { /* skip a bad link */ }
+    }
+    return { box: box, ids: ids };
+  }
+  /* J / K / E / L / R and Cmd/Ctrl+K (features.desktopKeys, computer only). A key never writes: E and L click the record's OWN status button
+     (the same confirm sheet, follow-up choice, required price and Lost reason as a click), R only moves focus to the Text button.
+     Ignored while typing in a field, while a sheet or dialog is open, with Alt / Shift / other Cmd / Ctrl keys, and when E / L / R are held down. */
+  function onDeskKey(e) {
+    if (!S.desk || !feature('desktopKeys') || !S.signedIn || ACCESS.state !== 'ready') return;
+    var a = L.deskKey({ key: e.key, meta: e.metaKey, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, repeat: e.repeat,
+      editable: isEditable(document.activeElement), dialog: !!document.querySelector('dialog[open]') });
+    if (!a) return;
+    if (a === 'search') {
+      if (!HAS_SEARCH) return;
+      e.preventDefault();
+      if (!el.list.hidden && !el.search.hidden) { try { el.search.focus(); } catch (err) { /* ignore */ } return; }
+      // Elsewhere: Leads with the search box focused, the way Today's search icon does it (round 3).
+      S.focusSearch = true; location.hash = '#/'; route();
+      S.routedHash = location.hash;
+      setTimeout(function () { S.routedHash = ''; }, 1000);
+      return;
+    }
+    if (a === 'next' || a === 'prev') {
+      if (!deskSplitActive()) return;
+      var rows = deskRowIds();
+      var cur = S.screen === 'thread' ? S.thread.id : null;
+      var to = L.deskStep(rows.ids, cur, a === 'next' ? 1 : -1);
+      if (!to) { if (rows.ids.length) deskSay('No more leads in this list.'); return; }
+      e.preventDefault();
+      var href = '#/lead/' + encodeURIComponent(to);
+      if (cur) location.replace(href); else location.hash = href;   // one history entry for a run of J / K, not one per key
+      requestAnimationFrame(function () { deskRefocus(rows.box, href); });
+      return;
+    }
+    if (a === 'booked' || a === 'lost') {
+      if (S.screen !== 'thread' || !S.thread.loaded) return;
+      var b = S.actionButtons[a];
+      if (b && !b.hidden && !b.disabled && !el.actions.hidden) { e.preventDefault(); b.click(); }
+      else deskSay(L.statusInfo(a).label + ' is not available for this lead.');
+      return;
+    }
+    if (a === 'text') {
+      if (S.screen !== 'thread' || !S.thread.loaded) return;
+      var t = el.contactActions.querySelector('.contact-text');
+      if (t && !el.contactActions.hidden && !el.recContact.hidden) { e.preventDefault(); try { t.focus(); } catch (err) { /* ignore */ } }
+      else deskSay('No Text button for this lead.');
+    }
+  }
+
+  /* ---------- round 8 redesign: the Pipeline board (computer only; features.desktopPipeline + stages; owner only) ----------
+     Six columns (New, Contacted, Offer sent, Negotiation, Deal closed, Lost) from the lead list the page already loads, dollars by the cv_metrics
+     rule (L.pipelineView). No dragging (ruling 13A). "Move to" NEVER writes: it opens the lead's record and clicks the record's OWN status button,
+     so the owner sees today's confirm sheet (follow-up choice, required final price, Lost reason, Cancelled + kept amount); Save or Cancel
+     brings the owner back to the board. Nothing here calls the server but the list refresh every screen uses. */
+  function showPipeline() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
+    S.thread.id = null;
+    S.pipeSaid = false;
+    closePipeMenu(false);
+    setScreen('pipeline');
+    renderPipeline();
+    refreshList();
+    S.optedAt = 0; refreshOptedPhones();   // the open total leaves out who texted STOP: know them before the first total is trusted
+  }
+  function renderPipeline() {
+    if (S.screen !== 'pipeline') return;
+    if (S.pipeMenu || el.confirm.open) { S.pipeDirty = true; return; }   // never redraw under an open menu or sheet (it is drawn on close)
+    S.pipeDirty = false;
+    if (!S.listLoaded) {
+      show(el.pipeLoading, !S.listError);
+      setText(el.pipeError, S.listError);
+      show(el.pipeBoard, false); setText(el.pipeTotal, ''); show(el.pipeHint, false); setText(el.pipeOther, '');
+      return;
+    }
+    show(el.pipeLoading, false);
+    setText(el.pipeError, '');
+    if (!S.leads.length) {
+      el.pipeBoard.replaceChildren(); show(el.pipeBoard, false); show(el.pipeHint, false); setText(el.pipeOther, '');
+      setText(el.pipeTotal, 'No leads yet. When someone fills in your form or texts your number, they show up here.');
+      return;
+    }
+    var v = L.pipelineView(S.leads, { staff: isStaff(), shown: S.pipeShown, lostOpen: S.pipeLostOpen });
+    setText(el.pipeTotal, v.open.sentence);
+    show(el.pipeHint, true);
+    var frag = document.createDocumentFragment();
+    v.columns.forEach(function (col) { frag.appendChild(pipeColumn(col)); });
+    var keep = deskFocusedPipe();   // a live redraw keeps the keyboard where it was
+    el.pipeBoard.replaceChildren(frag);
+    show(el.pipeBoard, true);
+    // A name cut by the card's width carries the full name as a tooltip (the Move to button's label already has it for screen readers).
+    Array.prototype.forEach.call(el.pipeBoard.querySelectorAll('.pipe-name-text'), function (t) { if (t.scrollWidth > t.clientWidth + 1) t.parentNode.title = t.textContent; });
+    setText(el.pipeOther, v.other > 0 ? L.plural(v.other, 'lead', 'leads') + ' with another status ' + (v.other === 1 ? 'is' : 'are') + ' not on the board.' : '');
+    // Said once per visit; after a move the toast has just said "Moved X to Y." (a polite live line), so the count is not said over it.
+    if (!S.pipeSaid) { S.pipeSaid = true; el.pipeLive.textContent = S.pipeSay ? '' : 'Pipeline: ' + L.plural(v.open.count, 'open lead', 'open leads') + '.'; S.pipeSay = ''; }
+    var fid = S.pipeFocus || keep;
+    S.pipeFocus = null;
+    if (fid) {
+      var b = el.pipeBoard.querySelector('[data-move="' + cssId(fid) + '"]');
+      if (b) try { b.focus(); } catch (e) { /* ignore */ }
+    }
+  }
+  function cssId(id) { return String(id).replace(/[^A-Za-z0-9-]/g, ''); }
+  function deskFocusedPipe() {
+    var a = document.activeElement;
+    return a && el.pipeBoard.contains(a) && a.getAttribute ? (a.getAttribute('data-move') || '') : '';
+  }
+  function pipeColumn(col) {
+    var sec = make('section', 'pipe-col pipe-col-' + col.key);
+    sec.setAttribute('aria-labelledby', 'pipe-h-' + col.key);
+    var h = make('h2', 'pipe-col-h');
+    h.id = 'pipe-h-' + col.key;
+    h.appendChild(make('span', 'pipe-col-name', col.label));
+    h.appendChild(make('span', 'pipe-count', ' · ' + col.count));
+    sec.appendChild(h);
+    if (col.moneyText) sec.appendChild(make('p', 'pipe-money', col.moneyText));   // owner only (staff never reach the board; pipelineView gives them no money)
+    if (col.key === 'lost' && col.count > 0 && col.reasons && col.reasons.length) {
+      var rl = make('ul', 'pipe-reasons');
+      rl.setAttribute('aria-label', 'Why they were lost');
+      col.reasons.forEach(function (r) { rl.appendChild(make('li', '', r.label + ': ' + r.count)); });
+      sec.appendChild(rl);
+    }
+    if (col.count === 0) sec.appendChild(make('p', 'pipe-empty', L.pipeEmptyColumn(col.key)));
+    if (col.cards.length) {
+      var ul = make('ul', 'pipe-cards');
+      col.cards.forEach(function (c) { ul.appendChild(pipeCard(c)); });
+      sec.appendChild(ul);
+    }
+    if (col.moreText) {
+      var more = make('button', 'show-more pipe-more', col.moreText);
+      more.type = 'button';
+      more.addEventListener('click', function () {
+        S.pipeShown[col.key] = (S.pipeShown[col.key] || L.PIPE_FIRST) + L.PIPE_MORE;
+        renderPipeline();
+      });
+      sec.appendChild(more);
+    }
+    if (col.key === 'lost' && col.count > 0) {
+      var tog = make('button', 'list-back pipe-lost-toggle', col.lostText);
+      tog.type = 'button';
+      tog.setAttribute('aria-expanded', String(!!S.pipeLostOpen));
+      tog.addEventListener('click', function () { S.pipeLostOpen = !S.pipeLostOpen; renderPipeline(); });
+      sec.appendChild(tog);
+    }
+    return sec;
+  }
+  function pipeCard(c) {
+    var lead = c.lead, row = c.row || {};
+    var li = make('li');
+    var card = make('article', 'pipe-card');
+    var a = make('a', 'pipe-name');
+    a.href = '#/lead/' + encodeURIComponent(c.id);
+    if (L.newTextOn(lead, isStaff())) {
+      var dot = make('span', 'new-dot');
+      dot.setAttribute('role', 'img'); dot.setAttribute('aria-label', L.NEW_TEXT_LABEL); dot.title = L.NEW_TEXT_LABEL;
+      a.appendChild(dot);
+    }
+    a.appendChild(make('span', 'pipe-name-text', row.name || leadName(lead)));
+    card.appendChild(a);
+    card.appendChild(make('p', 'pipe-card-money' + (row.money ? '' : ' is-none'), row.money || 'no quote yet'));
+    // Review S3: an open lead who texted STOP keeps its quote on the card, but the column and the open total leave it out (cv_metrics rule): say so.
+    if (L.statusGroup(lead.status) === 'open' && L.toCents(lead.quote_total) !== null && L.pipeMoneyCents(lead) === null) card.appendChild(make('p', 'pipe-card-stop', 'Texted STOP · not counted'));
+    if (row.job) card.appendChild(make('p', 'pipe-card-job', row.job));
+    var cue = make('p', 'pipe-card-cue');
+    if (row.needs && row.wait) cue.appendChild(waitNode(row.wait)); else if (row.when) cue.textContent = row.when;
+    if (cue.firstChild) card.appendChild(cue);
+    var mv = make('button', 'pipe-move', 'Move to');
+    mv.type = 'button';
+    mv.setAttribute('aria-haspopup', 'menu');
+    mv.setAttribute('aria-expanded', 'false');
+    mv.setAttribute('aria-label', 'Move ' + (row.name || leadName(lead)) + ' to another status');
+    mv.setAttribute('data-move', cssId(c.id));
+    mv.addEventListener('click', function () { if (S.pipeMenu && S.pipeMenu.btn === mv) closePipeMenu(true); else openPipeMenu(lead, mv); });
+    card.appendChild(mv);
+    li.appendChild(card);
+    return li;
+  }
+  // The small Move-to menu: the statuses this lead may move to (the record's own list), under the button. Arrow keys, Home / End move;
+  // Esc and Tab close it (focus back on the button); a click outside or a scroll closes it too. Items are disabled while a save runs.
+  function openPipeMenu(lead, btn) {
+    closePipeMenu(false);
+    var opts = L.pipelineMoveOptions(lead);
+    if (!opts.length) { el.pipeLive.textContent = ''; el.pipeLive.textContent = "This lead's status can't be changed here."; return; }
+    var frag = document.createDocumentFragment();
+    opts.forEach(function (o) {
+      var b = make('button', 'pipe-menu-item', o.label);
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.disabled = !!S.pending;
+      b.addEventListener('click', function () { closePipeMenu(false); pipeMove(lead.lead_id, o.status); });
+      frag.appendChild(b);
+    });
+    el.pipeMenu.replaceChildren(frag);
+    el.pipeMenu.setAttribute('aria-label', 'Move ' + leadName(lead) + ' to');
+    var r = btn.getBoundingClientRect();
+    el.pipeMenu.hidden = false;
+    var w = el.pipeMenu.offsetWidth || 200, hgt = el.pipeMenu.offsetHeight || 0;
+    var left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+    var top = r.bottom + 4 + hgt > window.innerHeight - 8 ? Math.max(8, r.top - 4 - hgt) : r.bottom + 4;
+    el.pipeMenu.style.left = Math.round(left) + 'px';   // CSSOM (allowed by style-src 'self'), never a style attribute in markup
+    el.pipeMenu.style.top = Math.round(top) + 'px';
+    btn.setAttribute('aria-expanded', 'true');
+    S.pipeMenu = { btn: btn, id: lead.lead_id };
+    var first = el.pipeMenu.querySelector('button:not([disabled])') || el.pipeMenu.querySelector('button');
+    if (first) try { first.focus(); } catch (e) { /* ignore */ }
+  }
+  function closePipeMenu(refocus) {
+    var m = S.pipeMenu;
+    if (!m) { el.pipeMenu.hidden = true; return; }
+    S.pipeMenu = null;
+    el.pipeMenu.hidden = true;
+    el.pipeMenu.replaceChildren();
+    if (m.btn) { m.btn.setAttribute('aria-expanded', 'false'); if (refocus) try { m.btn.focus(); } catch (e) { /* ignore */ } }
+    if (S.pipeDirty) renderPipeline();
+  }
+  function onPipeMenuKey(e) {
+    if (!S.pipeMenu) return;
+    var items = Array.prototype.slice.call(el.pipeMenu.querySelectorAll('button'));
+    var i = items.indexOf(document.activeElement);
+    var to = -1;
+    if (e.key === 'ArrowDown') to = i < 0 ? 0 : (i + 1) % items.length;
+    else if (e.key === 'ArrowUp') to = i <= 0 ? items.length - 1 : i - 1;
+    else if (e.key === 'Home') to = 0;
+    else if (e.key === 'End') to = items.length - 1;
+    else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); closePipeMenu(true); return; }
+    if (to >= 0 && items[to]) { e.preventDefault(); try { items[to].focus(); } catch (x) { /* ignore */ } }
+  }
+  // A pick: remember what to open and where to come back to, then go to the lead. NO server call here (the record's sheet decides).
+  function pipeMove(id, status) {
+    S.deskIntent = { id: id, status: status, back: '#/pipeline', at: Date.now(), depth: 0 };
+    S.pipeFocus = id;
+    location.hash = '#/lead/' + encodeURIComponent(id);
+    try { S.deskIntent.depth = history.length; } catch (e) { /* 0 = replace on the way back */ }
+  }
+  // The lead has loaded: click its OWN status button (= the same confirm sheet as a click there), only when that button is shown and enabled.
+  function consumeDeskIntent() {
+    var it = S.deskIntent;
+    if (!it || it.id !== S.thread.id || !S.thread.loaded) return;
+    S.deskIntent = null;
+    if (Date.now() - it.at > 20000) { showToast("Couldn't open the lead. Try again."); return; }   // too slow: say so (the toast is a polite live line), open nothing
+    var b = S.actionButtons[it.status];
+    if (!b || b.hidden || b.disabled || el.actions.hidden || S.pending) { el.statusLive.textContent = L.statusInfo(it.status).label + ' is not available for this lead.'; return; }
+    S.deskReturn = { id: it.id, back: it.back, status: it.status, depth: it.depth };
+    b.click();
+    if (!el.confirm.open) S.deskReturn = null;   // nothing opened: stay on the lead
+  }
+  // Back to the board after the sheet: saved (with "Moved X to Y.") or cancelled. Only while the owner is still on that lead.
+  function pipeBack(saved) {
+    var r = S.deskReturn;
+    S.deskReturn = null;
+    if (!r || S.screen !== 'thread' || S.thread.id !== r.id) return;
+    S.pipeFocus = r.id;
+    if (saved) { var said = L.pipeMoveDone(leadName(S.thread.lead), r.status); showToast(said); S.pipeSay = said; }
+    // Back the way it came: the lead's history entry was pushed by pipeMove, so step back (the browser's Back then never reopens the lead);
+    // if anything was pushed since, replace instead (as leaving See all does).
+    var back = false;
+    try { back = !!r.depth && history.length === r.depth && location.hash === '#/lead/' + encodeURIComponent(r.id); } catch (e) { back = false; }
+    if (back) history.back(); else location.replace(r.back);
   }
 
   /* ---------- screens ---------- */
@@ -855,7 +1384,11 @@
     if (S.screen === 'quote' && name !== 'quote' && !askAdd) clearQuote();
     var asking = !!S.confirming && S.confirming.kind === 'quote-leave';
     // Round 4: leaving the list (to a lead, a tab) keeps where it was; showList puts it back.
-    if (S.screen === 'list' && name !== 'list') S.listTop = el.listScroll.scrollTop;
+    // Rounds 7-9 (S.desk = deskOn()): on a computer the list stays beside an open lead, so opening one does not leave it, and leaving that pair keeps its place too.
+    var deskKeep = !!S.desk && name === 'thread' && deskSplit();
+    // A saved view belongs to the Leads screen (computer only): leaving Leads (not for a lead beside the list) clears it, so coming back shows the tabs.
+    if (S.view && name !== 'list' && !deskKeep) S.view = null;
+    if ((S.screen === 'list' || (S.desk && S.screen === 'thread' && !el.list.hidden)) && name !== 'list' && !deskKeep) S.listTop = el.listScroll.scrollTop;
     // W17 (s13 item 7): the Ask chat stays while the owner opens a lead from an answer and comes back; any other screen clears it.
     if (S.ask) {
       var askMv = L.askMove(S.screen, name, S.ask.viaLead);
@@ -868,9 +1401,12 @@
     el.app.classList.toggle('signed-in', signedIn);
     show(el.signin, name === 'signin');
     show(el.roleScreen, name === 'role');
-    show(el.list, name === 'list');
+    show(el.list, name === 'list' || deskKeep);
+    show(el.deskPick, !!S.desk && name === 'list' && deskSplit());   // computer: the right side of Leads before a lead is picked
     if (el.today) show(el.today, name === 'today');
     show(el.metrics, name === 'metrics');
+    show(el.pipeline, name === 'pipeline');   // round 8: only ever reached on a computer (the route exists only there)
+    show(el.dashboard, name === 'dashboard');   // round 9: the same
     show(el.followups, name === 'followups');
     if (name !== 'followups') { S.pastScroll = false; S.pastErr = ''; }
     show(el.calendar, name === 'calendar');
@@ -884,17 +1420,22 @@
     show(el.exportScreen, name === 'export');
     show(el.thread, name === 'thread');
     show(el.topbar, signedIn);
-    show(el.tabbar, signedIn && PLAN.showBar);
+    show(el.tabbar, signedIn && PLAN.showBar && !S.desk);
+    show(el.sidebar, signedIn && !!S.desk);   // computer: the sidebar takes the bottom bar's place
     // Back arrow on a lead record and on the tools under More; every other screen is a tab with a plain title.
     var sub = name === 'thread' || name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide' || name === 'hidden';
     var subMetrics = name === 'metrics' && !BAR.some(function (n) { return n.route === 'metrics'; });   // round 3: Metrics under More has a back arrow
     if (subMetrics) { sub = true; el.back.setAttribute('aria-label', 'Back to ' + navFor(metricsBackRoute()).label.toLowerCase()); }
     show(el.back, sub);
     if (name === 'quote' || name === 'support' || name === 'export' || name === 'ask' || name === 'team' || name === 'guide' || name === 'hidden') el.back.setAttribute('aria-label', 'Back to ' + navFor('more').label.toLowerCase());
+    // Computer: a screen with its own sidebar item, and the lead beside the list, need no back arrow; the tools under Settings go back to Settings.
+    if (S.desk && (deskKeep || deskNavHas(name))) show(el.back, false);
+    if (S.desk && (name === 'team' || name === 'guide')) el.back.setAttribute('aria-label', 'Back to ' + settingsLabel().toLowerCase());
     if (name !== 'thread') {
       el.title.textContent = S.tab.label;
       setText(el.subtitle, name === 'today' ? L.todayDateLine() : '');   // round 3: the date over "Today" (styles.css puts it above the title)
     }
+    if (S.desk && name === 'more') el.title.textContent = settingsLabel();   // computer: More is called Settings in the sidebar
     // The leave question is still unanswered when Back / Forward / a notification moves the page: it stays up, only the screen behind it changes.
     // Back to the calculator answers it (the quote is still there); signing out drops it.
     if (asking && name === 'quote') closeConfirm();
@@ -909,10 +1450,14 @@
     if (el.dupDlg.open && !(S.dup && S.dup.busy)) { S.dup = null; closeDup(); }
     if (name !== 'thread') closeFullSilently();
     show(el.btnAdd, signedIn && (name === 'list' || name === 'today') && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');   // round 3: the same sheet from Today's "+"
+    if (deskKeep) show(el.btnAdd, signedIn && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');   // computer: also beside an open lead
     if (el.todaySearch) show(el.todaySearch, signedIn && name === 'today' && HAS_SEARCH);
     markTabs();
     if (!signedIn) setLive('off');
     renderConn();
+    // Rounds 7-9: the classes every desktop CSS rule hangs on (styles.css, inside @media (min-width: 1201px)). Phone / switch off: never set.
+    el.app.classList.toggle('desk', !!S.desk && signedIn);
+    el.app.classList.toggle('desk-split', !!S.desk && signedIn && (name === 'list' || name === 'thread') && deskSplit());
   }
 
 
@@ -966,8 +1511,9 @@
       refreshFollowUps();
       if (S.screen === 'thread' && S.thread.id) refreshThread();
       if (S.screen === 'metrics') refreshMetrics();
+      if (S.screen === 'dashboard') { refreshMetrics(); refreshPeriod(); }   // round 9
       if (S.screen === 'today' && todayNumbersOn()) refreshMetrics();
-      if (S.screen === 'list' && L.searchFilter(S.search.q)) runSearch();
+      if ((S.screen === 'list' || (S.desk && S.screen === 'thread' && deskSplit())) && L.searchFilter(S.search.q)) runSearch();   // computer: the search beside an open lead stays live
       if (S.screen === 'hidden') refreshHidden(true);
     }, delay);
   }
@@ -991,6 +1537,9 @@
 
   function renderLeadScreens() {
     if (S.screen === 'list') renderList();
+    else if (S.screen === 'thread' && S.desk && deskSplit()) renderList();   // computer: the list beside an open lead stays live
+    else if (S.screen === 'pipeline') renderPipeline();   // round 8: the board is drawn from the same lead list
+    else if (S.screen === 'dashboard') renderDashboard();   // round 9: Lead value reads the lead list
     else if (S.screen === 'today') renderToday(); // round 3: Needs you and This week come from the lead list
     else if (S.screen === 'metrics') renderMetrics(); // lead value comes from the lead list
     else if (S.screen === 'followups') renderFollowUps(); // "asked for you" times come from the lead list
@@ -1037,7 +1586,7 @@
   // The numbers that texted STOP (lead_list cannot say; a hand-added lead keeps its status). Only the No-quote chip and tag need them: one lookup,
   // at most once a minute while the list refreshes; a failed lookup keeps what was known.
   function refreshOptedPhones() {
-    if (!noQuoteOn() || !S.api || typeof S.api.optedOutPhones !== 'function' || S.optedBusy || Date.now() - S.optedAt < 60000) return;
+    if (!(noQuoteOn() || S.screen === 'pipeline') || !S.api || typeof S.api.optedOutPhones !== 'function' || S.optedBusy || Date.now() - S.optedAt < 60000) return;
     S.optedBusy = true;
     Promise.resolve().then(function () { return S.api.optedOutPhones(); }).then(function (rows) {
       if (!S.signedIn) return;
@@ -1068,6 +1617,7 @@
       S.thread.loaded = true;
       setText(el.threadErr, '');
       renderThread();
+      if (S.deskIntent) consumeDeskIntent();   // round 8: a Pipeline "Move to" opens this lead's own confirm sheet once it has loaded
     }).catch(function (e) {
       if (n !== S.seq.thread || id !== S.thread.id) return;
       if (!S.thread.loaded) {
@@ -1100,7 +1650,9 @@
   // Round 4: five chips (Open / Contacted / Booked / Lost / All), count over label so all five fit at 320 px. Counts from the
   // server when it gave them (right past what the page fetched), else from the rows here.
   function pickFilter(key) {
-    if (S.filter === key) return;
+    if (S.filter === key && !S.view) return;
+    var hadView = !!S.view;
+    S.view = null;   // computer: a tab leaves the saved view (a phone never has one)
     S.chip = key;
     S.filter = key;
     S.shown[key] = L.LIST_PAGE;
@@ -1108,12 +1660,13 @@
     renderList();
     el.listScroll.scrollTop = 0;
     S.listTop = 0;
+    if (hadView) markTabs();   // computer: the sidebar's view button is no longer picked (review S1)
   }
 
   function filterButton(f, counts) {
     var b = make('button', 'filter' + (f.key === 'noquote' ? ' filter-extra' : ''));
     b.type = 'button';
-    b.setAttribute('aria-pressed', String(S.filter === f.key));
+    b.setAttribute('aria-pressed', String(!S.view && S.filter === f.key));   // a saved view (computer only) shows no tab as picked
     if (S.listLoaded) b.appendChild(make('span', 'filter-count', counts[f.key].toLocaleString('en-CA')));
     b.appendChild(make('span', 'filter-label', f.label));
     b.setAttribute('aria-label', f.label + (S.listLoaded ? ', ' + counts[f.key] : '') + (f.key === 'lost' ? ', includes old leads and people who opted out' : ''));
@@ -1358,29 +1911,38 @@
       renderNeeds([], 0, []);
       show(el.listHead, false); show(el.listMore, false); show(el.listTop, false); setText(el.listTrunc, '');
       show(el.listSortBox, false);
+      show(el.viewHead, false);
+      if (S.desk) deskAfterList();
       return;
     }
     show(el.listLoading, false);
     setText(el.listErr, '');
     // The No-quote chip is gone (switch off, or its last lead got a quote): the list goes back to Open instead of showing an empty hidden chip.
     if (S.filter === 'noquote' && !noQuoteShown()) { S.filter = 'open'; S.chip = 'open'; store('set', FILTER_KEY, 'open'); renderFilters(); }
-    var needsMode = S.filter === 'needs';
+    // Rounds 7-9 (computer only): a saved view from the sidebar replaces the tab's rows (L.savedViewRows), in its own order when it names one.
+    var dv = S.view && S.desk ? deskView() : null;
+    var needsMode = S.filter === 'needs' && !dv;
     var view = L.homeView(S.leads, S.filter, undefined, lostPartsOn() ? S.lostPart : null);
+    if (dv) { view = { rest: L.savedViewRows(S.leads, dv), needs: [], needsAll: [] }; show(el.lostParts, false); }   // a view: its rows, no Needs-you block, no Lost toggle
     // Item 9 (W11): the chip's rows in the picked order; S.leads itself stays in activity order (Needs you, counts, Calendar read it).
     var sortKey = L.listSortEffective(S.sort, isStaff());   // a saved sort this viewer is not offered (staff + Highest quote) reads as Latest activity; storage untouched
+    if (dv && dv.f.sort) sortKey = dv.f.sort;   // a view may name its own order (L.savedViews already left staff without Highest quote)
     var leads = needsMode ? view.rest : L.sortLeadsBy(view.rest, sortKey, isStaff());
     show(el.listSortBox, !needsMode && S.leads.length > 1);
+    if (dv && dv.f.sort) show(el.listSortBox, false);   // the view has its own order
     renderSortPill(sortKey);
     renderNeeds(view.needs, view.needsAll.length, view.needsAll);
     show(el.listHead, needsMode);
     if (needsMode) el.listHeadTitle.textContent = L.statusInfo('handed_off').label + ': ' + view.needsAll.length + ', newest first';
+    show(el.viewHead, !!dv);
+    if (dv) el.viewTitle.textContent = dv.label + ' (' + leads.length + ')';
     show(el.listEmpty, S.leads.length === 0);
-    var none = needsMode ? 'Nobody is waiting on you right now.' : (lostPartsOn() ? L.LOST_PART_EMPTY[S.lostPart] : FILTER_EMPTY[S.filter]) || 'No leads here.';
+    var none = dv ? 'No leads match this view.' : needsMode ? 'Nobody is waiting on you right now.' : (lostPartsOn() ? L.LOST_PART_EMPTY[S.lostPart] : FILTER_EMPTY[S.filter]) || 'No leads here.';
     setText(el.filterEmpty, S.leads.length > 0 && leads.length === 0 ? none : '');
     // D3: with the toggle showing (owner) each part says what it is; staff, who have no toggle, keep the one line.
-    setText(el.filterNote, S.filter === 'lost' && S.leads.length > 0 && !lostPartsOn() ? 'Includes people who opted out.' : '');
+    setText(el.filterNote, S.filter === 'lost' && S.leads.length > 0 && !lostPartsOn() && !dv ? 'Includes people who opted out.' : '');
     setText(el.listTrunc, L.listTruncNote(S.leads.length, S.counts && S.counts.all, needsMode ? 'newest' : sortKey));
-    var pg = L.listPage(needsMode ? view.needsAll : leads, S.shown[S.filter]);
+    var pg = L.listPage(needsMode ? view.needsAll : leads, S.shown[dv ? 'view:' + dv.id : S.filter]);
     show(el.leadList, pg.rows.length > 0);
     var frag = document.createDocumentFragment();
     if (needsMode) {
@@ -1400,11 +1962,14 @@
     } else {
       pg.rows.forEach(function (lead) { frag.appendChild(leadRow(lead, { mainList: true })); });   // G1: the only place the "Without a quote yet" tag shows
     }
+    var refocus = S.desk ? deskFocusedHref(el.leadList) : '';   // computer: a live redraw keeps the keyboard on the same row
     el.leadList.replaceChildren(frag);
+    if (refocus) deskRefocus(el.leadList, refocus);
     el.listMore.textContent = pg.moreText;
     show(el.listMore, !!pg.moreText);
     // D6: a long list ends with "Back to top" (below Show more, so the two never cover each other).
     show(el.listTop, L.showBackToTop(pg.rows.length));
+    if (S.desk) deskAfterList();
   }
 
   // THE lead row (Home, search, Calendar day, Lead value, Follow-ups): name and one price on top, date and guests,
@@ -1837,6 +2402,10 @@
   function hiddenListAvailable() { return feature('hidden') && !isStaff() && !!S.api && typeof S.api.hiddenLeads === 'function'; }
 
   function renderHiddenRow() {
+    if (deskRows.hidden) {   // computer: the sidebar row follows the More row's rule
+      deskRows.hidden.hidden = !(hiddenListAvailable() && L.hiddenRowShown(S.hidden.n));
+      deskRows.hiddenLabel.textContent = L.hiddenRowLabel(S.hidden.n, deskRows.hiddenBase);
+    }
     if (!hiddenRowNode) return;
     hiddenRowNode.hidden = !(hiddenListAvailable() && L.hiddenRowShown(S.hidden.n));
     if (hiddenRowLabelNode) hiddenRowLabelNode.textContent = L.hiddenRowLabel(S.hidden.n, hiddenRowBase);
@@ -2079,6 +2648,7 @@
     el.searchResults.replaceChildren(frag);
     show(el.searchResults, rows.length > 0);
     setText(el.searchStatus, rows.length ? L.plural(rows.length, 'lead matches', 'leads match') + (rows.length >= 25 ? ' (showing the first 25)' : '') : 'No leads match that search.');
+    if (S.desk) deskMarkSelected();
   }
 
   function runSearch() {
@@ -2117,6 +2687,7 @@
 
   function showList() {
     if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);   // texts that came in while this lead was open were read: no dot for them
+    if (S.desk && S.screen === 'thread' && !el.list.hidden) S.listTop = el.listScroll.scrollTop;   // computer: the list was beside the lead; keep its place
     S.thread.id = null;
     setScreen('list');
     renderList();
@@ -3191,7 +3762,7 @@
     return feature('ask') && TAB_ROUTES.indexOf('ask') !== -1 && !!S.api && typeof S.api.ask === 'function' && typeof S.api.askConfig === 'function';
   }
   function askOn() { var a = S.ask; return askAvailable() && a.cfgState === 'ready' && !!a.cfg && a.cfg.enabled === true; }
-  function applyAskRow() { if (askRowNode) askRowNode.hidden = !askOn(); }
+  function applyAskRow() { if (askRowNode) askRowNode.hidden = !askOn(); if (deskRows.ask) deskRows.ask.hidden = !askOn(); }
 
   // cv_ask_config(): asked once per sign-in, kept for the session. Any error = Ask stays hidden.
   function loadAskConfig() {
@@ -3601,6 +4172,7 @@
     }).then(function () {
       if (seq !== sp.cfgSeq) return;
       if (supportRowNode) supportRowNode.hidden = !(sp.cfg && sp.cfg.enabled);
+      if (deskRows.support) deskRows.support.hidden = !(sp.cfg && sp.cfg.enabled);   // computer: the sidebar row follows the More row
       if (S.screen === 'support') renderSupport();
     });
   }
@@ -3793,6 +4365,7 @@
     setSupportBusy(false); setText(el.spError, ''); setText(el.spDone, '');
     el.spList.replaceChildren();
     if (supportRowNode) supportRowNode.hidden = true;
+    if (deskRows.support) deskRows.support.hidden = true;
     S.nav = { cur: '', from: '', lead: null };
     diagClear();
   }
@@ -4290,11 +4863,13 @@
   // The one badge in the page: leads waiting on the owner, on the Leads tab. Counted from the lead list (same leads as the Needs-you block).
   function renderBadge() {
     var count = S.listLoaded ? L.needsYou(S.leads).length : 0;
-    var item = el.tabbarList.querySelector('[data-route="list"] .tab-badge');
-    if (!item) return;
-    item.hidden = !count;
-    item.firstChild.textContent = String(count);
-    item.lastChild.textContent = ', ' + count + ' waiting on you';
+    // The bottom bar's Leads tab, and (computer, K10 A) the sidebar's Leads item: the same number, the same words.
+    [el.tabbarList.querySelector('[data-route="list"] .tab-badge'), el.sidebarMain ? el.sidebarMain.querySelector('[data-route="list"] .side-badge') : null].forEach(function (item) {
+      if (!item) return;
+      item.hidden = !count;
+      item.firstChild.textContent = String(count);
+      item.lastChild.textContent = ', ' + count + ' waiting on you';
+    });
   }
 
   function fuBlock(title, empty) {
@@ -4421,12 +4996,14 @@
       S.metricsError = '';
       if (S.screen === 'metrics') renderMetrics();
       else if (S.screen === 'today') renderToday();
+      else if (S.screen === 'dashboard') renderDashboard();
     }).catch(function (e) {
       if (n !== S.seq.metrics) return;
       if (!S.metrics) {
         S.metricsError = isAuthFailure(e) ? 'Your session ran out. Sign out and sign in again.' : "Couldn't load your numbers. Trying again…";
         if (S.screen === 'metrics') renderMetrics();
         else if (S.screen === 'today') renderToday();
+        else if (S.screen === 'dashboard') renderDashboard();
       }
       retryLater();
     });
@@ -4443,6 +5020,7 @@
       S.crHidden = L.closeRateHidden(S.forecast);   // D1: answered: follow tracking.ready
       if (S.screen === 'metrics') renderMetrics();
       else if (S.screen === 'today') renderToday();
+      else if (S.screen === 'dashboard') renderDashboard();
     }).catch(function () {
       if (n !== S.seq.forecast) return;
       S.forecast = null;
@@ -4450,6 +5028,7 @@
       if (S.crHidden === undefined) S.crHidden = false;   // D1: the first answer failed: show as before; a later blip keeps the last answer
       if (S.screen === 'metrics') renderMetrics();
       else if (S.screen === 'today') renderToday();
+      else if (S.screen === 'dashboard') renderDashboard();
     });
   }
 
@@ -4730,6 +5309,247 @@
     if (feature('value')) refreshList(); // the lead value lines are counted from the lead list
   }
 
+  /* ---------- round 9 redesign: the Dashboard (computer only; features.desktopDashboard; owner only) ----------
+     Today's Metrics blocks (their own dates, built by METRIC_BLOCKS unchanged) in a grid, plus three period blocks (funnel, why leads were lost,
+     speed) that follow a Week / Month / Season / Year switch read from cv_metrics_period (sql/055). Without 055 on the database the switch and the
+     funnel stay hidden and lost reasons + speed are all time from cv_metrics (as Metrics). Charts are drawn by the page; every bar has its number
+     in words beside it. The phone's Metrics screen is untouched (K11 A). */
+  var PERIOD_KEY = 'cv_dash_period';
+  function showDashboard() {
+    if (S.thread.id && S.thread.loaded) markLeadSeen(S.thread.id);
+    S.thread.id = null;
+    S.dashSaid = false;
+    el.dashLive.textContent = '';
+    var saved = store('get', PERIOD_KEY);
+    S.period.key = L.PERIOD_KEYS.indexOf(saved) !== -1 ? saved : L.PERIOD_DEFAULT;   // K3 A: Year unless this tab picked another
+    setScreen('dashboard');
+    renderDashboard();
+    refreshMetrics();
+    refreshPeriod();
+    if (feature('value')) refreshList();   // Lead value is counted from the lead list
+  }
+  function refreshPeriod() {
+    var P = S.period;
+    if (!S.api || typeof S.api.metricsPeriod !== 'function') { P.state = 'missing'; P.known = true; renderDashboard(); return Promise.resolve(); }
+    var r = L.periodRange(P.key);
+    P.range = r;
+    var n = ++P.seq;
+    // A background refresh of the period already on screen (the 30 s refresh, Realtime, back online) changes nothing until it answers: the buttons
+    // stay enabled and focus stays where it is (review S2). Only a new pick (no answer held for it yet) shows Loading and disables the buttons.
+    var background = P.state !== 'missing' && !!P.data && P.dataKey === r.key;
+    if (!background) {
+      if (P.state !== 'missing') P.state = 'loading';
+      renderDashboard();
+    }
+    return Promise.resolve().then(function () { return S.api.metricsPeriod(r.from, r.to); }).then(function (d) {
+      if (n !== P.seq || !S.signedIn) return;
+      P.data = d || {}; P.dataKey = r.key; P.state = 'ok'; P.known = true;
+      renderDashboard();
+    }, function (e) {
+      if (n !== P.seq) return;
+      P.known = true;
+      if (L.periodMissing(e)) { P.state = 'missing'; P.data = null; }
+      else {
+        P.state = 'error';
+        if (P.dataKey !== r.key) P.data = null;   // an older answer is kept only for the same period
+        retryLater();
+      }
+      renderDashboard();
+    });
+  }
+  function pickPeriod(key) {
+    var P = S.period;
+    if (P.key === key || L.PERIOD_KEYS.indexOf(key) === -1) return;
+    store('set', PERIOD_KEY, key);
+    P.key = key; P.data = null; P.dataKey = '';
+    P.focusKey = key;   // the buttons are disabled while it loads; focus goes back to the picked one after
+    el.dashLive.textContent = 'Showing ' + L.periodRange(key).label + '.';
+    refreshPeriod();
+  }
+  function renderPeriodSwitch() {
+    var P = S.period;
+    var on = P.known && P.state !== 'missing';
+    show(el.dashPeriod, on);
+    show(el.dashPeriodNote, on);
+    if (!on) { el.dashPeriod.replaceChildren(); return; }
+    var focused = el.dashPeriod.contains(document.activeElement) ? document.activeElement.getAttribute('data-period') : '';
+    if (P.focusKey && P.state !== 'loading' && (!document.activeElement || document.activeElement === document.body)) { focused = P.focusKey; }
+    if (P.state !== 'loading') P.focusKey = '';
+    var frag = document.createDocumentFragment();
+    L.periodButtons(P.key).forEach(function (b) {
+      var btn = make('button', 'dash-period-btn', b.label);
+      btn.type = 'button';
+      btn.setAttribute('data-period', b.key);
+      btn.setAttribute('aria-pressed', String(b.pressed));
+      btn.disabled = P.state === 'loading';
+      btn.addEventListener('click', function () { pickPeriod(b.key); });
+      frag.appendChild(btn);
+    });
+    el.dashPeriod.replaceChildren(frag);
+    if (focused) { var f = el.dashPeriod.querySelector('[data-period="' + focused + '"]'); if (f) try { f.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+  }
+  function dashPlace(node, span) { if (node) node.classList.add('dash-s' + span); return node; }
+  // A horizontal bar list (funnel, follow-up times): label, a bar the screen reader skips, and the number in words.
+  function dashBars(rows, cls) {
+    var ol = make('ol', 'funnel dash-bars' + (cls ? ' ' + cls : ''));
+    rows.forEach(function (r) {
+      var li = make('li', 'funnel-row' + (r.late ? ' is-late' : ''));
+      var top = make('div', 'funnel-top');
+      top.appendChild(make('span', 'funnel-label', r.label));
+      top.appendChild(make('span', 'funnel-num', String(r.count) + (r.late ? ' · slower than a day' : '')));
+      li.appendChild(top);
+      var track = make('div', 'funnel-track');
+      track.setAttribute('aria-hidden', 'true');
+      var bar = make('div', 'funnel-bar');
+      bar.style.width = r.width + '%';   // CSSOM, allowed under style-src 'self'
+      track.appendChild(bar);
+      li.appendChild(track);
+      ol.appendChild(li);
+    });
+    return ol;
+  }
+  function dashRangeLine(b, text) { var sub = make('p', 'm-sub dash-range', text); b.insertBefore(sub, b.children[1] || null); return b; }
+  function dashPeriodWait(title) {
+    var P = S.period;
+    var b = block(title);
+    if (P.state === 'error') {
+      b.appendChild(make('p', 'm-line m-empty', L.periodErrorText(P.range)));
+      var again = make('button', 'fc-link dash-retry', 'Try again');
+      again.type = 'button';
+      again.addEventListener('click', function () { refreshPeriod(); });
+      b.appendChild(again);
+    } else b.appendChild(make('p', 'm-line m-empty', 'Loading…'));
+    return b;
+  }
+  // The answer for the period on screen; kept while a refresh runs or fails (no flicker every 30 s), dropped when another period is picked.
+  function dashPeriodData() { var P = S.period; return P.state !== 'missing' && P.data && P.dataKey === P.key ? P.data : null; }
+  function dashFunnel() {
+    var P = S.period;
+    if (P.state === 'missing' || !P.known && P.state !== 'loading') return null;
+    var d = dashPeriodData();
+    if (!d) return dashPeriodWait('Where leads drop off');
+    var b = block('Where leads drop off');
+    dashRangeLine(b, P.range ? P.range.label : '');
+    var f = L.stageFunnel(d.funnel);
+    if (!f) { b.appendChild(make('p', 'm-line m-empty', L.periodErrorText(P.range))); return b; }
+    if (f.empty) { b.appendChild(make('p', 'm-line m-empty', f.empty)); return b; }
+    b.appendChild(dashBars(f.rows));
+    if (f.drop) b.appendChild(make('p', 'm-sub dash-drop', f.drop));
+    b.appendChild(make('p', 'm-sub', 'Each row counts the leads that got that far.'));
+    return b;
+  }
+  function dashLost(m) {
+    var P = S.period;
+    if (P.state === 'missing') return dashRangeLine(METRIC_BLOCKS.lost_reasons(m), 'all time');
+    var d = dashPeriodData();
+    if (!d) return dashPeriodWait('Why leads were lost');
+    return dashRangeLine(METRIC_BLOCKS.lost_reasons({ lost_reasons: d.lost_reasons }), P.range ? P.range.label : '');
+  }
+  function dashSpeed(m) {
+    var P = S.period;
+    if (P.state === 'missing') return dashRangeLine(METRIC_BLOCKS.speed(m), 'all time');
+    var d = dashPeriodData();
+    if (!d) return dashPeriodWait('Speed');
+    var b = block('Speed');
+    dashRangeLine(b, P.range ? P.range.label : '');
+    var tiles = make('div', 'm-tiles');
+    L.speedTiles(d.speed).forEach(function (t) {
+      var x = make('div', 'm-tile');
+      x.appendChild(make('p', 'm-tile-label', t.label));
+      x.appendChild(make('p', 'm-tile-money', t.value));
+      if (t.sub) x.appendChild(make('p', 'm-tile-count', t.sub));
+      tiles.appendChild(x);
+    });
+    b.appendChild(tiles);
+    var rows = L.followupBuckets(d.speed);
+    if (rows) {
+      b.appendChild(make('p', 'm-sub fc-head', 'Your follow-up time'));
+      b.appendChild(dashBars(rows, 'dash-buckets'));
+      b.appendChild(make('p', 'm-sub', 'Red = slower than a day.'));
+    }
+    return b;
+  }
+  function dashOutcomes() {
+    if (!feature('forecast')) return null;
+    var v = L.outcomesMeter(S.forecast);
+    if (!v) return null;
+    var b = block(v.title);
+    b.appendChild(make('p', 'm-big', v.value));
+    var track = make('div', 'funnel-track dash-meter');
+    track.setAttribute('aria-hidden', 'true');
+    var bar = make('div', 'funnel-bar');
+    bar.style.width = v.pct + '%';   // CSSOM
+    track.appendChild(bar);
+    b.appendChild(track);
+    b.appendChild(make('p', 'm-sub', v.recorded + ' of ' + v.cohort + ' finished events have an outcome. ' + v.sub));
+    if (!v.ready && pastOn() && L.pastEventsView(S.pastEvents)) {
+      var p = make('p', 'm-line', 'Did these happen? ');
+      var lk = make('button', 'fc-link', 'Review them');
+      lk.type = 'button';
+      lk.addEventListener('click', function () { S.pastScroll = true; location.hash = '#/followups'; });
+      p.appendChild(lk);
+      b.appendChild(p);
+    }
+    return b;
+  }
+  // Where leads come from as a real table (all time, as Metrics).
+  function dashSources(m) {
+    if (!Array.isArray(m.sources)) return null;
+    var b = block('Where leads come from');
+    var rows = L.sourceRows(m.sources);
+    if (!rows.length) { b.appendChild(make('p', 'm-line m-empty', 'No leads yet.')); return b; }
+    var tbl = make('table', 'dash-table');
+    var head = make('tr');
+    ['Source', 'Leads', 'This month', L.stagesOn() ? 'Closed' : 'Booked', 'Money'].forEach(function (h) { var th = make('th', '', h); th.setAttribute('scope', 'col'); head.appendChild(th); });
+    var thead = make('thead'); thead.appendChild(head); tbl.appendChild(thead);
+    var tb = make('tbody');
+    rows.forEach(function (r) {
+      var tr = make('tr');
+      var th = make('th', 'dash-src', r.label); th.setAttribute('scope', 'row'); tr.appendChild(th);
+      [String(r.leads), String(r.month), String(r.booked || 0), r.bookedMoney || '—'].forEach(function (v) { tr.appendChild(make('td', 'is-num', v)); });
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    b.appendChild(tbl);
+    return b;
+  }
+  function renderDashboard() {
+    if (S.screen !== 'dashboard') return;
+    var m = S.metrics;
+    renderPeriodSwitch();
+    if (!m) {
+      show(el.dashLoading, !S.metricsError);
+      setText(el.dashError, S.metricsError);
+      show(el.dashGrid, false);
+      setText(el.dashUpdated, '');
+      return;
+    }
+    show(el.dashLoading, false);
+    setText(el.dashError, '');
+    var when = m.generated_at ? L.fmtStamp(m.generated_at) : '';
+    setText(el.dashUpdated, when ? 'Updated ' + when : '');
+    var order = metricOrder();
+    var has = function (k) { return order.indexOf(k) !== -1; };
+    var frag = document.createDocumentFragment();
+    var add = function (node, span) { if (node) frag.appendChild(dashPlace(node, span)); };
+    if (has('booked')) add(METRIC_BLOCKS.booked(m), 8);
+    if (has('kept')) add(METRIC_BLOCKS.kept(m), 4);
+    if (has('open')) add(METRIC_BLOCKS.open(m), 4);
+    if (has('value')) add(METRIC_BLOCKS.value(m), 4);
+    add(dashOutcomes(), 4);
+    if (has('close_rate')) add(METRIC_BLOCKS.close_rate(m), 4);   // K7 A: only once the forecast says ready (metricOrder, Kevin D1)
+    if (has('forecast')) add(METRIC_BLOCKS.forecast(m), 8);
+    add(dashFunnel(), 4);
+    if (has('sources')) add(dashSources(m), 5);
+    if (has('lost_reasons')) add(dashLost(m), 4);
+    if (has('speed')) add(dashSpeed(m), 3);
+    var keep = document.activeElement && el.dashGrid.contains(document.activeElement) && document.activeElement.className;
+    el.dashGrid.replaceChildren(frag);
+    show(el.dashGrid, true);
+    if (keep && /dash-retry/.test(keep)) { var rb = el.dashGrid.querySelector('.dash-retry'); if (rb) try { rb.focus(); } catch (e) { /* ignore */ } }
+    if (!S.dashSaid) { S.dashSaid = true; el.dashLive.textContent = 'Your numbers are loaded.'; }
+  }
+
   /* ---------- thread: status actions + history ---------- */
 
   function buildActions() {
@@ -4987,6 +5807,7 @@
     if (c && c.kind === 'quote-leave' && S.quote.adding) return;
     closeConfirm();
     if (c && c.kind === 'quote-leave') stayOnQuote();
+    if (c && c.kind === 'status' && S.deskReturn) pipeBack(false);   // round 8: Cancel on a sheet opened from the Pipeline goes back to the board
   }
 
   // The dialog closed by itself (Esc) with its question unanswered. A programmatic close clears S.confirming first; a newer sheet already open is left alone.
@@ -4995,6 +5816,7 @@
     var c = S.confirming;
     S.confirming = null;
     if (c && c.kind === 'quote-leave' && !S.quote.adding) stayOnQuote();
+    if (c && c.kind === 'status' && S.deskReturn) pipeBack(false);   // round 8: Esc too
   }
 
   function closeConfirm() {
@@ -5011,9 +5833,11 @@
     if (!id || S.pending) return;
     S.pending = status;
     var token = S.pendingToken = {}; // opening another lead frees S.pending: this save must then leave the other lead's save alone
+    var saved = false;   // round 8: only a saved move goes back to the Pipeline; an error keeps the owner on the lead
     setText(el.actionErr, '');
     renderActions();
     Promise.resolve().then(function () { return S.api.setStatus(id, status, extra || {}); }).then(function () {
+      saved = true;
       if (el.statusLive && id === S.thread.id) el.statusLive.textContent = 'Saved: ' + L.statusInfo(status).label + '.';   // round 5: polite live line for screen readers
       S.historyOpen = false;
       // This lead's follow-up rows are out of date now: forget them so renderNext cannot repeat an old promise before the refetch lands.
@@ -5026,6 +5850,10 @@
       if (id === S.thread.id) return Promise.all([refreshThread(), refreshList()]);
     }).then(function () {
       if (S.pendingToken === token) S.pending = null;
+      if (S.deskReturn && S.deskReturn.id === id) {   // round 8: a move started on the Pipeline
+        if (saved && id === S.thread.id) { pipeBack(true); return; }
+        S.deskReturn = null;
+      }
       if (id === S.thread.id) {
         renderActions();
         // The tapped button may now be disabled: keep keyboard focus inside the strip.
@@ -5704,6 +6532,8 @@
   }
 
   function showThread(id) {
+    if (S.deskIntent && S.deskIntent.id !== id) S.deskIntent = null;   // round 8: opening any other lead drops a pending Pipeline move
+    if (S.deskReturn && S.deskReturn.id !== id) S.deskReturn = null;
     setScreen('thread');
     if (S.thread.id !== id) {
       S.thread = emptyThread(id);
@@ -5733,6 +6563,7 @@
       renderThread();
     }
     el.back.setAttribute('aria-label', 'Back to ' + S.tab.label.toLowerCase());
+    if (S.desk) deskMarkSelected();   // computer: the row of the lead now open, beside it
     refreshThread();
     if (!S.followUps) refreshFollowUps(); // the line under the name only promises a text that has a follow_ups row
   }
@@ -5743,6 +6574,7 @@
   // The page's filter follows the hash: #/needs shows it; any other list route (the Leads tab, "Back to leads") shows the chip again.
   // Coming back from a lead keeps the list and its place, because S.filter was not touched while the lead was open.
   function syncNeedsRoute(needs) {
+    if (needs) S.view = null;   // computer: See all leaves a saved view
     if (needs && S.filter !== 'needs') {
       S.filter = 'needs'; S.shown.needs = L.LIST_PAGE; S.listTop = 0;
     } else if (!needs && S.filter === 'needs') {
@@ -5808,9 +6640,9 @@
   // CV_CUSTOM.businessName wins; else whatever the backend offers (the mock says "Lab Bar"); else nothing. Shown at the top of More.
   function loadBrand() {
     var own = typeof custom.businessName === 'string' ? custom.businessName.trim() : '';
-    if (own) { el.moreBrand.textContent = own; return; }
+    if (own) { el.moreBrand.textContent = own; el.sidebarBrand.textContent = own; return; }
     Promise.resolve(S.api.businessName ? S.api.businessName() : null).then(function (name) {
-      if (S.signedIn) { el.moreBrand.textContent = (name && String(name).trim()) || ''; if (name && String(name).trim()) applyAppName(String(name).trim()); }
+      if (S.signedIn) { el.moreBrand.textContent = (name && String(name).trim()) || ''; if (name && String(name).trim()) { applyAppName(String(name).trim()); el.sidebarBrand.textContent = String(name).trim(); } }
     }).catch(function () { /* keep it empty */ });
   }
 
@@ -5886,7 +6718,9 @@
     S.api = v.state === 'staff' ? trackApi(S.base.staffMap()) : S.base;
     computeNav();
     buildTabbar();
+    buildSidebar();
     show(el.searchWrap, HAS_SEARCH);
+    deskPlaceholder();
     S.tab = NAV[0];
     if (v.state === 'staff') setLive('off');   // no Realtime for staff: the server delivers them nothing
     else startLive();
@@ -5937,7 +6771,12 @@
     // Back to the first-screen state: the owner's API map and tabs, nothing asked yet (the next sign-in asks again).
     ACCESS.seq++; ACCESS.role = ''; ACCESS.perms = {}; ACCESS.state = 'idle'; ACCESS.errorText = '';
     if (S.base) S.api = S.base;
-    computeNav(); buildTabbar();
+    computeNav(); buildTabbar(); buildSidebar();
+    S.view = null;
+    S.pipeShown = {}; S.pipeLostOpen = false; S.deskIntent = null; S.deskReturn = null; S.pipeFocus = null; S.pipeSay = '';   // round 8: nothing of the board stays
+    closePipeMenu(false); el.pipeBoard.replaceChildren(); setText(el.pipeTotal, ''); el.pipeLive.textContent = '';
+    S.period = { key: 'year', data: null, dataKey: '', state: 'idle', seq: S.period.seq + 1, range: null, known: false }; S.dashSaid = false;   // round 9
+    el.dashGrid.replaceChildren(); el.dashPeriod.replaceChildren(); el.dashLive.textContent = '';
     show(el.searchWrap, HAS_SEARCH);
     show(el.alerts, false);
     // Session ended (expiry, other tab): drop this phone's browser subscription locally. The server call may no longer be authorised;
@@ -6319,6 +7158,29 @@
       var a = e.target && e.target.closest ? e.target.closest('a.tab') : null;
       if (a && a.getAttribute('data-route') === 'list' && location.hash === '#/needs') { e.preventDefault(); leaveSeeAll(); }
     });
+    // Rounds 7-9 (computer): the sidebar's Leads item leaves See all the same way, and shows every lead again when a saved view is on.
+    el.sidebarMain.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('a.side-item') : null;
+      if (!a || a.getAttribute('data-route') !== 'list') return;
+      var hadView = !!S.view;
+      S.view = null;
+      if (location.hash === '#/needs') { e.preventDefault(); leaveSeeAll(); return; }
+      if (hadView && location.hash === '#/' && S.screen === 'list') { e.preventDefault(); renderList(); markTabs(); }
+    });
+    el.viewClear.addEventListener('click', function () {
+      clearView();
+      var first = el.filters && el.filters.querySelector ? el.filters.querySelector('button') : null;   // the button is gone: focus goes to the tabs
+      try { if (first) first.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+    });
+    if (L.desktopFeatureOn(custom.features, 'desktopKeys')) document.addEventListener('keydown', onDeskKey);
+    // Round 8: the Pipeline's Move-to menu: keys inside it; a click outside, a scroll or a resize closes it.
+    el.pipeMenu.addEventListener('keydown', onPipeMenuKey);
+    document.addEventListener('mousedown', function (e) {
+      if (!S.pipeMenu || el.pipeMenu.contains(e.target) || (S.pipeMenu.btn && S.pipeMenu.btn.contains(e.target))) return;
+      closePipeMenu(false);
+    });
+    el.pipeScroll.addEventListener('scroll', function () { if (S.pipeMenu) closePipeMenu(false); }, true);
+    window.addEventListener('resize', function () { if (S.pipeMenu) closePipeMenu(false); });
     // Round 1 redesign: the tab row scrolls sideways on a phone; it fades at the edge that has more, and a pick is said for screen readers.
     wireTabsRow();
     // Item 9 (W11): the Sort pill opens the sort sheet (rows built on open from L.listSorts); a pick is saved on this phone and the list starts again at the top.
@@ -6332,7 +7194,8 @@
     el.sortSheet.addEventListener('click', function (e) { if (e.target === el.sortSheet) closeSortSheet(); });
     el.sortSheet.addEventListener('close', function () { try { el.listSort.focus({ preventScroll: true }); } catch (e) { /* ignore */ } });
     el.listMore.addEventListener('click', function () {
-      S.shown[S.filter] = Math.max(L.LIST_PAGE, S.shown[S.filter] || 0) + L.LIST_PAGE;
+      var k = S.view && S.desk ? 'view:' + S.view : S.filter;   // computer: a saved view pages on its own
+      S.shown[k] = Math.max(L.LIST_PAGE, S.shown[k] || 0) + L.LIST_PAGE;
       renderList();
     });
     el.listTop.addEventListener('click', function () {
@@ -6554,6 +7417,10 @@
       return;
     }
     buildTabbar();
+    buildSidebar();
+    // Rounds 7-9: crossing 1200 px switches between the phone layout and the computer one (only with the switch on: DESK_MQ is null otherwise).
+    if (DESK_MQ) { if (DESK_MQ.addEventListener) DESK_MQ.addEventListener('change', onDeskChange); else if (DESK_MQ.addListener) DESK_MQ.addListener(onDeskChange); }
+    deskPlaceholder();
     registerWorker();
     buildActions();
     mountQuoteCard();   // round 1 redesign: places the existing quote parts into one card when CV_CUSTOM.features.quoteCard is on
