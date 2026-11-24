@@ -1869,6 +1869,29 @@
     return !(o && typeof o === 'object' && (o.state === 'sent' || o.state === 'sending'));
   }
 
+  // Fix round 1 (item 4): the leads the calculator's "Add to a lead" picker may offer: the same rule as the from-a-lead button (canAddQuoteToLead),
+  // never a hidden lead, narrowed by the typed words (name or status word, case-blind). No phone number, ever: name, event date, status only.
+  var QUOTE_PICK_MAX = 40;
+  function quotePickRows(leads, query, now) {
+    var words = String(query == null ? '' : query).toLowerCase().replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+    var rows = [];
+    (Array.isArray(leads) ? leads : []).forEach(function (l) {
+      if (!l || l.hidden === true || !l.lead_id || !canAddQuoteToLead(l)) return;
+      if (l.quote_total != null) return;   // lead_list carries no quote_status / owner_quote: its own quote_total is set for a firm or sent quote, which the server refuses; the pick re-checks on the lead's lead_detail row
+      var name = displayName(l), status = statusInfo(l.status).label, date = fmtEventDate(l.event_date, now);
+      var hay = (name + ' ' + status + ' ' + date).toLowerCase();
+      if (!words.every(function (w) { return hay.indexOf(w) !== -1; })) return;
+      rows.push({ id: l.lead_id, name: name, sub: (date || 'No event date') + ' \u00b7 ' + status, lead: l });
+    });
+    return { rows: rows.slice(0, QUOTE_PICK_MAX), total: rows.length, more: Math.max(0, rows.length - QUOTE_PICK_MAX) };
+  }
+  // The fromLead the calculator keeps once a lead is picked: the same shape the lead's own price link builds (app.js), plus picked:true for "Choose another lead".
+  function quoteFromLead(lead) {
+    var o = lead && lead.owner_quote;
+    return { id: lead.lead_id, name: displayName(lead), savedTotal: o ? fmtMoney(o.total) : '',
+      maybeSent: !!o && (o.state === 'unknown' || o.earlier_maybe_sent === true), picked: true };
+  }
+
   // Engine response + the request -> cv_add_lead_quote's p_quote. Only what the server accepts; no arithmetic.
   function quoteAddArgs(res, body) {
     var r = res && typeof res === 'object' ? res : {};
@@ -6259,7 +6282,7 @@ function renderPriceBlockSms(lineItems, total, currency) {
     quoteSavedLine: quoteSavedLine,
     priceCardReady: priceCardReady,
     quoteAddRefused: quoteAddRefused,
-    canAddQuoteToLead: canAddQuoteToLead,
+    canAddQuoteToLead: canAddQuoteToLead, quotePickRows: quotePickRows, quoteFromLead: quoteFromLead,
     quoteAddArgs: quoteAddArgs,
     quoteAddError: quoteAddError,
     quoteSendError: quoteSendError,

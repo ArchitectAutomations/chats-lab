@@ -22,7 +22,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Leads">
-<link rel="stylesheet" href="styles.css?v=2026-11-24-r9">
+<link rel="stylesheet" href="styles.css?v=2026-11-24-r9b">
 </head>
 <body>
 <div class="app" id="app">
@@ -408,6 +408,8 @@
           <p class="q-copied" id="q-copied" role="status"></p>
           <div class="q-add-box" id="q-add-box" hidden>
             <button class="btn primary" id="q-add" type="button">Add this quote to the lead</button>
+            <button class="btn" id="q-pick" type="button" hidden>Add to a lead</button>
+            <button class="btn quiet q-pick-change" id="q-pick-change" type="button" hidden>Choose another lead</button>
             <p class="rec-note" id="q-add-note"></p>
             <p class="error" id="q-add-err" role="alert" hidden></p>
           </div>
@@ -924,6 +926,20 @@
     </div>
   </dialog>
 
+  <!-- Add to a lead picker (quote calculator, owner only): search + one row per lead; app.js renders the rows. -->
+  <dialog class="sheet sheet-add sheet-qpick" id="qpick-dlg" aria-labelledby="qpick-title">
+    <div class="sheet-body">
+      <p class="sheet-text" id="qpick-title">Add this quote to which lead?</p>
+      <label class="field-label" for="qpick-search">Find a lead</label>
+      <input class="field" id="qpick-search" type="search" autocomplete="off" placeholder="Name, status or date" aria-controls="qpick-list">
+      <p class="hint" id="qpick-count" role="status" aria-live="polite"></p>
+      <div class="qpick-list" id="qpick-list" role="list"></div>
+      <div class="sheet-actions">
+        <button class="btn quiet" id="qpick-close" type="button">Cancel</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- Sort sheet: opened by the Sort pill over the lead lists. The radio rows are rebuilt by app.js on every open from L.listSorts({ staff }). -->
   <dialog class="sheet sheet-sort" id="sort-sheet" aria-labelledby="sort-title">
     <div class="sheet-body">
@@ -1105,13 +1121,13 @@
 
 <noscript><p class="noscript">This page needs JavaScript to show your leads.</p></noscript>
 
-<script src="config.js?v=2026-11-24-r9"></script>
+<script src="config.js?v=2026-11-24-r9b"></script>
 <!-- supabase-js 2.45.4 UMD, pinned. SRI sha384 computed from the file served by jsDelivr on 2026-11-04.
      Recompute: curl -s https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js | openssl dgst -sha384 -binary | openssl base64 -A -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
         integrity="sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o"
         crossorigin="anonymous"></script>
-<script src="lib.js?v=2026-11-24-r9"></script>
-<script src="app.js?v=2026-11-24-r9"></script>
+<script src="lib.js?v=2026-11-24-r9b"></script>
+<script src="app.js?v=2026-11-24-r9b"></script>
 </body>
 </html>

@@ -193,6 +193,7 @@
     recMoney: $('rec-money'), moneyAi: $('money-ai'), moneyAiText: $('money-ai-text'), moneyAiSub: $('money-ai-sub'), moneyAiBtn: $('money-ai-btn'),
     moneyDepositRow: $('money-deposit-row'), moneyDeposit: $('money-deposit'), moneyDepositStamp: $('money-deposit-stamp'), moneyKept: $('money-kept'), moneyErr: $('money-error'),
     qAddBox: $('q-add-box'), qAdd: $('q-add'), qAddNote: $('q-add-note'), qAddErr: $('q-add-err'),
+    qPick: $('q-pick'), qPickChange: $('q-pick-change'), qpickDlg: $('qpick-dlg'), qpickSearch: $('qpick-search'), qpickList: $('qpick-list'), qpickCount: $('qpick-count'), qpickClose: $('qpick-close'),
     recMyQuote: $('rec-myquote'), mqStatus: $('mq-status'), mqDelivery: $('mq-delivery'), mqBody: $('mq-body'), mqNote: $('mq-note'), mqSend: $('mq-send'), mqResend: $('mq-resend'), mqErr: $('mq-error'),
     quote: $('screen-quote'), qForm: $('q-form'), qStale: $('q-stale'), qRestored: $('q-restored'), qPromoEnded: $('q-promo-ended'), qGuests: $('q-guests'), qHours: $('q-hours'), qBarBox: $('q-bar-box'), qBarNote: $('q-bar-note'),
     qCity: $('q-city'), qKmBox: $('q-km-box'), qKm: $('q-km'), qDate: $('q-date'), qOccasion: $('q-occasion'), qPromo: $('q-promo'), qOccasionPick: $('q-occasion-pick'), qPromoPick: $('q-promo-pick'), qPromoGives: $('q-promo-gives'), qMore: $('q-more'),
@@ -1447,6 +1448,7 @@
     if (el.bulk.open) closeBulk();
     if (el.addDlg.open) closeAdd();
     if (el.editDlg.open) closeEdit();
+    if (el.qpickDlg.open) closeQuotePick();
     if (el.dupDlg.open && !(S.dup && S.dup.busy)) { S.dup = null; closeDup(); }
     if (name !== 'thread') closeFullSilently();
     show(el.btnAdd, signedIn && (name === 'list' || name === 'today') && HAS_ADD && !!S.api && typeof S.api.addLead === 'function');   // round 3: the same sheet from Today's "+"
@@ -1536,6 +1538,7 @@
   }
 
   function renderLeadScreens() {
+    if (el.qpickDlg.open) renderQuotePick();   // the list refreshed under the open picker
     if (S.screen === 'list') renderList();
     else if (S.screen === 'thread' && S.desk && deskSplit()) renderList();   // computer: the list beside an open lead stays live
     else if (S.screen === 'pipeline') renderPipeline();   // round 8: the board is drawn from the same lead list
@@ -3242,19 +3245,108 @@
   // sql/023: "Add this quote to Sam". Only from a lead's "Price it in the quote calculator", only after a firm quote.
   function renderQuoteAdd() {
     var q = S.quote, f = q.fromLead, v = q.view;
-    var offer = !!f && !!v && !v.defer && !q.added;
-    show(el.qAddBox, offer);
+    var firm = !!v && !v.defer && !q.added;
+    var offer = !!f && firm;
+    // Fix round 1 (item 4): used on its own (no lead, no Back-to-lead bar), a firm result offers "Add to a lead" (owner only: the calculator is not a staff screen).
+    var pick = !f && !q.backTo && firm;
+    var change = offer && f.picked === true && !q.adding;   // also after a refusal: the price is never thrown away
+    show(el.qAddBox, offer || pick);
     qRenderLock();
+    show(el.qPick, pick);
+    show(el.qPickChange, change);
+    if (pick) { show(el.qAdd, false); setText(el.qAddNote, 'Pick a lead to save this price on it. Nothing is sent to them.'); return; }
     if (!offer) return;
     show(el.qAdd, !q.refused);       // the server said no: only the reason stays
     el.qAdd.textContent = q.adding ? 'Adding\u2026' : 'Add this quote to ' + f.name;
     setText(el.qAddNote, q.refused ? '' : L.quoteAddNote(f.savedTotal, f.maybeSent));
   }
 
+  // The "Add to a lead" picker: a search box and the leads that can take this price (L.quotePickRows). Picking sets S.quote.fromLead; the usual Add button,
+  // note, save and leave sheet take over from there. Esc, Cancel and the backdrop close it and change nothing.
+  function openQuotePick() {
+    var q = S.quote;
+    if (q.adding || q.busy || !q.view || q.view.defer) return;
+    el.qpickSearch.value = '';
+    if (qpickSkipSeq !== q.seq) { qpickSkip = {}; qpickSkipSeq = q.seq; }
+    qpickBusy = false; qpickToken++; qpickLine = '';
+    renderQuotePick();
+    if (typeof el.qpickDlg.showModal === 'function') el.qpickDlg.showModal();
+    else el.qpickDlg.setAttribute('open', '');
+    try { el.qpickSearch.focus(); } catch (e) { /* ignore */ }
+    if (!S.listLoaded) refreshList().then(function () { if (el.qpickDlg.open) renderQuotePick(); }, function () { /* the list line says so */ });
+  }
+  function closeQuotePick() {
+    qpickToken++; qpickBusy = false; qpickLine = '';
+    if (el.qpickDlg.open) {
+      if (typeof el.qpickDlg.close === 'function') el.qpickDlg.close();
+      else el.qpickDlg.removeAttribute('open');
+    }
+  }
+  function renderQuotePick() {
+    var r = L.quotePickRows(S.leads.filter(function (l) { return !qpickSkip[l.lead_id]; }), el.qpickSearch.value);
+    var frag = document.createDocumentFragment();
+    r.rows.forEach(function (x) {
+      var b = make('button', 'qpick-row');
+      b.type = 'button';
+      b.setAttribute('data-lead', x.id);
+      b.appendChild(make('span', 'qpick-name', x.name));
+      b.appendChild(make('span', 'qpick-sub', x.sub));
+      frag.appendChild(b);
+    });
+    el.qpickList.replaceChildren(frag);
+    setText(el.qpickCount, qpickLine ? qpickLine : !S.listLoaded ? (S.listError || 'Loading your leads\u2026')
+      : !r.total ? (el.qpickSearch.value.trim() ? 'No lead matches that. Leads already booked, lost or with a sent quote are not listed.' : 'No open lead can take a price right now.')
+      : (r.more ? 'Showing ' + r.rows.length + ' of ' + r.total + '. Type to narrow it down.' : L.plural(r.total, 'lead', 'leads') + ' can take this price.'));
+  }
+  // The list row has no quote_status / owner_quote, so the pick reads the lead's own lead_detail row (as its record screen does), checks the rule on it
+  // and builds fromLead from it: "replacing $X" and "the earlier text may have gone out" then work exactly as from the lead's own page.
+  var qpickSkip = {}, qpickSkipSeq = -1, qpickBusy = false, qpickToken = 0, qpickLine = '';   // leads this quote may not go to (refused or ineligible), for this quote only
+  function pickQuoteLead(id) {
+    var q = S.quote;
+    if (qpickBusy || q.adding || !q.view || q.view.defer) return;
+    qpickBusy = true;
+    var run = q.seq, tok = qpickToken;   // an answer that arrives after Cancel / reopen / another quote belongs to a pick nobody is waiting for
+    qpickLine = 'Checking that lead\u2026';
+    setText(el.qpickCount, qpickLine);
+    Promise.resolve().then(function () { return S.api.fetchThread(id); }).then(function (res) {
+      if (tok !== qpickToken) return;
+      qpickBusy = false;
+      if (!el.qpickDlg.open || S.screen !== 'quote' || run !== S.quote.seq) return;
+      var lead = res && res.lead;
+      if (!lead || lead.hidden === true || !L.canAddQuoteToLead(lead)) {
+        qpickSkip[id] = true;
+        qpickLine = 'That lead can\'t take a price (it already has a quote, or it is booked, lost or hidden). Pick another.';
+        renderQuotePick();
+        return;
+      }
+      S.quote.fromLead = L.quoteFromLead(lead);
+      closeQuotePick();
+      renderQuoteAdd();
+      try { (el.qAdd.hidden ? el.qPick : el.qAdd).focus(); } catch (e) { /* ignore */ }
+    }, function () {
+      if (tok !== qpickToken) return;
+      qpickBusy = false;
+      qpickLine = "Couldn't check that lead. Try again.";
+      if (el.qpickDlg.open) renderQuotePick();
+    });
+  }
+  function clearPickedLead() {
+    var q = S.quote;
+    if (!q.fromLead || q.fromLead.picked !== true || q.adding) return;
+    if (q.refused) { qpickSkip[q.fromLead.id] = true; qpickSkipSeq = q.seq; }   // the server said no to that lead: not offered again for this quote
+    q.fromLead = null;
+    q.refused = false;
+    setText(el.qAddErr, '');
+    renderQuoteAdd();
+    try { el.qPick.focus(); } catch (e) { /* ignore */ }
+  }
+
   // While a price is being saved nothing on the calculator can change under it.
   function qRenderLock() {
     var on = !!S.quote.adding;
     el.qAdd.disabled = on;
+    el.qPick.disabled = on;
+    el.qPickChange.disabled = on;
     el.qAdd.classList.toggle('is-busy', on);
     el.qCopy.disabled = on;
     el.qNew.disabled = on;
@@ -5408,6 +5500,15 @@
     });
     return ol;
   }
+  // What each card that does NOT follow the period switch really counts (read from the card's own code and SQL 005 / 015).
+  var DASH_SCOPE = {
+    open: 'Open leads right now',
+    outcomes: 'Events already past, all time',
+    all: 'All time',
+    forecast: 'By event month, not by the switch',
+    sources: 'All time (this month is its own column)'
+  };
+  function dashScope(b, key) { var sub = make('p', 'm-sub dash-scope', DASH_SCOPE[key]); b.insertBefore(sub, b.children[1] || null); return b; }
   function dashRangeLine(b, text) { var sub = make('p', 'm-sub dash-range', text); b.insertBefore(sub, b.children[1] || null); return b; }
   function dashPeriodWait(title) {
     var P = S.period;
@@ -5532,17 +5633,20 @@
     var has = function (k) { return order.indexOf(k) !== -1; };
     var frag = document.createDocumentFragment();
     var add = function (node, span) { if (node) frag.appendChild(dashPlace(node, span)); };
-    if (has('booked')) add(METRIC_BLOCKS.booked(m), 8);
-    if (has('kept')) add(METRIC_BLOCKS.kept(m), 4);
-    if (has('open')) add(METRIC_BLOCKS.open(m), 4);
-    if (has('value')) add(METRIC_BLOCKS.value(m), 4);
-    add(dashOutcomes(), 4);
-    if (has('close_rate')) add(METRIC_BLOCKS.close_rate(m), 4);   // K7 A: only once the forecast says ready (metricOrder, Kevin D1)
-    if (has('forecast')) add(METRIC_BLOCKS.forecast(m), 8);
+    // Fix round 1 (item 3): the three cards that follow the Week/Month/Season/Year switch sit together right under it;
+    // every other card says in a small muted line what it really counts (DASH_SCOPE).
+    var sc = function (node, key) { return node ? dashScope(node, key) : node; };
     add(dashFunnel(), 4);
-    if (has('sources')) add(dashSources(m), 5);
     if (has('lost_reasons')) add(dashLost(m), 4);
-    if (has('speed')) add(dashSpeed(m), 3);
+    if (has('speed')) add(dashSpeed(m), 4);
+    if (has('booked')) add(METRIC_BLOCKS.booked(m), 8);   // own periods (This month / Last month / All time): no label
+    if (has('kept')) add(METRIC_BLOCKS.kept(m), 4);   // own periods: no label
+    if (has('open')) add(sc(METRIC_BLOCKS.open(m), 'open'), 4);
+    if (has('value')) add(sc(METRIC_BLOCKS.value(m), 'open'), 4);
+    add(sc(dashOutcomes(), 'outcomes'), 4);
+    if (has('close_rate')) add(sc(METRIC_BLOCKS.close_rate(m), 'all'), 4);   // K7 A: only once the forecast says ready (metricOrder, Kevin D1)
+    if (has('forecast')) add(sc(METRIC_BLOCKS.forecast(m), 'forecast'), 7);
+    if (has('sources')) add(sc(dashSources(m), 'sources'), 5);
     var keep = document.activeElement && el.dashGrid.contains(document.activeElement) && document.activeElement.className;
     el.dashGrid.replaceChildren(frag);
     show(el.dashGrid, true);
@@ -7250,6 +7354,13 @@
       el[k].addEventListener('input', function () { setAddError(f, ''); });
     });
     el.qAdd.addEventListener('click', addQuoteToLead);
+    el.qPick.addEventListener('click', openQuotePick);
+    el.qPickChange.addEventListener('click', clearPickedLead);
+    el.qpickClose.addEventListener('click', closeQuotePick);
+    el.qpickDlg.addEventListener('click', function (e) { if (e.target === el.qpickDlg) closeQuotePick(); });
+    el.qpickDlg.addEventListener('close', function () { if (S.screen === 'quote') { try { (el.qAdd.hidden ? el.qPick : el.qAdd).focus({ preventScroll: true }); } catch (e) { /* ignore */ } } });
+    el.qpickSearch.addEventListener('input', function () { if (!qpickBusy) qpickLine = ''; renderQuotePick(); });
+    el.qpickList.addEventListener('click', function (e) { var b = e.target && e.target.closest ? e.target.closest('.qpick-row') : null; if (b) pickQuoteLead(b.getAttribute('data-lead')); });
     el.mqSend.addEventListener('click', function () { startQuoteSend(false); });
     el.mqResend.addEventListener('click', function () { startQuoteSend(true); });
     el.priceLink.addEventListener('click', function () {
